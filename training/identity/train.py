@@ -4,6 +4,7 @@ import time
 import warnings
 
 import presets
+import numpy as np
 import torch
 import torch.utils.data
 import torchvision
@@ -78,6 +79,9 @@ def train_one_epoch(
         if tb_writer:
             global_step = epoch * batch_count + i
             tb_writer.add_scalar("Epoch", epoch, global_step)
+            tb_writer.add_scalar(
+                "Train/lr", optimizer.param_groups[0]["lr"], global_step
+            )
             tb_writer.add_scalar("Train/Loss", loss.item(), global_step)
             tb_writer.add_scalar("Train/acc1", acc1.item(), global_step)
             tb_writer.add_scalar("Train/acc2", acc2.item(), global_step)
@@ -268,6 +272,16 @@ def main(args):
     )
     print(f"Dataset: {len(dataset)} images")
 
+    targets = np.asarray(dataset.targets, dtype=np.float32)
+    sample_count_by_class = np.asanyarray(
+        [np.sum(targets == i) for i in range(len(dataset.classes))], dtype=np.float32
+    )
+    print(f"Sample counts by class: {sample_count_by_class}")
+    class_weights = torch.from_numpy(
+        np.full_like(sample_count_by_class, len(targets)) / sample_count_by_class
+    )
+    print(f"Class weights: {class_weights}")
+
     num_classes = len(dataset.classes)
     mixup_cutmix = get_mixup_cutmix(
         mixup_alpha=args.mixup_alpha,
@@ -310,12 +324,31 @@ def main(args):
         )
         num_features = model.classifier.in_features
         model.classifier = nn.Linear(num_features, num_classes)
+
+    # Freeze backbone layers
+    for layer_idx in range(args.freeze):
+        layer = model.features[layer_idx]
+        params = list(layer.parameters())
+        if not params:
+            continue
+        for p in params:
+            p.requires_grad = False
+    total_param_count = np.sum([p.data.numel() for p in model.parameters()])
+    trainable_param_count = np.sum(
+        [p.data.numel() for p in model.parameters() if p.requires_grad]
+    )
+    print(
+        f"Trainable parameters: {trainable_param_count}/{total_param_count}={trainable_param_count/total_param_count:.1%}"
+    )
+
     model.to(device)
 
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    criterion = nn.CrossEntropyLoss(
+        label_smoothing=args.label_smoothing, weight=class_weights.to(device)
+    )
 
     custom_keys_weight_decay = []
     if args.bias_weight_decay is not None:
@@ -433,8 +466,11 @@ def main(args):
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
         model_without_ddp.load_state_dict(checkpoint["model"])
         if not args.test_only:
-            optimizer.load_state_dict(checkpoint["optimizer"])
-            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            try:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+                lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            except Exception as e:
+                print(f"Could not load optimizer/lr_scheduler state: {e}")
         args.start_epoch = checkpoint["epoch"] + 1
         if model_ema:
             model_ema.load_state_dict(checkpoint["model_ema"])
@@ -491,7 +527,7 @@ def main(args):
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
                 "epoch": epoch,
-                "args": args,
+                "args": vars(args),
             }
             if model_ema:
                 checkpoint["model_ema"] = model_ema.state_dict()
@@ -768,6 +804,12 @@ def get_args_parser(add_help=True):
         default="PIL",
         type=str.lower,
         help="PIL or tensor - case insensitive",
+    )
+    parser.add_argument(
+        "--freeze",
+        default=9,
+        type=int,
+        help="Number of layers to freeze",
     )
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
     return parser
