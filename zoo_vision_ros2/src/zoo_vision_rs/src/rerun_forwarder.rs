@@ -337,7 +337,7 @@ impl RerunForwarder {
         let rr_image = rerun::SegmentationImage::try_from(image_classes)?;
         self.recording.log(
             format!("/cameras/{}/detections/masks", camera),
-            &rr_image.with_draw_order(1.0).with_opacity(0.7),
+            &rr_image.with_draw_order(1.0).with_opacity(0.4),
         )?;
 
         // Log processing time
