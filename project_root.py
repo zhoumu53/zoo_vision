@@ -21,6 +21,7 @@ def _get_project_root():
 
 # Global constant so we can find files inside of the repo
 PROJECT_ROOT = _get_project_root()
+DATASETS_ROOT = Path("/home/dherrera/data/")
 
 # Set python path so we can import modules from inside the repo
 import sys
