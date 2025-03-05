@@ -11,6 +11,7 @@ scipy
 pandas
 statsmodels
 matplotlib
+seaborn
 ipykernel
 ipython
 

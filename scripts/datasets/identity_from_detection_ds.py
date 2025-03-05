@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import enlighten
 import torch
+import argparse
 
 from typing import Any
 
@@ -52,11 +53,17 @@ def output_folder_for_class(id: int, name: str) -> str:
     return f"{id:02}_{name}"
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_path", "-i", type=Path)
+    parser.add_argument("--output_path", "-o", type=Path)
+    return parser.parse_args()
+
+
 def main():
-    # Paths
-    data_root = Path("/home/dherrera/data/elephants")
-    src_root = data_root / "training_data"
-    dst_root = data_root / "identity/dataset"
+    args = parse_args()
+    input_path = args.input_path
+    output_path = args.output_path
 
     # Load config
     with (PROJECT_ROOT / "data/config.json").open() as f:
@@ -64,11 +71,11 @@ def main():
     name_from_id = {props["id"]: name for name, props in config["individuals"].items()}
 
     for id, name in name_from_id.items():
-        (dst_root / output_folder_for_class(id, name)).mkdir(
+        (output_path / output_folder_for_class(id, name)).mkdir(
             parents=True, exist_ok=True
         )
 
-    files = list(src_root.glob("**/*_img.jpg"))
+    files = list(input_path.glob("**/*_img.jpg"))
 
     pbar = pbar_manager.counter(total=len(files), desc="Extracting crops", unit="file")
     for img_file in pbar(files):
@@ -89,7 +96,9 @@ def main():
 
             crop = crop_bbox(im_color, bbox)
             out_path = (
-                dst_root / output_folder_for_class(id, name_from_id[id]) / img_file.name
+                output_path
+                / output_folder_for_class(id, name_from_id[id])
+                / img_file.name
             )
             cv2.imwrite(out_path, crop)
 

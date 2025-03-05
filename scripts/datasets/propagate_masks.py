@@ -9,14 +9,10 @@ from pathlib import Path
 import enlighten
 import gc
 from typing import Any
+import argparse
 
 from project_root import PROJECT_ROOT
 from segmentation_utils import grey_from_label
-
-INPUT_VIDEO_ROOT = Path(
-    "/home/dherrera/data/elephants/identity/videos/src/identity_days"
-)
-TRAINING_DATA_ROOT = Path("/home/dherrera/data/elephants/training_data")
 
 
 def points_json_path_from_video_path(video_path: Path) -> Path:
@@ -84,35 +80,50 @@ def save_frame(
     cv2.imwrite(f"{str(path_prefix)}_{index:08d}_seg.png", segmentation)
 
 
-def make_path_prefix(camera_name: str, video_file: Path) -> Path:
-    prefix = TRAINING_DATA_ROOT / camera_name / video_file.name.replace(".mp4", "")
+def make_path_prefix(input_path: Path, video_file: Path, output_path: Path) -> Path:
+    relative_path = video_file.relative_to(input_path)
+    relative_dir = relative_path.parent
+    prefix = output_path / relative_dir / video_file.name.replace(".mp4", "")
     return prefix
 
 
-def are_results_present(camera_name: str, video_path: Path):
-    prefix = make_path_prefix(camera_name, video_path)
+def are_results_present(input_path: Path, video_path: Path, output_path: Path):
+    prefix = make_path_prefix(input_path, video_path, output_path)
     if len(list(prefix.parent.glob(f"{prefix.name}*"))) > 0:
         return True
     else:
         return False
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--frame_count", "-f", type=int, default=200)
+    parser.add_argument("--input_path", "-i", type=Path)
+    parser.add_argument("--output_path", "-o", type=Path)
+    return parser.parse_args()
+
+
 class App:
     def __init__(self):
         self.pbar_manager = enlighten.get_manager()
         self.predictor: sam2.sam2_video_predictor.SAM2VideoPredictor | None = None
-        self.identity_labels = {}  # {name: id}
+        self.id_from_name = {}  # {name: id}
 
     def main(self) -> None:
+        args = parse_args()
+        propagate_frame_count = args.frame_count
+        input_path = args.input_path
+        output_path = args.output_path
+
         print("Loading identity labels...")
         with (PROJECT_ROOT / "data/config.json").open() as f:
             config = json.load(f)
-        self.identity_labels = {
+        self.id_from_name = {
             name: props["id"] for name, props in config["individuals"].items()
         }
         # Correct misspelling
-        self.identity_labels["Farha"] = self.identity_labels["Fahra"]
-        print(self.identity_labels)
+        self.id_from_name["Farha"] = self.id_from_name["Fahra"]
+        print(self.id_from_name)
 
         print("Loading SAM2...")
         torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
@@ -129,49 +140,44 @@ class App:
         )
 
         print("Gathering inputs...")
-        camera_names = [p.name for p in INPUT_VIDEO_ROOT.glob("*")]
 
-        labelled_videos = {}
-        with self.pbar_manager.counter(
-            total=len(camera_names), desc="Gathering inputs", unit="cameras"
-        ) as pbar_camera:
-            for camera_name in camera_names:
-                videos = [f for f in (INPUT_VIDEO_ROOT / camera_name).glob("**/*.mp4")]
-                labelled = [
-                    f for f in videos if points_json_path_from_video_path(f).exists()
-                ]
+        videos = [f for f in input_path.glob("**/*.mp4")]
+        labelled_videos = [
+            f for f in videos if points_json_path_from_video_path(f).exists()
+        ]
 
-                # Count annotations for early summary
-                annotation_count = 0
-                for f in labelled:
-                    with points_json_path_from_video_path(f).open("r") as f:
-                        points_data = json.load(f)
-                    annotation_count += len(points_data)
+        # Count annotations for early summary
+        annotation_count = 0
+        for f in labelled_videos:
+            with points_json_path_from_video_path(f).open("r") as f:
+                points_data = json.load(f)
+            annotation_count += len(points_data)
 
-                print(
-                    f"Camera {camera_name}: total videos={len(videos)}, labelled={len(labelled)}, annotations={annotation_count}"
-                )
-                labelled_videos[camera_name] = labelled
-                pbar_camera.update()
+        print(
+            f"{str(input_path)}: total videos={len(videos)}, labelled={len(labelled_videos)}, annotations={annotation_count}"
+        )
 
         print("Processing...")
-        total_files = [len(l) for l in labelled_videos.values()]
-        pbar_video = self.pbar_manager.counter(
-            total=np.sum(total_files), desc="Processing videos", unit="video"
+        pbar = self.pbar_manager.counter(
+            total=len(labelled_videos), desc="Processing videos", unit="video"
         )
-        for camera_name, labelled in labelled_videos.items():
-            for video_path in labelled:
-                # Check to see if there are already images
-                if are_results_present(camera_name, video_path):
-                    print(
-                        f"Found existing images for {camera_name}/{video_path.name}, skipping video"
-                    )
-                else:
-                    self.process_video(camera_name, video_path)
-                pbar_video.update()
-        pbar_video.close()
+        for video_path in pbar(labelled_videos):
+            # Check to see if there are already images
+            if are_results_present(input_path, video_path, output_path):
+                print(f"Found existing images for {str(video_path)}, skipping video")
+            else:
+                self.process_video(
+                    video_path, input_path, output_path, propagate_frame_count
+                )
+        pbar.close()
 
-    def process_video(self, camera_name: str, video_path: Path):
+    def process_video(
+        self,
+        video_path: Path,
+        input_path: Path,
+        output_path: Path,
+        propagate_frame_count: int,
+    ):
         print(f"Processing {str(video_path)}...")
 
         with points_json_path_from_video_path(video_path).open("r") as f:
@@ -198,7 +204,7 @@ class App:
             f"distance_to_next_label: median={np.median(distance_to_next_label)}, min={np.min(distance_to_next_label)}, max={np.max(distance_to_next_label)}"
         )
 
-        prefix = make_path_prefix(camera_name, video_path)
+        prefix = make_path_prefix(input_path, video_path, output_path)
 
         pbar_anno = self.pbar_manager.counter(
             total=len(points_data),
@@ -206,9 +212,7 @@ class App:
             unit="annot",
         )
         for i, data_i in enumerate(points_data):
-            MAX_FRAME_COUNT = 200
-
-            frame_count = min(MAX_FRAME_COUNT, distance_to_next_label[i])
+            frame_count = min(propagate_frame_count, distance_to_next_label[i])
 
             self.process_annotation(video, data_i, frame_count, prefix)
 
@@ -243,7 +247,7 @@ class App:
         inference_state = self.predictor.init_state(video_path=frames)
 
         for record in annotation["records"]:
-            label = self.identity_labels[record["name"]]
+            label = self.id_from_name[record["name"]]
             add_label_points(self.predictor, inference_state, label, record)
 
         ref_masks = None
