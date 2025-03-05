@@ -40,6 +40,8 @@ namespace zoo {
 
 Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
     : Node(std::format("segmenter_{}", nameIndex), options), cudaStream_{at::cuda::getStreamFromPool()} {
+  at::InferenceMode inferenceGuard;
+
   cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting segmenter for %s", cameraName_.c_str());
 
@@ -89,6 +91,8 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
 
 void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
+  // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
+  at::NoGradGuard nograd;
   std::optional<nvtx3::scoped_range> nvtxLabel{"seg_before (" + cameraName_ + ")"};
 
   at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
@@ -124,6 +128,8 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
 
   at::List<at::Tensor> imageList({imageTensor});
   {
+    torch::jit::GraphOptimizerEnabledGuard optGuard(false);
+
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 
     eventBeforeNetwork.record();

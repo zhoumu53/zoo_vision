@@ -1,12 +1,17 @@
 import torch
-import torchvision
+import argparse
 from pathlib import Path
-import enlighten
+from enlighten.counter import Counter as ECounter
 
 from project_root import PROJECT_ROOT
 from scripts.model_serialization import load_model
 
-pbar_manager = enlighten.get_manager()
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Compiles models with torchscript.")
+    parser.add_argument("--force", "-f", nargs="+", default=[], type=str)
+    parser.add_argument("--force_all", "-fa", action="store_true")
+    return parser.parse_args()
 
 
 def compile_model(weights_path: Path, output_path: Path) -> None:
@@ -18,14 +23,23 @@ def compile_model(weights_path: Path, output_path: Path) -> None:
 
 
 def main() -> None:
-    with torch.no_grad():
+    args = parse_args()
+
+    with torch.inference_mode():
         weights_paths = list(PROJECT_ROOT.glob("models/**/*.pth"))
-        pbar = pbar_manager.counter(total=len(weights_paths))
+        pbar = ECounter(total=len(weights_paths))
         for weights_path in pbar(weights_paths):
             pbar.desc = str(weights_path.relative_to(PROJECT_ROOT))
+
             output_path = PROJECT_ROOT / weights_path.with_suffix(".ptc")
-            if not output_path.exists():
+            if (
+                args.force_all
+                or str(weights_path) in args.force
+                or not output_path.exists()
+            ):
                 compile_model(weights_path, output_path)
+            else:
+                print(f"Skipping {str(weights_path)}")
 
 
 if __name__ == "__main__":

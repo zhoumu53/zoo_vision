@@ -39,6 +39,8 @@ namespace zoo {
 
 Identifier::Identifier(const rclcpp::NodeOptions &options, int nameIndex)
     : Node(std::format("identifier_{}", nameIndex), options) {
+  at::InferenceMode inferenceGuard;
+
   cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting segmenter for %s", cameraName_.c_str());
 
@@ -86,6 +88,7 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
                              std::span<uint32_t> outputIdentities) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
+  at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
   assert(imageGpu.device().is_cuda());
@@ -125,6 +128,7 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     auto destRegion = inputRegions[i].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
     destRegion.copy_(rescaledPatch[0]);
   }
+
   // Send to model
   at::Tensor identityResultGpu;
   {
@@ -132,6 +136,12 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     identityResultGpu = identityNetwork_.forward({inputRegions}).toTensor();
   }
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
+
+  // std::cout << identityResultGpu.to(torch::kCPU);
+  // for (auto i : std::views::iota(0, detectionCount)) {
+  //   saveTensorImage(inputRegions[i], std::format("debug/region{}.png", i));
+  // }
+  // throw std::runtime_error("err");
 
   at::Tensor identityTensor = identityResultGpu.to(at::kCPU).argmax(1);
   for (const auto i : std::views::iota(0u, bboxes.size())) {
