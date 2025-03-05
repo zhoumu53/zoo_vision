@@ -13,6 +13,8 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_msgs/msg/key_value_arrayf.hpp"
+#include "zoo_msgs/msg/key_value_arrayi64.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/string.hpp"
@@ -34,7 +36,9 @@ namespace zoo {
 
 std::filesystem::path getDataPath();
 
-void setMsgString(zoo_msgs::msg::String &dest, const char *const src);
+void setMsgString(zoo_msgs::msg::String &dest, const std::string_view &src);
+void addRosKeyValue(zoo_msgs::msg::KeyValueArrayi64 &array, const std::string_view &key, int64_t value);
+void addRosKeyValue(zoo_msgs::msg::KeyValueArrayf &array, const std::string_view &key, float value);
 
 cv::Mat3b wrapMat3bFromMsg(zoo_msgs::msg::Image12m &);
 

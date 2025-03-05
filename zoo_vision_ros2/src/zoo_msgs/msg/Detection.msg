@@ -10,4 +10,4 @@ zoo_msgs/BoundingBox2D[15] bboxes       # size=MAX_DETECTION_COUNT
 float32[45] world_positions             # size=MAX_DETECTION_COUNT*3
 zoo_msgs/Tensor3b32m masks
 
-uint64 processing_time_ns
+zoo_msgs/Timings timings

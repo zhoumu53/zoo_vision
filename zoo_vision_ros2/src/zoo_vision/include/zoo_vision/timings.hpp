@@ -13,41 +13,35 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_vision/stats.hpp"
+
 #include <chrono>
-#include <deque>
 #include <numeric>
 
 namespace zoo {
 class RateSampler {
 public:
   using clock_t = std::chrono::high_resolution_clock;
+  using time_point_t = clock_t::time_point;
 
-  RateSampler(size_t maxSamples = 50) : maxSamples_{maxSamples} {}
+  RateSampler(size_t maxSamples = 50) : stats_{maxSamples} {}
 
   void tick() {
-    auto now = clock_t::now();
+    const time_point_t now = clock_t::now();
     if (lastTick_) {
-      auto period = now - *lastTick_;
-      auto periodNs = std::chrono::duration_cast<std::chrono::nanoseconds>(period).count();
-
-      if (samplesNanoseconds_.size() >= maxSamples_) {
-        samplesNanoseconds_.pop_back();
-      }
-      samplesNanoseconds_.push_front(periodNs);
+      const auto period = now - *lastTick_;
+      const int64_t period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(period).count();
+      constexpr auto NS_TO_S = 1e-9f;
+      const float period_s = static_cast<float>(period_ns) * NS_TO_S;
+      stats_.push(period_s);
     }
     lastTick_ = now;
   }
 
-  float sampleRateHz() const {
-    float averageNs = std::reduce(samplesNanoseconds_.begin(), samplesNanoseconds_.end()) /
-                      static_cast<float>(samplesNanoseconds_.size());
-    constexpr float NS_TO_S = 1e9f;
-    return 1.0f / (averageNs * NS_TO_S);
-  }
+  float rateHz() const { return 1.0f / stats_.mean(); }
 
 private:
-  size_t maxSamples_;
-  std::deque<uint64_t> samplesNanoseconds_;
+  BufferedStats stats_;
   std::optional<clock_t::time_point> lastTick_;
 };
 

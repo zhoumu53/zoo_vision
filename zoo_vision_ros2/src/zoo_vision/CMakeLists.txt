@@ -54,6 +54,7 @@ set_target_properties(zoo_vision_rs PROPERTIES
 add_executable(zoo_vision 
   # Headers
   include/zoo_vision/utils.hpp
+  include/zoo_vision/stats.hpp
   include/zoo_vision/json_eigen.hpp
   include/zoo_vision/zoo_camera.hpp
   include/zoo_vision/segmenter.hpp
@@ -62,6 +63,7 @@ add_executable(zoo_vision
   include/zoo_vision/track_matcher.hpp
   # Sources
   src/utils.cpp
+  src/stats.cpp
   src/json_eigen.cpp
   src/zoo_camera.cpp
   src/segmenter.cpp

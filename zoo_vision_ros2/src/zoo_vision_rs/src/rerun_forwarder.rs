@@ -5,10 +5,17 @@ use image;
 use nalgebra::{Matrix3, Matrix4, Vector3};
 use ndarray::prelude::*;
 use rerun::{demo_util::grid, external::glam, external::ndarray};
-use std::{collections::HashMap, io::Cursor, path::Path};
+use std::{collections::HashMap, io::Cursor, iter::zip, path::Path};
+
+type RosString = zoo_msgs::msg::rmw::String;
 
 fn nanosec_from_ros(stamp: &builtin_interfaces::msg::rmw::Time) -> i64 {
     1e9 as i64 * stamp.sec as i64 + stamp.nanosec as i64
+}
+
+fn string_from_ros(ros_str: &RosString) -> String {
+    let view = unsafe { std::str::from_utf8_unchecked(ros_str.data.as_slice()) };
+    view.to_string()
 }
 
 pub struct RerunForwarder {
@@ -31,6 +38,29 @@ fn transform3d_from_2d(t2d: &Matrix3<f32>) -> Matrix4<f32> {
     t3d[(2, 2)] = 1.0;
     t3d[(3, 3)] = 1.0;
     return t3d;
+}
+
+fn cast_ros_key_value_arrayi64(
+    ros_array: &zoo_msgs::msg::rmw::KeyValueArrayi64,
+) -> Vec<(String, i64)> {
+    let count = ros_array.item_count as usize;
+    let keys = &ros_array.keys[0..count];
+    let values = &ros_array.values[0..count];
+    zip(
+        keys.iter().map(|x| string_from_ros(x)),
+        values.iter().map(|x| *x),
+    )
+    .collect()
+}
+fn cast_ros_key_value_arrayf(ros_array: &zoo_msgs::msg::rmw::KeyValueArrayf) -> Vec<(String, f32)> {
+    let count = ros_array.item_count as usize;
+    let keys = &ros_array.keys[0..count];
+    let values = &ros_array.values[0..count];
+    zip(
+        keys.iter().map(|x| string_from_ros(x)),
+        values.iter().map(|x| *x),
+    )
+    .collect()
 }
 
 impl RerunForwarder {
@@ -340,12 +370,20 @@ impl RerunForwarder {
             &rr_image.with_draw_order(1.0).with_opacity(0.4),
         )?;
 
-        // Log processing time
-        let processing_time = std::time::Duration::from_nanos(msg.processing_time_ns);
-        self.recording.log(
-            format!("/processing_times/{}_segmentation", camera),
-            &rerun::Scalar::new(processing_time.as_secs_f64() * 1000.0),
-        )?;
+        // Log processing times
+        for (key, value_hz) in cast_ros_key_value_arrayf(&msg.timings.items_hz) {
+            self.recording.log(
+                format!("/processing_times/hz/{}", key),
+                &rerun::Scalar::new(value_hz as f64),
+            )?;
+        }
+        for (key, value_ns) in cast_ros_key_value_arrayi64(&msg.timings.items_ns) {
+            let value_time = std::time::Duration::from_nanos(value_ns as u64);
+            self.recording.log(
+                format!("/processing_times/msec/{}", key),
+                &rerun::Scalar::new(value_time.as_secs_f64() * 1000.0),
+            )?;
+        }
 
         Ok(())
     }

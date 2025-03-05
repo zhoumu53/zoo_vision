@@ -50,15 +50,30 @@ std::filesystem::path getDataPath() {
   }
 }
 
-void setMsgString(zoo_msgs::msg::String &dest, const char *const src) {
-  size_t len = strlen(src);
-  if (len > zoo_msgs::msg::String::MAX_SIZE - 1) {
-    len = zoo_msgs::msg::String::MAX_SIZE - 1;
+void setMsgString(zoo_msgs::msg::String &dest, const std::string_view &src) {
+  constexpr auto MAX_SIZE = zoo_msgs::msg::String::MAX_SIZE;
+
+  size_t len = src.size();
+  if (len > MAX_SIZE - 1) {
+    len = MAX_SIZE - 1;
   }
 
-  strcpy(reinterpret_cast<char *>(&dest.data), src);
+  memcpy(dest.data.data(), src.data(), len);
   dest.data[len] = 0;
   dest.size = len;
+}
+
+void addRosKeyValue(zoo_msgs::msg::KeyValueArrayi64 &array, const std::string_view &key, int64_t value) {
+  const auto idx = array.item_count;
+  array.item_count += 1;
+  setMsgString(array.keys[idx], key);
+  array.values[idx] = value;
+}
+void addRosKeyValue(zoo_msgs::msg::KeyValueArrayf &array, const std::string_view &key, float value) {
+  const auto idx = array.item_count;
+  array.item_count += 1;
+  setMsgString(array.keys[idx], key);
+  array.values[idx] = value;
 }
 
 namespace detail {

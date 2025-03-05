@@ -18,6 +18,9 @@ find_package(rosidl_default_generators REQUIRED)
 set(msg_files
   "msg/String.msg"
   "msg/Header.msg"
+  "msg/KeyValueArrayi64.msg"
+  "msg/KeyValueArrayf.msg"
+  "msg/Timings.msg"
   "msg/Image8k.msg"
   "msg/Image512k.msg"
   "msg/Image1m.msg"

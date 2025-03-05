@@ -40,10 +40,19 @@ def make_blueprint():
                         ),
                     ]
                 ),
-                rrb.TimeSeriesView(
-                    name="Processing times (msec)",
-                    origin="/processing_times",
-                    axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=True),
+                rrb.Horizontal(
+                    contents=[
+                        rrb.TimeSeriesView(
+                            name="Frequency (Hz)",
+                            origin="/processing_times/hz",
+                            axis_y=rrb.ScalarAxis(range=(0, 20), zoom_lock=False),
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Processing times (msec)",
+                            origin="/processing_times/msec",
+                            axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
+                        ),
+                    ]
                 ),
             ],
             row_shares=[0.8, 0.2],

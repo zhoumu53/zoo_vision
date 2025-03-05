@@ -90,6 +90,8 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
 }
 
 void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
+  rateSampler_.tick();
+
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
   // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
   at::NoGradGuard nograd;
@@ -177,7 +179,10 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   const at::Tensor labels = labelsGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
   const at::Tensor masks = masksGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
   cudaStreamSynchronize(cudaStream_);
-  const float networkProcessingTimeMs = eventBeforeNetwork.elapsed_time(eventAfterNetwork);
+
+  constexpr auto MS_TO_NS = 1e6f;
+  addRosKeyValue(detectionMsg->timings.items_ns, std::format("{}_seg", cameraName_),
+                 eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 
   Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg->world_positions.data(), 3, modelDetectionCount};
 
@@ -220,7 +225,6 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   }
   detectionMsg->detection_count = outIndex;
   detectionMsg->masks.sizes[0] = outIndex;
-  detectionMsg->processing_time_ns = networkProcessingTimeMs * 1e6f;
 
   // Assign track ids
   trackMatcher_.update(boxes, std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count});
@@ -228,6 +232,10 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   // Identify
   identifier_->onDetection(cudaStream_, imageTensor, std::span{detectionMsg->bboxes.data(), outIndex},
                            std::span{detectionMsg->identity_ids.data(), outIndex});
+
+  // Add timing information
+  addRosKeyValue(detectionMsg->timings.items_hz, std::format("{}_seg", cameraName_), rateSampler_.rateHz());
+
   detectionPublisher_->publish(std::move(detectionMsg));
 }
 
