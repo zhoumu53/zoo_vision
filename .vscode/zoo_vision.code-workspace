@@ -106,7 +106,8 @@
 			"csetjmp": "cpp",
 			"ranges": "cpp",
 			"__locale": "cpp",
-			"dense": "cpp"
+			"dense": "cpp",
+			"__nullptr": "cpp"
 		},
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"
