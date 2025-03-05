@@ -18,9 +18,48 @@
 #include "zoo_vision/utils.hpp"
 #include "zoo_vision/zoo_camera.hpp"
 
-#include "rclcpp/rclcpp.hpp"
+#include <argparse/argparse.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 #include <memory>
+
+std::unique_ptr<argparse::ArgumentParser> parse_args(int argc, char *argv[]) {
+  auto args = std::make_unique<argparse::ArgumentParser>("zoo_vision");
+  args->add_argument("-c", "--config").help("Modify configs values").append();
+
+  try {
+    args->parse_args(argc, argv);
+  } catch (const std::exception &err) {
+    std::cerr << err.what() << std::endl;
+    std::cerr << args;
+    return nullptr;
+  }
+
+  return args;
+}
+
+void overrideConfig(nlohmann::json &config, const std::string_view &configOverride) {
+  auto splitView = std::ranges::views::split(configOverride, '=');
+  const auto split = std::vector<std::string_view>(splitView.begin(), splitView.end());
+  if (split.size() != 2) {
+    std::cout << "Vec " << split << std::endl;
+    throw std::runtime_error(std::format("Invalid config override: {}", configOverride));
+  }
+  const auto &path = split[0];
+  const auto &newValueStr = split[1];
+  using json_pointer = nlohmann::json_pointer<std::string>;
+  const auto jsonPath = json_pointer(std::string(path));
+
+  nlohmann::json item = config[jsonPath];
+  nlohmann::json newValueJson;
+  if (item.is_boolean()) {
+    newValueJson = nlohmann::json::parse(newValueStr);
+  } else {
+    throw std::runtime_error("Unknown json type: " + nlohmann::to_string(item));
+  }
+  std::cout << "Overriding " << path << ": old=" << item << ", new=" << newValueJson << std::endl;
+  config[jsonPath] = newValueJson;
+}
 
 int main(int argc, char *argv[]) {
   using namespace zoo;
@@ -29,7 +68,14 @@ int main(int argc, char *argv[]) {
 
   // Load config once before initializing all nodes
   loadConfig();
-  const auto &config = getConfig();
+  const auto args = parse_args(argc, argv);
+  const auto configOverrides = args->get<std::vector<std::string>>("--config");
+  std::cout << "Args: " << configOverrides << std::endl;
+
+  auto &config = getConfig();
+  for (const std::string &configOverride : configOverrides) {
+    overrideConfig(config, configOverride);
+  }
 
   std::vector<std::string> cameraNames = config["enabled_cameras"];
 

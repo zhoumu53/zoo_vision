@@ -29,7 +29,8 @@ find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 FetchContent_Declare(TorchRelease URL https://download.pytorch.org/libtorch/cu124/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcu124.zip)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
 FetchContent_Declare(nvtx3 URL https://github.com/NVIDIA/NVTX/archive/refs/tags/v3.1.0.tar.gz)
-FetchContent_MakeAvailable(TorchRelease json nvtx3)
+FetchContent_Declare(argparse GIT_REPOSITORY https://github.com/p-ranav/argparse.git)
+FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse)
 
 # torch
 list(APPEND CMAKE_PREFIX_PATH "${torchrelease_SOURCE_DIR}")
@@ -87,6 +88,7 @@ target_link_libraries(zoo_vision
   nlohmann_json::nlohmann_json
   nvtx3-cpp
   zoo_vision_rs
+  argparse
 )
 
 install(TARGETS

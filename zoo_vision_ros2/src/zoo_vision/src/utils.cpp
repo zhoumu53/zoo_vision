@@ -97,7 +97,7 @@ void loadConfig() {
   nlohmann::json config = nlohmann::json::parse(f);
   global_config = std::make_unique<nlohmann::json>(std::move(config));
 }
-const nlohmann::json &getConfig() {
+nlohmann::json &getConfig() {
   if (global_config == nullptr) {
     throw std::runtime_error("Config not loaded, call loadConfig() first");
   }
