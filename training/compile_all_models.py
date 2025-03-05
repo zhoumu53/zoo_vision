@@ -20,6 +20,7 @@ def compile_model(weights_path: Path, output_path: Path) -> None:
 
     traced_module = torch.jit.script(model)
     traced_module.save(output_path)
+    print(f"Saved to {output_path}")
 
 
 def main() -> None:
