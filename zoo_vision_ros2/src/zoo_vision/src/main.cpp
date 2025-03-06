@@ -51,12 +51,7 @@ void overrideConfig(nlohmann::json &config, const std::string_view &configOverri
   const auto jsonPath = json_pointer(std::string(path));
 
   nlohmann::json item = config[jsonPath];
-  nlohmann::json newValueJson;
-  if (item.is_boolean()) {
-    newValueJson = nlohmann::json::parse(newValueStr);
-  } else {
-    throw std::runtime_error("Unknown json type: " + nlohmann::to_string(item));
-  }
+  const nlohmann::json newValueJson = nlohmann::json::parse(newValueStr);
   std::cout << "Overriding " << path << ": old=" << item << ", new=" << newValueJson << std::endl;
   config[jsonPath] = newValueJson;
 }

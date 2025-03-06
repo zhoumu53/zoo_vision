@@ -103,7 +103,7 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   // Allocate detection message so we can already start putting things here
   auto detectionMsg = std::make_unique<zoo_msgs::msg::Detection>();
   detectionMsg->header = imageMsg.header;
-  addRosKeyValue(detectionMsg->timings.items_hz, std::format("{}_seg", cameraName_), rateSampler_.rateHz());
+  addRosKeyValue(detectionMsg->timings.items_hz, std::format("seg", cameraName_), rateSampler_.rateHz());
 
   ////////////////////////////////////////////////////////////
   // Prepare image for segmentation network
@@ -193,7 +193,7 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   cudaStreamSynchronize(cudaStream_);
 
   constexpr auto MS_TO_NS = 1e6f;
-  addRosKeyValue(detectionMsg->timings.items_ns, std::format("{}_seg", cameraName_),
+  addRosKeyValue(detectionMsg->timings.items_ns, "seg_net",
                  eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 
   Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg->world_positions.data(), 3, modelDetectionCount};

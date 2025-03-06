@@ -23,6 +23,8 @@ pub struct RerunForwarder {
     first_ros_time_ns: Option<i64>,
     // camera_indices: HashMap<String, usize>,
     name_from_identity: HashMap<u32, String>,
+
+    key_colors: HashMap<String, rerun::Color>,
 }
 
 fn transform3d_from_2d(t2d: &Matrix3<f32>) -> Matrix4<f32> {
@@ -187,6 +189,7 @@ impl RerunForwarder {
                     .iter()
                     .map(|(name, individual)| (individual.id, name.clone())),
             ),
+            key_colors: HashMap::new(),
         })
     }
 
@@ -201,6 +204,22 @@ impl RerunForwarder {
                 .with_radii([0.5]),
         )?;
         println!("Test from forwarder, frame_id={}", frame_id);
+        Ok(())
+    }
+
+    pub fn register_points_key(&mut self, rr_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if self.key_colors.contains_key(rr_path) {
+            return Ok(());
+        }
+
+        let color = hex_color::HexColor::random_rgb();
+        let alpha = 100u8;
+        let rr_color = rerun::Color::from_unmultiplied_rgba(color.r, color.g, color.b, alpha);
+
+        self.key_colors.insert(rr_path.to_string(), rr_color);
+
+        self.recording
+            .log_static(rr_path, &rerun::SeriesPoint::new().with_color(rr_color))?;
         Ok(())
     }
 
@@ -356,15 +375,18 @@ impl RerunForwarder {
 
         // Log processing times
         for (key, value_hz) in cast_ros_key_value_arrayf(&msg.timings.items_hz) {
-            self.recording.log(
-                format!("/processing_times/hz/{}", key),
-                &rerun::Scalar::new(value_hz as f64),
-            )?;
+            let rr_path = format!("/processing_times/hz/{}", key);
+            self.register_points_key(rr_path.as_str())?;
+            self.recording
+                .log(rr_path, &rerun::Scalar::new(value_hz as f64))?;
         }
         for (key, value_ns) in cast_ros_key_value_arrayi64(&msg.timings.items_ns) {
+            let rr_path = format!("/processing_times/msec/{}", key);
+            self.register_points_key(rr_path.as_str())?;
+
             let value_time = std::time::Duration::from_nanos(value_ns as u64);
             self.recording.log(
-                format!("/processing_times/msec/{}", key),
+                rr_path,
                 &rerun::Scalar::new(value_time.as_secs_f64() * 1000.0),
             )?;
         }

@@ -53,9 +53,6 @@
     "zag_elp_cam_018",
     "zag_elp_cam_019"
   ],
-  "enabled_cameras2": [
-    "zag_elp_cam_016"
-  ],
   "cameras": {
     "zag_elp_cam_016": {
       "stream": {

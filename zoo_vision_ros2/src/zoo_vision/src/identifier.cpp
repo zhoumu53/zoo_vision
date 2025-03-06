@@ -165,8 +165,7 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
 
   constexpr auto MS_TO_NS = 1e6f;
   cudaStreamSynchronize(cudaStream_);
-  addRosKeyValue(timings.items_ns, std::format("{}_id", cameraName_),
-                 eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
+  addRosKeyValue(timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 
 } // namespace zoo
