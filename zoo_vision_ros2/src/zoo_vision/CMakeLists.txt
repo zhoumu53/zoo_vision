@@ -52,23 +52,21 @@ set_target_properties(zoo_vision_rs PROPERTIES
 ####################################
 # zoo_vision package
 add_executable(zoo_vision 
-  # Headers
-  include/zoo_vision/utils.hpp
-  include/zoo_vision/stats.hpp
-  include/zoo_vision/json_eigen.hpp
-  include/zoo_vision/zoo_camera.hpp
-  include/zoo_vision/segmenter.hpp
-  include/zoo_vision/identifier.hpp
-  include/zoo_vision/rerun_forwarder.hpp
-  include/zoo_vision/track_matcher.hpp
-  # Sources
+  src/utils.hpp
   src/utils.cpp
+  src/stats.hpp
   src/stats.cpp
+  src/json_eigen.hpp
   src/json_eigen.cpp
+  src/zoo_camera.hpp
   src/zoo_camera.cpp
+  src/segmenter.hpp
   src/segmenter.cpp
+  src/identifier.hpp
   src/identifier.cpp
+  src/rerun_forwarder.hpp
   src/rerun_forwarder.cpp
+  src/track_matcher.hpp
   src/track_matcher.cpp
   src/main.cpp
 )
