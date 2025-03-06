@@ -49,14 +49,12 @@ Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
-  const auto detectionsTopic = cameraName_ + "/detections";
-  const auto detectionsImageTopic = cameraName_ + "/detections/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
       *this, imageTopic, 10,
       [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(std::move(msg)); });
 
   // Publish detections
-  detectionImagePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, detectionsImageTopic, 10);
+  const auto detectionsTopic = cameraName_ + "/detections";
   detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
   RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
 
@@ -250,8 +248,6 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
                            std::span{detectionMsg->identity_ids.data(), outIndex}, detectionMsg->timings);
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
-  // Publish image to have it in sync with masks
-  detectionImagePublisher_->publish(*imageMsgPtr);
   detectionPublisher_->publish(std::move(detectionMsg));
 }
 

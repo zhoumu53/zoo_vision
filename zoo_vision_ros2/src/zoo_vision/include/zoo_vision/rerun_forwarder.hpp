@@ -16,15 +16,25 @@
 #include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
+
 #include <image_transport/image_transport.hpp>
+
+#include <deque>
+#include <unordered_map>
 
 namespace zoo {
 class RerunForwarder : public rclcpp::Node {
 public:
   explicit RerunForwarder(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
-  void onImage(const std::string &cameraTopic,const std::string &channel, const zoo_msgs::msg::Image12m &msg);
-  void onDetection(const std::string &cameraTopic,const std::string &channel, const zoo_msgs::msg::Detection &msg);
+  void onImage(const std::string &cameraTopic, const std::string &channel,
+               std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
+  void onDetection(const std::string &cameraTopic, const std::string &channel, const zoo_msgs::msg::Detection &msg);
+
+  static constexpr size_t MAX_CACHE_SIZE = 20;
+  using ImageCache = std::deque<std::shared_ptr<const zoo_msgs::msg::Image12m>>;
+  std::mutex imageCachesMutex_;
+  std::unordered_map<std::string, ImageCache> imageCaches_;
 
   void *rsHandle_;
   std::vector<std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>>> imageSubscribers_;

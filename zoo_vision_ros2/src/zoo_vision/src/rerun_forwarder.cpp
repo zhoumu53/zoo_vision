@@ -49,8 +49,7 @@ auto timeFromRosTime(const builtin_interfaces::msg::Time &stamp) {
   return std::chrono::system_clock::time_point{duration};
 }
 
-RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
-    : Node("rerun_forwarder", options) /*, rerunStream_("zoo_vision")*/ {
+RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun_forwarder", options) {
 
   // Load config
   std::vector<std::string> cameraNames;
@@ -81,11 +80,11 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 
   rclcpp::QoS qos{/*history_depth*/ 2};
 
-  auto subscribeImage = [&](std::string cameraTopic, std::string channel) {
+  auto subscribeImage = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
         *this, channel, qos,
-        [this, cameraTopic, channel](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
-          this->onImage(cameraTopic, channel, *msg);
+        [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
+          this->onImage(cameraName, channel, std::move(msg));
         },
         subOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection image %s (loans=%d)", channel.c_str(),
@@ -93,11 +92,11 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
     imageSubscribers_.push_back(std::move(subscription));
   };
 
-  auto subscribeDetection = [&](std::string cameraTopic, std::string channel) {
+  auto subscribeDetection = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Detection>(
         *this, channel, qos,
-        [this, cameraTopic, channel](std::shared_ptr<const zoo_msgs::msg::Detection> msg) {
-          this->onDetection(cameraTopic, channel, *msg);
+        [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::Detection> msg) {
+          this->onDetection(cameraName, channel, *msg);
         },
         subOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection results %s (loans=%d)", channel.c_str(),
@@ -107,28 +106,77 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
-    subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
-    // subscribeImage(name, name + "/image"); // Full-res image from camera
+    imageCaches_.insert({name, {}});
+
+    // subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
+    subscribeImage(name, name + "/image"); // Full-res image from camera
     subscribeDetection(name, name + "/detections");
   }
 
   zoo_rs_init(&rsHandle_, getDataPath().c_str());
 }
 
-void RerunForwarder::onImage(const std::string &cameraTopic, const std::string &channel,
-                             const zoo_msgs::msg::Image12m &msg) {
+void RerunForwarder::onImage(const std::string &cameraName, const std::string & /*channel*/,
+                             std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_image"};
-  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received image %s (id=%s)", cameraTopic.c_str(),
+  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received image %s (id=%s)", cameraName.c_str(),
   //                      msg.header.frame_id.data.data());
-  zoo_rs_image_callback(rsHandle_, cameraTopic.c_str(), channel.c_str(), &msg);
+
+  // Store the image in the cache to use when we get the detections
+  std::lock_guard<std::mutex> lock(imageCachesMutex_);
+  ImageCache &cache = imageCaches_[cameraName];
+  if (cache.size() >= MAX_CACHE_SIZE) {
+    cache.pop_front();
+  }
+  cache.push_back(std::move(msg));
+  // zoo_rs_image_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
 }
 
-void RerunForwarder::onDetection(const std::string &cameraTopic, const std::string &channel,
+void RerunForwarder::onDetection(const std::string &cameraName, const std::string &channel,
                                  const zoo_msgs::msg::Detection &msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_detection"};
-  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received detection %s (id=%s)", cameraTopic.c_str(),
+  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received detection %s (id=%s)", cameraName.c_str(),
   //                      msg.header.frame_id.data.data());
-  zoo_rs_detection_callback(rsHandle_, cameraTopic.c_str(), channel.c_str(), &msg);
+
+  std::string_view id = getMsgString(msg.header.frame_id);
+
+  // Find image
+  std::shared_ptr<const zoo_msgs::msg::Image12m> image = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(imageCachesMutex_);
+    ImageCache &cache = imageCaches_[cameraName];
+
+    ImageCache::iterator matchingImageIt = cache.begin();
+    for (; matchingImageIt != cache.end(); ++matchingImageIt) {
+      const auto &image_i = **matchingImageIt;
+      std::string_view id_i = getMsgString(image_i.header.frame_id);
+
+      if (id.compare(id_i) == 0) {
+        break;
+      }
+    }
+
+    if (matchingImageIt != cache.end()) {
+      image = *matchingImageIt;
+
+      // We can drop all images before this one
+      auto eraseIt = cache.begin();
+      while (*eraseIt != image) {
+        eraseIt = cache.erase(eraseIt);
+      }
+      cache.erase(eraseIt);
+    } else {
+      RCLCPP_ERROR(get_logger(), "Could not find image %s in cache.", id.data());
+    }
+  }
+  if (image != nullptr) {
+    // Image with same frame id found
+    // Forward and clear cache
+    zoo_rs_image_callback(rsHandle_, cameraName.c_str(), channel.c_str(), image.get());
+  }
+
+  // Forward to rerun
+  zoo_rs_detection_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
 }
 
 } // namespace zoo

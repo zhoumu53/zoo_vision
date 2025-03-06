@@ -13,10 +13,10 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_msgs/msg/key_value_arrayf.hpp"
-#include "zoo_msgs/msg/key_value_arrayi64.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
+#include "zoo_msgs/msg/key_value_arrayf.hpp"
+#include "zoo_msgs/msg/key_value_arrayi64.hpp"
 #include "zoo_msgs/msg/string.hpp"
 #include "zoo_msgs/msg/tensor3b32m.hpp"
 
@@ -37,6 +37,8 @@ namespace zoo {
 std::filesystem::path getDataPath();
 
 void setMsgString(zoo_msgs::msg::String &dest, const std::string_view &src);
+std::string_view getMsgString(const zoo_msgs::msg::String &dest);
+
 void addRosKeyValue(zoo_msgs::msg::KeyValueArrayi64 &array, const std::string_view &key, int64_t value);
 void addRosKeyValue(zoo_msgs::msg::KeyValueArrayf &array, const std::string_view &key, float value);
 
@@ -52,4 +54,12 @@ at::Tensor mapRosTensor(zoo_msgs::msg::Tensor3b32m &rosTensor);
 void loadConfig();
 nlohmann::json &getConfig();
 
+} // namespace zoo
+
+/////////////////////////////////////////
+// Implementations
+namespace zoo {
+inline std::string_view getMsgString(const zoo_msgs::msg::String &dest) {
+  return std::string_view(reinterpret_cast<const char *>(dest.data.data()), dest.size);
+}
 } // namespace zoo

@@ -57,7 +57,6 @@ private:
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
 
-  std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> detectionImagePublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
 };
 } // namespace zoo
