@@ -115,8 +115,6 @@ impl RerunForwarder {
         )?;
 
         // Go through config cameras
-        // const COLUMN_COUNT: u32 = 2;
-        // const ASPECT_RATIO: f32 = 1.768421053;
         for (_, (camera_name, camera_config)) in config.cameras.iter().enumerate() {
             // Log pinhole in map view
             let resolution = [
@@ -148,13 +146,6 @@ impl RerunForwarder {
                 &rerun::Transform3D::from_mat3x3(r_world_from_camera.data.0)
                     .with_translation(t_camera_in_world.data.0[0]),
             )?;
-
-            // Log grid position in 2D view
-            // let row = index as u32 / COLUMN_COUNT;
-            // let col = index as u32 % COLUMN_COUNT;
-            // let t_grid_from_image =
-            //     rerun::Transform3D::from_translation([col as f32, row as f32 / ASPECT_RATIO, 0.0]);
-            // recording.log_static(format!("/cameras/{}", camera_name), &t_grid_from_image)?;
         }
 
         // Log an annotation context to assign a label and color to each class
@@ -239,25 +230,10 @@ impl RerunForwarder {
         let time_ns = nanosec_from_ros(&msg.header.stamp);
         self.recording.set_time_nanos("ros_time", time_ns);
 
-        // let largest_side = if image.width() > image.height() {
-        //     image.width()
-        // } else {
-        //     image.height()
-        // };
-        // let scale = 1.0 / largest_side as f32;
-        // self.recording.log(
-        //     format!("/cameras/{}/detections", camera),
-        //     &rerun::Transform3D::from_scale(scale),
-        // )?;
         self.recording.log(
             format!("/cameras/{}/fullres", camera),
             &rr_image.with_draw_order(-1.0),
         )?;
-
-        // self.recording.log(
-        //     format!("/cameras/{}/identities", camera),
-        //     &rerun::Transform3D::from_scale(scale),
-        // )?;
 
         // Clear out detections
         // self.recording.set_time_nanos("ros_time", time_ns - 1);
@@ -306,15 +282,6 @@ impl RerunForwarder {
             &rerun::Transform3D::from_scale(1.0 / msg.scale_image_from_detection),
         )?;
 
-        // self.recording.log(
-        //     format!("/cameras/{}/detections", camera),
-        //     &rerun::Transform3D::from_scale(msg.scale_image_from_detection),
-        // )?;
-        // self.recording.log(
-        //     format!("/cameras/{}/identities", camera),
-        //     &rerun::Transform3D::from_scale(msg.scale_image_from_detection),
-        // )?;
-
         let detection_count = msg.detection_count as usize;
         let track_ids: Vec<u16> = (0..detection_count)
             .map(|x| msg.track_ids[x] as u16)
@@ -344,20 +311,10 @@ impl RerunForwarder {
         let bbox_centers = (0..detection_count).map(|x| msg.bboxes[x].center);
         let bbox_half_sizes = (0..detection_count).map(|x| msg.bboxes[x].half_size);
 
-        // let patch_centers = bbox_centers.into_iter().map(|x| {
-        //     [
-        //         x[0] * msg.scale_image_from_detection,
-        //         x[1] * msg.scale_image_from_detection,
-        //     ]
-        // });
-        // let patch_half_sizes = bbox_half_sizes.into_iter().map(|x| {
-        //     [
-        //         x[0] * msg.scale_image_from_detection,
-        //         x[1] * msg.scale_image_from_detection,
-        //     ]
-        // });
         let rerun_boxes =
             rerun::Boxes2D::from_centers_and_half_sizes(bbox_centers, bbox_half_sizes);
+
+        // Log boxes with track ids as labels
         // self.recording.log(
         //     format!("/cameras/{}/detections/boxes", camera),
         //     &rerun_boxes.clone().with_class_ids(track_ids.clone()),
