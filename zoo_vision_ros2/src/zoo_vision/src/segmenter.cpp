@@ -52,11 +52,12 @@ Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
   const auto detectionsTopic = cameraName_ + "/detections";
   const auto detectionsImageTopic = cameraName_ + "/detections/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10, [this](const zoo_msgs::msg::Image12m &msg) { this->onImage(msg); });
+      *this, imageTopic, 10, [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(*msg); });
 
   // Publish detections
   detectionImagePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, detectionsImageTopic, 10);
   detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
+  RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
 
   identifier_ = std::make_shared<Identifier>(options, nameIndex);
 }
@@ -102,33 +103,42 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   // Allocate detection message so we can already start putting things here
   auto detectionMsg = std::make_unique<zoo_msgs::msg::Detection>();
   detectionMsg->header = imageMsg.header;
+  addRosKeyValue(detectionMsg->timings.items_hz, std::format("{}_seg", cameraName_), rateSampler_.rateHz());
 
+  ////////////////////////////////////////////////////////////
+  // Prepare image for segmentation network
   const cv::Mat3b img = wrapMat3bFromMsg(imageMsg);
-  const float inputAspect = static_cast<float>(imageMsg.width) / imageMsg.height;
+  assert(imageMsg.step == imageMsg.width * 3 * sizeof(char));
+  at::Tensor imageTensorCPU =
+      at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
+          .permute({2, 0, 1});
+
+  at::Tensor imageTensor;
+  {
+    // Convert to float
+    imageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat) / 255.0f;
+  }
+
+  // Resize
   const int DETECTION_HEIGHT = 600;
+  detectionMsg->scale_image_from_detection = static_cast<float>(imageMsg.height) / DETECTION_HEIGHT;
+  at::Tensor detectionImage;
+  {
+    namespace F = torch::nn::functional;
+    const auto interpolateOpts =
+        F::InterpolateFuncOptions()
+            .size({{static_cast<int>(imageMsg.height / detectionMsg->scale_image_from_detection),
+                    static_cast<int>(imageMsg.width / detectionMsg->scale_image_from_detection)}})
+            .mode(torch::kBilinear)
+            .antialias(true)
+            .align_corners(false);
+    const auto imageTensor4D = imageTensor.index({None, Ellipsis});
+    detectionImage = F::interpolate(imageTensor4D, interpolateOpts)[0];
+  }
+
+  ////////////////////////////////////////////////////////////
+  // Execute segmentation network
   at::IValue detectionResult;
-
-  auto detectionImageMsg = std::make_unique<zoo_msgs::msg::Image12m>();
-  detectionImageMsg->header = imageMsg.header;
-  setMsgString(detectionImageMsg->encoding, sensor_msgs::image_encodings::BGR8);
-  detectionImageMsg->height = DETECTION_HEIGHT;
-  detectionImageMsg->width = DETECTION_HEIGHT * inputAspect;
-  detectionImageMsg->step = detectionImageMsg->width * 3 * sizeof(char);
-  cv::Mat3b detectionImage = wrapMat3bFromMsg(*detectionImageMsg);
-
-  cv::resize(img, detectionImage, detectionImage.size());
-
-  // TODO: accept input as uint8
-  cv::Mat3f detectionImagef;
-  detectionImage.convertTo(detectionImagef, CV_32FC3, 1.0f / 255);
-
-  at::Tensor imageTensor =
-      at::from_blob(detectionImagef.data, {detectionImagef.rows, detectionImagef.cols, detectionImagef.channels()},
-                    at::TensorOptions().dtype(at::kFloat));
-
-  imageTensor = imageTensor.permute({2, 0, 1}).to(at::kCUDA);
-
-  at::List<at::Tensor> imageList({imageTensor});
   {
     torch::jit::GraphOptimizerEnabledGuard optGuard(false);
 
@@ -136,13 +146,16 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
 
     eventBeforeNetwork.record();
     // TorchScript models require a List[IValue] as input
+    at::List<at::Tensor> imageList({detectionImage});
     detectionResult = model_.forward({imageList});
     eventAfterNetwork.record();
   }
 
+  ////////////////////////////////////////////////////////////
+  // Post-process segmentation results
+
   // Publish image to have it in sync with masks
   nvtxLabel.emplace("seg_after (" + cameraName_ + ")");
-  detectionImagePublisher_->publish(std::move(detectionImageMsg));
 
   const auto detections = detectionResult.toTuple()->elements()[1].toList()[0].get().toGenericDict();
 
@@ -168,8 +181,8 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   const int64_t maskWidth = masksGpu.sizes()[2];
   const float32_t resizeFactor = static_cast<float32_t>(img.rows) / maskHeight;
 
-  detectionMsg->detection_count = MAX_DETECTION_COUNT;
-  detectionMsg->masks.sizes[0] = MAX_DETECTION_COUNT;
+  detectionMsg->detection_count = modelDetectionCount;
+  detectionMsg->masks.sizes[0] = modelDetectionCount;
   detectionMsg->masks.sizes[1] = maskHeight;
   detectionMsg->masks.sizes[2] = maskWidth;
   at::Tensor masksMap = mapRosTensor(detectionMsg->masks);
@@ -229,13 +242,13 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   // Assign track ids
   trackMatcher_.update(boxes, std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count});
 
-  // Identify
-  identifier_->onDetection(cudaStream_, imageTensor, std::span{detectionMsg->bboxes.data(), outIndex},
+  ////////////////////////////////////////////////////////////
+  // Forward detecto for identification
+  identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection,
+                           std::span{detectionMsg->bboxes.data(), outIndex},
                            std::span{detectionMsg->identity_ids.data(), outIndex});
 
-  // Add timing information
-  addRosKeyValue(detectionMsg->timings.items_hz, std::format("{}_seg", cameraName_), rateSampler_.rateHz());
-
+  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsg));
 }
 

@@ -39,6 +39,7 @@ public:
   void loadModel(const std::filesystem::path &modelPath);
 
   void onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
+                   const float scale_image_from_detection,
                    std::span<const zoo_msgs::msg::BoundingBox2D> bboxes, std::span<uint32_t> outputIdentities);
 
 private:

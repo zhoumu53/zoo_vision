@@ -250,7 +250,7 @@ impl RerunForwarder {
         //     &rerun::Transform3D::from_scale(scale),
         // )?;
         self.recording.log(
-            format!("/cameras/{}/detections", camera),
+            format!("/cameras/{}/fullres", camera),
             &rr_image.with_draw_order(-1.0),
         )?;
 
@@ -301,6 +301,20 @@ impl RerunForwarder {
         self.recording
             .set_time_nanos("ros_time", ros_time_ns as i64);
 
+        self.recording.log(
+            format!("/cameras/{}/fullres", camera),
+            &rerun::Transform3D::from_scale(1.0 / msg.scale_image_from_detection),
+        )?;
+
+        // self.recording.log(
+        //     format!("/cameras/{}/detections", camera),
+        //     &rerun::Transform3D::from_scale(msg.scale_image_from_detection),
+        // )?;
+        // self.recording.log(
+        //     format!("/cameras/{}/identities", camera),
+        //     &rerun::Transform3D::from_scale(msg.scale_image_from_detection),
+        // )?;
+
         let detection_count = msg.detection_count as usize;
         let track_ids: Vec<u16> = (0..detection_count)
             .map(|x| msg.track_ids[x] as u16)
@@ -329,6 +343,19 @@ impl RerunForwarder {
         // Log bounding boxes
         let bbox_centers = (0..detection_count).map(|x| msg.bboxes[x].center);
         let bbox_half_sizes = (0..detection_count).map(|x| msg.bboxes[x].half_size);
+
+        // let patch_centers = bbox_centers.into_iter().map(|x| {
+        //     [
+        //         x[0] * msg.scale_image_from_detection,
+        //         x[1] * msg.scale_image_from_detection,
+        //     ]
+        // });
+        // let patch_half_sizes = bbox_half_sizes.into_iter().map(|x| {
+        //     [
+        //         x[0] * msg.scale_image_from_detection,
+        //         x[1] * msg.scale_image_from_detection,
+        //     ]
+        // });
         let rerun_boxes =
             rerun::Boxes2D::from_centers_and_half_sizes(bbox_centers, bbox_half_sizes);
         // self.recording.log(

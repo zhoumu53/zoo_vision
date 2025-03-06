@@ -2,6 +2,8 @@ uint32 MAX_DETECTION_COUNT=15           # Fix capacity to enable shared-memory z
 
 zoo_msgs/Header header                  # Header timestamp should be acquisition time of image
 
+float32 scale_image_from_detection
+
 uint32 detection_count
 
 uint32[15] track_ids                    # size=MAX_DETECTION_COUNT

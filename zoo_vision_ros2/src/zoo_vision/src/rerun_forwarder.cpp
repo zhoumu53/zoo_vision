@@ -75,10 +75,19 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
     RCLCPP_INFO(get_logger(), "Configured cameras=%s", cameraNamesDescr.c_str());
   }
 
+  // All rerun calls are thread-safe so this node is can accept calls in different threads simultaneously
+  rclcpp::SubscriptionOptions subOptions;
+  subOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+  rclcpp::QoS qos{/*history_depth*/ 2};
+
   auto subscribeImage = [&](std::string cameraTopic, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-        *this, channel, 10,
-        [this, cameraTopic, channel](const zoo_msgs::msg::Image12m &msg) { this->onImage(cameraTopic, channel, msg); });
+        *this, channel, qos,
+        [this, cameraTopic, channel](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
+          this->onImage(cameraTopic, channel, *msg);
+        },
+        subOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection image %s (loans=%d)", channel.c_str(),
                 subscription->can_loan_messages());
     imageSubscribers_.push_back(std::move(subscription));
@@ -86,9 +95,11 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 
   auto subscribeDetection = [&](std::string cameraTopic, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Detection>(
-        *this, channel, 10, [this, cameraTopic, channel](const zoo_msgs::msg::Detection &msg) {
-          this->onDetection(cameraTopic, channel, msg);
-        });
+        *this, channel, qos,
+        [this, cameraTopic, channel](std::shared_ptr<const zoo_msgs::msg::Detection> msg) {
+          this->onDetection(cameraTopic, channel, *msg);
+        },
+        subOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection results %s (loans=%d)", channel.c_str(),
                 subscription->can_loan_messages());
     detectionSubscribers_.push_back(std::move(subscription));
@@ -96,7 +107,8 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
-    subscribeImage(name, name + "/detections/image");
+    // subscribeImage(name, name + "/detections/image"); // Detection image at lower resolution
+    subscribeImage(name, name + "/image"); // Full-res image from camera
     subscribeDetection(name, name + "/detections");
   }
 
@@ -106,15 +118,16 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 void RerunForwarder::onImage(const std::string &cameraTopic, const std::string &channel,
                              const zoo_msgs::msg::Image12m &msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_image"};
-  // RCLCPP_INFO(get_logger(), "Received img (id=%s)", frame_id);
+  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received image %s (id=%s)", cameraTopic.c_str(),
+  //                      msg.header.frame_id.data.data());
   zoo_rs_image_callback(rsHandle_, cameraTopic.c_str(), channel.c_str(), &msg);
 }
 
 void RerunForwarder::onDetection(const std::string &cameraTopic, const std::string &channel,
                                  const zoo_msgs::msg::Detection &msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_detection"};
-  // RCLCPP_INFO(get_logger(), "Received img (id=%s)", frame_id);
-  // zoo_rs_test_me(rsHandle_, frame_id);
+  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received detection %s (id=%s)", cameraTopic.c_str(),
+  //                      msg.header.frame_id.data.data());
   zoo_rs_detection_callback(rsHandle_, cameraTopic.c_str(), channel.c_str(), &msg);
 }
 

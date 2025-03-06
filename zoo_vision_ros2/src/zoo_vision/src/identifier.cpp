@@ -85,6 +85,7 @@ void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
 }
 
 void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
+                             const float scale_image_from_detection,
                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
                              std::span<uint32_t> outputIdentities) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
@@ -102,11 +103,19 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   // Extract crops
   for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
     const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
+    Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
+    Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
+
+    Eigen::Vector2f center = bboxCenter * scale_image_from_detection;
+    Eigen::Vector2f half_size = bboxHalfSize * scale_image_from_detection;
+
+    Eigen::Vector2f corner0 = center - half_size;
+    Eigen::Vector2f corner1 = center + half_size;
     const auto bboxPatch = imageGpu.index({
         None,
         Slice(),
-        Slice(bbox.center[1] - bbox.half_size[1], bbox.center[1] + bbox.half_size[1]),
-        Slice(bbox.center[0] - bbox.half_size[0], bbox.center[0] + bbox.half_size[0]),
+        Slice(corner0[1], corner1[1]),
+        Slice(corner0[0], corner1[0]),
     });
 
     const auto rescaleSize = (bboxAspect >= 1.0f) ? Eigen::Vector2i(CROP_SIZE, std::round(CROP_SIZE / bboxAspect))
@@ -141,7 +150,9 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   // for (auto i : std::views::iota(0, detectionCount)) {
   //   saveTensorImage(inputRegions[i], std::format("debug/region{}.png", i));
   // }
-  // throw std::runtime_error("err");
+  // if (detectionCount){
+  //   throw std::runtime_error("err");
+  // }
 
   at::Tensor identityTensor = identityResultGpu.to(at::kCPU).argmax(1);
   for (const auto i : std::views::iota(0u, bboxes.size())) {
