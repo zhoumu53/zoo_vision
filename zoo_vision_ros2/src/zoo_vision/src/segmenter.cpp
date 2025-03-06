@@ -52,7 +52,8 @@ Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
   const auto detectionsTopic = cameraName_ + "/detections";
   const auto detectionsImageTopic = cameraName_ + "/detections/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10, [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(*msg); });
+      *this, imageTopic, 10,
+      [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(std::move(msg)); });
 
   // Publish detections
   detectionImagePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, detectionsImageTopic, 10);
@@ -90,8 +91,9 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
   // DEBUG print model info
 }
 
-void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
+void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
   rateSampler_.tick();
+  const auto &imageMsg = *imageMsgPtr;
 
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
   // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
@@ -154,7 +156,6 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   ////////////////////////////////////////////////////////////
   // Post-process segmentation results
 
-  // Publish image to have it in sync with masks
   nvtxLabel.emplace("seg_after (" + cameraName_ + ")");
 
   const auto detections = detectionResult.toTuple()->elements()[1].toList()[0].get().toGenericDict();
@@ -249,6 +250,8 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
                            std::span{detectionMsg->identity_ids.data(), outIndex}, detectionMsg->timings);
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
+  // Publish image to have it in sync with masks
+  detectionImagePublisher_->publish(*imageMsgPtr);
   detectionPublisher_->publish(std::move(detectionMsg));
 }
 

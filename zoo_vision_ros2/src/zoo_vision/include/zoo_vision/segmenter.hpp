@@ -38,7 +38,7 @@ public:
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
-  void onImage(const zoo_msgs::msg::Image12m &msg);
+  void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
 private:
   std::string cameraName_;

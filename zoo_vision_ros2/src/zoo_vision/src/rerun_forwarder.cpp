@@ -107,8 +107,8 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options)
 
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
-    // subscribeImage(name, name + "/detections/image"); // Detection image at lower resolution
-    subscribeImage(name, name + "/image"); // Full-res image from camera
+    subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
+    // subscribeImage(name, name + "/image"); // Full-res image from camera
     subscribeDetection(name, name + "/detections");
   }
 
