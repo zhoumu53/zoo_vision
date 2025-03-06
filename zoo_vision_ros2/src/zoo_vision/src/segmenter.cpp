@@ -246,7 +246,7 @@ void Segmenter::onImage(const zoo_msgs::msg::Image12m &imageMsg) {
   // Forward detecto for identification
   identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection,
                            std::span{detectionMsg->bboxes.data(), outIndex},
-                           std::span{detectionMsg->identity_ids.data(), outIndex});
+                           std::span{detectionMsg->identity_ids.data(), outIndex}, detectionMsg->timings);
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsg));

@@ -87,7 +87,7 @@ void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
 void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
                              const float scale_image_from_detection,
                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
-                             std::span<uint32_t> outputIdentities) {
+                             std::span<uint32_t> outputIdentities, zoo_msgs::msg::Timings &timings) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
@@ -140,9 +140,12 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
 
   // Send to model
   at::Tensor identityResultGpu;
+  at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
   {
     nvtxLabel.emplace("id_net (" + cameraName_ + ")");
+    eventBeforeNetwork.record();
     identityResultGpu = identityNetwork_.forward({inputRegions}).toTensor();
+    eventAfterNetwork.record();
   }
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
@@ -155,9 +158,15 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   // }
 
   at::Tensor identityTensor = identityResultGpu.to(at::kCPU).argmax(1);
+
   for (const auto i : std::views::iota(0u, bboxes.size())) {
     outputIdentities[i] = identityTensor[i].item<int>() + 1; // Add one because 0 is background
   }
+
+  constexpr auto MS_TO_NS = 1e6f;
+  cudaStreamSynchronize(cudaStream_);
+  addRosKeyValue(timings.items_ns, std::format("{}_id", cameraName_),
+                 eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 
 } // namespace zoo
