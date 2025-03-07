@@ -13,6 +13,7 @@ def label_from_grey(gray):
 
 
 def bbox_from_mask(mask) -> tuple[int, int, int, int]:
+    """Return format XYWH"""
     mask_rows = np.any(mask, axis=1)
     mask_cols = np.any(mask, axis=0)
 
