@@ -161,6 +161,7 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   // Results in gpu
   const at::Tensor masksfGpu = detections.at("masks").toTensor().squeeze(1);
   const at::Tensor boxesGpu = detections.at("boxes").toTensor();
+  const at::Tensor scoresGpu = detections.at("scores").toTensor();
   const at::Tensor labelsGpu = detections.at("labels").toTensor();
 
   // const torch::Tensor scores = detections.at("scores").toTensor().to(torch::kCPU);
@@ -189,6 +190,7 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   // Move all to cpu
   const at::Tensor boxesNet = boxesGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
   const at::Tensor labels = labelsGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
+  const at::Tensor scores = scoresGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
   const at::Tensor masks = masksGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
   cudaStreamSynchronize(cudaStream_);
 
@@ -204,6 +206,12 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   for (int i = 0; i < modelDetectionCount; ++i) {
     const int label = labels[i].item<int>();
     if (label != elephant_label_id_) {
+      continue;
+    }
+
+    const float score = scores[i].item<float>();
+    const float SCORE_THRESHOLD = 0.85;
+    if (score < SCORE_THRESHOLD) {
       continue;
     }
 
@@ -235,17 +243,20 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
 
     outIndex += 1;
   }
-  detectionMsg->detection_count = outIndex;
-  detectionMsg->masks.sizes[0] = outIndex;
+  const auto detectionCount = outIndex;
+  detectionMsg->detection_count = detectionCount;
+  detectionMsg->masks.sizes[0] = detectionCount;
 
   // Assign track ids
   trackMatcher_.update(boxes, std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count});
 
   ////////////////////////////////////////////////////////////
   // Forward detecto for identification
-  identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection,
-                           std::span{detectionMsg->bboxes.data(), outIndex},
-                           std::span{detectionMsg->identity_ids.data(), outIndex}, detectionMsg->timings);
+  if (detectionCount > 0) {
+    identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection,
+                             std::span{detectionMsg->bboxes.data(), detectionCount},
+                             std::span{detectionMsg->identity_ids.data(), outIndex}, detectionMsg->timings);
+  }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsg));
