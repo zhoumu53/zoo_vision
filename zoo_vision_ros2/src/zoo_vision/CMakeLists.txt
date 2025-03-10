@@ -56,10 +56,13 @@ add_executable(zoo_vision
   src/utils.cpp
   src/stats.hpp
   src/stats.cpp
+  src/replay_clock.hpp
   src/json_eigen.hpp
   src/json_eigen.cpp
   src/zoo_camera.hpp
   src/zoo_camera.cpp
+  src/video_loader.hpp
+  src/video_loader.cpp
   src/segmenter.hpp
   src/segmenter.cpp
   src/identifier.hpp

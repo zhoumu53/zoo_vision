@@ -47,6 +47,8 @@
     "identity": "../models/identity/freeze09/dense121_c5_identity.ptc"
   },
   "live_stream": false,
+  "video_db": "/home/dherrera/data/elephants/identity/videos/src/identity_days/video_db.json",
+  "video_start_time": "01:00",
   "enabled_cameras": [
     "zag_elp_cam_016",
     "zag_elp_cam_017",
