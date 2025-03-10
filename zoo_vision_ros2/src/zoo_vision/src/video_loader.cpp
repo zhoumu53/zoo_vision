@@ -52,7 +52,7 @@ std::chrono::system_clock::duration parseDuration(std::string_view timeStr) {
   constexpr auto DATE_FORMAT = "%H:%M";
   ss >> std::get_time(&t, DATE_FORMAT);
 
-  Clock::duration dur = std::chrono::hours(t.tm_hour) + std::chrono::hours(t.tm_min);
+  Clock::duration dur = std::chrono::hours(t.tm_hour) + std::chrono::minutes(t.tm_min);
   return dur;
 }
 
@@ -75,7 +75,7 @@ VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loade
   // Load videos
   for (auto &[cameraName, cameraData] : cameras_) {
     cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", 10);
-    loadVideo(cameraData, replayNow_);
+    loadVideo(cameraName, cameraData, replayNow_);
   }
 
   timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
@@ -108,29 +108,48 @@ void VideoLoader::loadVideoDatabase(const std::filesystem::path &database,
   }
 }
 
-void VideoLoader::loadVideo(CameraData &cameraData, const Clock::time_point time) {
-  for (const auto &[videoFile, startTime, endTime] : cameraData.videoList_) {
-    if (startTime <= time && time < endTime) {
-      cv::VideoCapture cvVideo;
-      const bool ok = cvVideo.open(videoFile);
-      if (ok) {
-        cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
-                                          static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
-        cameraData.videoStartTime_ = startTime;
-        cameraData.videoStream_ = std::move(cvVideo);
-        RCLCPP_INFO(get_logger(), "Loaded video %s (%dx%d) start time %s", videoFile.filename().c_str(),
-                    cameraData.frameSize.width, cameraData.frameSize.height,
-                    std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
+void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time) {
+  if (cameraData.videoList_.empty()) {
+    RCLCPP_WARN(get_logger(), "Video list for %s is empty.", cameraName.c_str());
+    return;
+  }
 
-        // Adjust time
-        constexpr float FPS = 25;
-        const auto offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(startTime - time).count();
-        const auto offsetFrames = FPS * offsetMs / 1000;
-        cameraData.videoStream_->set(cv::CAP_PROP_POS_FRAMES, offsetFrames);
-
-      } else {
-        RCLCPP_ERROR(get_logger(), "Failed to open video %s", videoFile.c_str());
+  auto videoIt = cameraData.videoList_.end();
+  if (cameraData.videoList_.front().startTime > time) {
+    // First video starts in the future. Open this one.
+    videoIt = cameraData.videoList_.begin();
+  } else {
+    for (auto it = cameraData.videoList_.begin(); it != cameraData.videoList_.end(); ++it) {
+      if (it->startTime <= time && time < it->endTime) {
+        videoIt = it;
+        break;
       }
+    }
+  }
+  if (videoIt != cameraData.videoList_.end()) {
+    const auto &videoFile = videoIt->videoFile;
+    const auto &startTime = videoIt->startTime;
+
+    cv::VideoCapture cvVideo;
+    const bool ok = cvVideo.open(videoFile);
+    if (ok) {
+      cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
+                                        static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
+      cameraData.videoStartTime_ = startTime;
+      cameraData.videoStream_ = std::move(cvVideo);
+      RCLCPP_INFO(get_logger(), "Loaded video %s (%dx%d) start time %s", videoFile.filename().c_str(),
+                  cameraData.frameSize.width, cameraData.frameSize.height,
+                  std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
+
+      // Adjust time
+      const int64_t offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(time - startTime).count();
+      if (offsetMs > 0) {
+        RCLCPP_INFO(get_logger(), "Advancing video by %ldms", offsetMs);
+        cameraData.videoStream_->set(cv::CAP_PROP_POS_MSEC, offsetMs);
+      }
+
+    } else {
+      RCLCPP_ERROR(get_logger(), "Failed to open video %s", videoFile.c_str());
     }
   }
 }
@@ -161,7 +180,7 @@ void VideoLoader::onTimer() {
 
       cameraData.videoStartTime_.reset();
       cameraData.videoStream_.reset();
-      loadVideo(cameraData, replayNow_);
+      loadVideo(cameraName, cameraData, replayNow_);
     }
 
     // TODO: converting BGR->RGB like this is inefficient!
