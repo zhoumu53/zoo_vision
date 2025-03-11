@@ -44,17 +44,17 @@ std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
   return parsedPoint;
 }
 
-std::chrono::system_clock::duration parseDuration(std::string_view timeStr) {
-  using Clock = std::chrono::system_clock;
-  std::tm t = {};
-  std::ispanstream ss(timeStr);
+// std::chrono::system_clock::duration parseDuration(std::string_view timeStr) {
+//   using Clock = std::chrono::system_clock;
+//   std::tm t = {};
+//   std::ispanstream ss(timeStr);
 
-  constexpr auto DATE_FORMAT = "%H:%M";
-  ss >> std::get_time(&t, DATE_FORMAT);
+//   constexpr auto DATE_FORMAT = "%H:%M";
+//   ss >> std::get_time(&t, DATE_FORMAT);
 
-  Clock::duration dur = std::chrono::hours(t.tm_hour) + std::chrono::minutes(t.tm_min);
-  return dur;
-}
+//   Clock::duration dur = std::chrono::hours(t.tm_hour) + std::chrono::minutes(t.tm_min);
+//   return dur;
+// }
 
 } // namespace
 
@@ -69,7 +69,7 @@ VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loade
   loadVideoDatabase(videoDatabase, enabledCameras);
 
   // Advance replay clock
-  replayNow_ += parseDuration(config["video_start_time"].get<std::string>());
+  replayNow_ = parseTime(config["replay_time"].get<std::string>());
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
   // Load videos
@@ -154,12 +154,21 @@ void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraDat
   }
 }
 
-void VideoLoader::onTimer() {
-  for (auto &[cameraName, cameraData] : cameras_) {
-    if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
-      continue;
-    }
+void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
+  if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
+    return;
+  }
 
+  assert(cameraData.videoStream_.has_value());
+  auto &cvVideo = *cameraData.videoStream_;
+
+  cvVideo >> image;
+}
+
+void VideoLoader::onTimer() {
+  std::optional<Clock::time_point> newReplayTime;
+
+  for (auto &[cameraName, cameraData] : cameras_) {
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
     msg->header.stamp = now();
     setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
@@ -170,31 +179,36 @@ void VideoLoader::onTimer() {
     msg->step = msg->width * 3 * sizeof(char);
 
     cv::Mat3b image = wrapMat3bFromMsg(*msg);
-
-    assert(cameraData.videoStream_.has_value());
-    auto &cvVideo = *cameraData.videoStream_;
-
-    cvVideo >> image;
+    loadImage(cameraData, image);
     if (image.empty()) {
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF", cameraName.c_str());
 
       cameraData.videoStartTime_.reset();
       cameraData.videoStream_.reset();
       loadVideo(cameraName, cameraData, replayNow_);
+      loadImage(cameraData, image);
+    }
+    if (image.empty()) {
+      continue;
+    }
+
+    if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {
+      // Calculate replay time based on how much we've advanced in the video
+      const auto offsetMs = cameraData.videoStream_->get(cv::CAP_PROP_POS_MSEC);
+      newReplayTime = *cameraData.videoStartTime_ + std::chrono::milliseconds(static_cast<int64_t>(offsetMs));
     }
 
     // TODO: converting BGR->RGB like this is inefficient!
     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
-    if (image.empty()) {
-      setMsgString(msg->header.frame_id, "error");
-      image.setTo(cv::Vec3b(0, 0, 255));
-    }
-
     cameraData.publisher_->publish(std::move(msg));
   }
 
-  replayNow_ += std::chrono::milliseconds(40);
+  if (newReplayTime.has_value()) {
+    replayNow_ = *newReplayTime;
+  } else {
+    RCLCPP_WARN(get_logger(), "No images produced");
+    replayNow_ += std::chrono::milliseconds(40);
+  }
   frameIndex_++;
 }
 

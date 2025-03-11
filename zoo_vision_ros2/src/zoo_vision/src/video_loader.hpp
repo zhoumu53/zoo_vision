@@ -49,6 +49,7 @@ private:
   void loadVideoDatabase(const std::filesystem::path &database, std::span<const std::string> enabledCameras);
   void loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time);
 
+  void loadImage(CameraData &cameraData, cv::Mat3b &img);
   void onTimer();
 
   Clock::time_point replayNow_;

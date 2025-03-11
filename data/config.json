@@ -48,7 +48,7 @@
   },
   "live_stream": false,
   "video_db": "/home/dherrera/data/elephants/identity/videos/src/identity_days/video_db.json",
-  "video_start_time": "01:00",
+  "replay_time": "2025-01-25T06:00:29",
   "enabled_cameras": [
     "zag_elp_cam_016",
     "zag_elp_cam_017",
