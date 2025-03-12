@@ -84,10 +84,85 @@ void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
   cv::imwrite(name.c_str(), imgRgb);
 }
 
+float calculateWeight(const std::span<const int> identities, const Eigen::MatrixXf &prior) {
+  if (identities.size() < 2) {
+    // Trivial weight when there is nothing to compare
+    return 1;
+  } else if (identities.size() == 2) {
+    // Only two items, use prior directly
+    return prior(identities[0], identities[1]);
+  } else {
+    // Many items, approximate prior with geometric mean
+    float weight = 1;
+    for (size_t i = 0; i < identities.size(); ++i) {
+      for (size_t j = i + 1; j < identities.size(); ++j) {
+        weight *= prior(i, j);
+      }
+    }
+    return std::pow(weight, identities.size() - 1);
+  }
+}
+
+std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const Eigen::MatrixXf &prior) {
+  const size_t trackCount = probabilities.size(0);
+  const size_t identityCount = probabilities.size(1);
+
+  // Iterate over all permutations
+  const size_t optimTrackCount = std::min(trackCount, identityCount);
+  std::vector<uint8_t> bitmask(optimTrackCount, 1);
+  bitmask.resize(identityCount, 0);
+
+  float bestProb = -std::numeric_limits<float>::infinity();
+  std::vector<int> bestIdentities(optimTrackCount);
+
+  std::vector<int> permIdentities(optimTrackCount);
+  // print integers and permute bitmask
+  do {
+    int j = 0;
+    for (size_t i = 0; i < bitmask.size(); ++i) // [0..N-1] integers
+    {
+      if (bitmask[i]) {
+        permIdentities[j] = static_cast<int>(i);
+        j += 1;
+      }
+    }
+
+    // Iterate over all permutations of the selected identities
+    do {
+      const float weight = calculateWeight(permIdentities, prior);
+      if (weight == 0.0f) {
+        continue;
+      }
+      float prob = 0;
+      for (size_t k = 0; k < optimTrackCount; ++k) {
+        prob += probabilities[k][permIdentities[k]].item<float>();
+      }
+
+      // Remember best
+      if (prob > bestProb) {
+        bestProb = prob;
+        bestIdentities = permIdentities;
+      }
+    } while (std::next_permutation(permIdentities.begin(), permIdentities.end()));
+
+  } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
+
+  // TODO: fix this
+  bestIdentities.resize(trackCount, identityCount + 1);
+
+  // Force to max probability
+  at::Tensor minProbs = probabilities.argmax(1);
+  for (size_t i = 0; i < trackCount; ++i) {
+    bestIdentities[i] = minProbs[i].item<int>();
+  }
+
+  return bestIdentities;
+}
+
 void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
                              const float scale_image_from_detection,
                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
-                             std::span<uint32_t> outputIdentities, zoo_msgs::msg::Timings &timings) {
+                             zoo_msgs::msg::Detection &msg) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
@@ -157,15 +232,46 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   //   throw std::runtime_error("err");
   // }
 
-  at::Tensor identityTensor = identityResultGpu.to(at::kCPU).argmax(1);
+  at::Tensor identityLogits = identityResultGpu.to(at::kCPU); // Dims: [track, identity]
+  at::Tensor identityProbs =
+      torch::nn::functional::softmax(identityLogits, torch::nn::functional::SoftmaxFuncOptions(1));
+
+  const size_t identityCount = identityLogits.size(1);
+  Eigen::MatrixXf prior;
+  prior.resize(identityCount, identityCount);
+  prior.setConstant(1.0f);
+  for (size_t i = 0; i < identityCount; ++i) {
+    prior(i, i) = 0; // Same identity cannot happen twice
+  }
+  constexpr int kChandra = 0;
+  constexpr int kIndi = 1;
+  constexpr int kFahra = 2;
+  constexpr int kPanang = 3;
+
+  prior(kChandra, kFahra) = 0;
+  prior(kChandra, kPanang) = 0;
+  prior(kIndi, kFahra) = 0;
+  prior(kIndi, kPanang) = 0;
+  prior(kFahra, kChandra) = 0;
+  prior(kFahra, kIndi) = 0;
+  prior(kPanang, kChandra) = 0;
+  prior(kPanang, kIndi) = 0;
+
+  // TODO: sort tracks based on score
+  const std::vector<int> identities = selectOptimalIdentities(identityProbs, prior);
+  assert(identities.size() == bboxes.size());
 
   for (const auto i : std::views::iota(0u, bboxes.size())) {
-    outputIdentities[i] = identityTensor[i].item<int>() + 1; // Add one because 0 is background
+    msg.identity_ids[i] = identities[i] + 1; // Add one because 0 is background
+    for (const auto j : std::views::iota(0u, identityCount)) {
+      msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
+      // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
+    }
   }
 
   constexpr auto MS_TO_NS = 1e6f;
   cudaStreamSynchronize(cudaStream_);
-  addRosKeyValue(timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
+  addRosKeyValue(msg.timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 
 } // namespace zoo

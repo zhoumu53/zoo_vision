@@ -23,6 +23,7 @@ pub struct RerunForwarder {
     first_ros_time_ns: Option<i64>,
     // camera_indices: HashMap<String, usize>,
     name_from_identity: HashMap<u32, String>,
+    color_from_identity: HashMap<u32, rerun::Color>,
 
     key_colors: HashMap<String, rerun::Color>,
 }
@@ -63,6 +64,10 @@ fn cast_ros_key_value_arrayf(ros_array: &zoo_msgs::msg::rmw::KeyValueArrayf) -> 
         values.iter().map(|x| *x),
     )
     .collect()
+}
+
+fn rerun_from_hex(color: &HexColor) -> rerun::Color {
+    rerun::Color::from_unmultiplied_rgba(color.r, color.g, color.b, color.a)
 }
 
 impl RerunForwarder {
@@ -189,6 +194,14 @@ impl RerunForwarder {
                     .iter()
                     .map(|(name, individual)| (individual.id, name.clone())),
             ),
+            color_from_identity: HashMap::from_iter(config.individuals.iter().map(
+                |(_, individual)| {
+                    (
+                        individual.id,
+                        rerun_from_hex(&HexColor::parse_rgb(&individual.color).unwrap()),
+                    )
+                },
+            )),
             key_colors: HashMap::new(),
         })
     }
@@ -372,6 +385,36 @@ impl RerunForwarder {
             format!("/cameras/{}/detections/masks", camera),
             &rr_image.with_draw_order(1.0).with_opacity(0.4),
         )?;
+
+        // Log identity logits
+        {
+            // Map logits buffer
+            let identity_count = 5;
+            let all_logits: ArrayBase<ndarray::ViewRepr<&f32>, Ix2> = unsafe {
+                ArrayView::from_shape_ptr(
+                    (detection_count, identity_count),
+                    msg.identity_logits.as_ptr(),
+                )
+            };
+            for idx in 0..detection_count {
+                for id0 in 0..identity_count {
+                    let id = id0 as u32 + 1;
+
+                    // let logits = all_logits.slice(s![idx, ..]);
+                    let rr_path = format!(
+                        "/identity_logits/{}/track_{}/id_{}",
+                        camera, msg.track_ids[idx], self.name_from_identity[&id]
+                    );
+
+                    self.recording.log(
+                        rr_path.as_str(),
+                        &rerun::SeriesLine::new().with_color(self.color_from_identity[&id]),
+                    )?;
+                    self.recording
+                        .log(rr_path, &rerun::Scalar::new(all_logits[[idx, id0]] as f64))?;
+                }
+            }
+        }
 
         // Log processing times
         for (key, value_hz) in cast_ros_key_value_arrayf(&msg.timings.items_hz) {
