@@ -33,18 +33,21 @@ using float32_t = float;
 
 class Identifier : public rclcpp::Node {
 public:
-  explicit Identifier(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
+  explicit Identifier(TrackMatcher &trackMatcher, const rclcpp::NodeOptions &options = rclcpp::NodeOptions(),
+                      int nameIndex = 999);
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
 
   void onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
-                   const float scale_image_from_detection, std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
-                   zoo_msgs::msg::Detection &msg);
+                   const float scale_image_from_detection, const std::span<const TrackId> trackIds,
+                   const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes, zoo_msgs::msg::Detection &msg);
 
 private:
   std::string cameraName_;
   RateSampler rateSampler_;
+
+  TrackMatcher &trackMatcher_;
 
   torch::jit::script::Module identityNetwork_;
 };

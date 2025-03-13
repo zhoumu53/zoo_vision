@@ -15,8 +15,20 @@ from torch import nn
 from torch.utils.data.dataloader import default_collate
 from torchvision.transforms.functional import InterpolationMode
 from transforms import get_mixup_cutmix
+from identity_sequence_dataset import IdentitySequenceDataset
 
 from torch.utils.tensorboard import SummaryWriter
+from model import get_model
+
+
+def adjust_sequence_output(output, target):
+    if isinstance(output, dict):
+        output = output["logits"]
+        output = output[:, -1, :]
+        # batch_size, time_count, class_count = output.shape
+        # output = output.reshape((batch_size * time_count, class_count))
+        # target = torch.cat([target] * time_count, dim=0)
+    return output, target
 
 
 def train_one_epoch(
@@ -46,6 +58,7 @@ def train_one_epoch(
         image, target = image.to(device), target.to(device)
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             output = model(image)
+            output, target = adjust_sequence_output(output, target)
             loss = criterion(output, target)
 
         optimizer.zero_grad()
@@ -107,6 +120,7 @@ def evaluate(
             image = image.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             output = model(image)
+            output, target = adjust_sequence_output(output, target)
             loss = criterion(output, target)
 
             acc1, acc2 = utils.accuracy(output, target, topk=(1, 2))
@@ -156,7 +170,7 @@ def _get_cache_path(filepath):
     return cache_path
 
 
-def load_data(traindir, valdir, args):
+def load_data(traindir, valdir, use_sequence_dataset: bool, args):
     # Data loading code
     print("Loading data")
     val_resize_size, val_crop_size, train_crop_size = (
@@ -234,6 +248,10 @@ def load_data(traindir, valdir, args):
             utils.mkdir(os.path.dirname(cache_path))
             utils.save_on_master((dataset_test, valdir), cache_path)
 
+    if use_sequence_dataset:
+        dataset = IdentitySequenceDataset(args.sequence_length, dataset)
+        dataset_test = IdentitySequenceDataset(args.sequence_length, dataset_test)
+
     print("Creating data loaders")
     if args.distributed:
         if hasattr(args, "ra_sampler") and args.ra_sampler:
@@ -265,10 +283,11 @@ def main(args):
     else:
         torch.backends.cudnn.benchmark = True
 
+    use_sequence_dataset = "gru" in args.model
     train_dir = os.path.join(args.data_path, "train")
     val_dir = os.path.join(args.data_path, "val")
     dataset, dataset_test, train_sampler, test_sampler = load_data(
-        train_dir, val_dir, args
+        train_dir, val_dir, use_sequence_dataset, args
     )
     print(f"Dataset: {len(dataset)} images")
 
@@ -314,16 +333,10 @@ def main(args):
     )
 
     print("Creating model")
-    num_pretrained_classes = 1000
-    model = torchvision.models.get_model(
-        args.model, weights=args.weights, num_classes=num_pretrained_classes
+    INDIVIDUAL_COUNT = 5
+    model = get_model(
+        model_name=args.model, weights=args.weights, num_classes=INDIVIDUAL_COUNT
     )
-    if num_pretrained_classes != num_classes:
-        print(
-            "Replacing final classifier layer because pretrained class count doesn't match"
-        )
-        num_features = model.classifier.in_features
-        model.classifier = nn.Linear(num_features, num_classes)
 
     # Freeze backbone layers
     for layer_idx in range(args.freeze):
@@ -810,6 +823,12 @@ def get_args_parser(add_help=True):
         default=9,
         type=int,
         help="Number of layers to freeze",
+    )
+    parser.add_argument(
+        "--sequence_length",
+        default=10,
+        type=int,
+        help="Number of images in the sequence (only applicable to gru model)",
     )
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
     return parser

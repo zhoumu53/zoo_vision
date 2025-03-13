@@ -37,8 +37,8 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Identifier::Identifier(const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("identifier_{}", nameIndex), options) {
+Identifier::Identifier(TrackMatcher &trackMatcher, const rclcpp::NodeOptions &options, int nameIndex)
+    : Node(std::format("identifier_{}", nameIndex), options), trackMatcher_{trackMatcher} {
   at::InferenceMode inferenceGuard;
 
   cameraName_ = declare_parameter<std::string>("camera_name");
@@ -160,7 +160,7 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
 }
 
 void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
-                             const float scale_image_from_detection,
+                             const float scale_image_from_detection, const std::span<const TrackId> trackIds,
                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
                              zoo_msgs::msg::Detection &msg) {
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
@@ -173,10 +173,15 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   const int detectionCount = bboxes.size();
   const int channels = 3;
 
+  constexpr size_t TRACK_STATE_SIZE = 1024;
+  auto trackState0 = at::zeros({1, detectionCount, TRACK_STATE_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
   auto inputRegions =
-      at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+      at::zeros({detectionCount, 1, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+
   // Extract crops
-  for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
+  for (const auto &[i, item] : std::views::enumerate(std::views::zip(trackIds, bboxes))) {
+    const auto &[trackId, bbox] = item;
+
     const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
     Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
     Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
@@ -209,20 +214,45 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     const Eigen::Vector2i c0 = (Eigen::Vector2i(CROP_SIZE, CROP_SIZE) - rescaleSize) / 2;
     const Eigen::Vector2i c1 = c0 + rescaleSize;
 
-    auto destRegion = inputRegions[i].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
+    auto destRegion = inputRegions[i][0].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
     destRegion.copy_(rescaledPatch[0]);
+
+    // Copy track state
+    TrackData *track = trackMatcher_.getTrackData(trackId);
+    assert(track != nullptr);
+    if (track->identityState.has_value()) {
+      trackState0[0][i].copy_(track->identityState.value());
+    }
   }
 
   // Send to model
-  at::Tensor identityResultGpu;
+  at::Tensor identityLogitsGpu;
+  at::Tensor trackState;
   at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
   {
     nvtxLabel.emplace("id_net (" + cameraName_ + ")");
     eventBeforeNetwork.record();
-    identityResultGpu = identityNetwork_.forward({inputRegions}).toTensor();
+    at::List<at::Tensor> inputs{inputRegions, trackState0};
+    auto method = identityNetwork_.get_method("forward");
+    // c10::IValue modelResult = method(std::move(inputs));
+    c10::IValue modelResult = identityNetwork_.forward({inputRegions, trackState0});
+    c10::Dict<c10::IValue, c10::IValue> modelResultDict = modelResult.toGenericDict();
+
+    identityLogitsGpu = modelResultDict.at("logits").toTensor();
+    identityLogitsGpu = identityLogitsGpu.squeeze(1); // Remove dummy time dimension
+
+    trackState = modelResultDict.at("gru_state").toTensor();
+    trackState = trackState.squeeze(0); // Remove dummy time dimension
     eventAfterNetwork.record();
   }
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
+
+  // Remember track state
+  for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
+    TrackData *track = trackMatcher_.getTrackData(trackId);
+    assert(track != nullptr);
+    track->identityState.emplace(trackState[i]);
+  }
 
   // std::cout << identityResultGpu.to(torch::kCPU);
   // for (auto i : std::views::iota(0, detectionCount)) {
@@ -232,7 +262,7 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   //   throw std::runtime_error("err");
   // }
 
-  at::Tensor identityLogits = identityResultGpu.to(at::kCPU); // Dims: [track, identity]
+  at::Tensor identityLogits = identityLogitsGpu.to(at::kCPU); // Dims: [track, identity]
   at::Tensor identityProbs =
       torch::nn::functional::softmax(identityLogits, torch::nn::functional::SoftmaxFuncOptions(1));
 
@@ -264,8 +294,8 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   for (const auto i : std::views::iota(0u, bboxes.size())) {
     msg.identity_ids[i] = identities[i] + 1; // Add one because 0 is background
     for (const auto j : std::views::iota(0u, identityCount)) {
-      msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
-      // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
+      msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
+      // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
     }
   }
 
@@ -276,6 +306,6 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
 
 } // namespace zoo
 
-#include "rclcpp_components/register_node_macro.hpp"
+// #include "rclcpp_components/register_node_macro.hpp"
 
-RCLCPP_COMPONENTS_REGISTER_NODE(zoo::Identifier)
+// RCLCPP_COMPONENTS_REGISTER_NODE(zoo::Identifier)

@@ -1,5 +1,9 @@
 {
   "individuals": {
+    "Invalid": {
+      "id": 0,
+      "color": "#FFFFFF"
+    },
     "Chandra": {
       "id": 1,
       "color": "#F5FFC6"
@@ -44,7 +48,7 @@
   "models": {
     "elephant_label_id": 1,
     "segmentation": "../models/model_coco_4cam_8k/maskrcnn_c2_coco_4cam_8k.ptc",
-    "identity": "../models/identity/freeze09/dense121_c5_identity.ptc"
+    "identity": "../models/identity/gru_v1/zoo_id_gru.ptc"
   },
   "live_stream": false,
   "video_db": "/home/dherrera/data/elephants/identity/videos/src/identity_days/video_db.json",

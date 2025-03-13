@@ -13,6 +13,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include <ATen/Tensor.h>
 #include <Eigen/Dense>
 #include <span>
 #include <unordered_map>
@@ -21,9 +22,16 @@ namespace zoo {
 
 using float32_t = float;
 
+using TrackId = uint32_t;
+
+struct TrackData {
+  TrackId id;
+  Eigen::AlignedBox2f box;
+  std::optional<at::Tensor> identityState;
+};
+
 class TrackMatcher {
 public:
-  using TrackId = uint32_t;
   static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 15;
 
@@ -31,9 +39,10 @@ public:
 
   void update(std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds);
 
+  TrackData *getTrackData(TrackId id);
+
 private:
   TrackId nextTrackId_ = 1;
-  size_t validTrackCount_ = 0;
-  std::array<std::pair<TrackId, Eigen::AlignedBox2f>, MAX_TRACK_COUNT> tracks_;
+  std::unordered_map<TrackId, TrackData> tracks_;
 };
 } // namespace zoo

@@ -58,7 +58,7 @@ Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
   detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
   RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
 
-  identifier_ = std::make_shared<Identifier>(options, nameIndex);
+  identifier_ = std::make_shared<Identifier>(trackMatcher_, options, nameIndex);
 }
 
 void Segmenter::readConfig(const nlohmann::json &config) {
@@ -247,14 +247,17 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   detectionMsg->detection_count = detectionCount;
   detectionMsg->masks.sizes[0] = detectionCount;
 
+  auto msgBboxes = std::span{detectionMsg->bboxes.data(), detectionMsg->detection_count};
+  auto msgTrackIds = std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count};
+
   // Assign track ids
-  trackMatcher_.update(boxes, std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count});
+  trackMatcher_.update(boxes, msgTrackIds);
 
   ////////////////////////////////////////////////////////////
   // Forward detecto for identification
   if (detectionCount > 0) {
-    identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection,
-                             std::span{detectionMsg->bboxes.data(), detectionCount}, *detectionMsg);
+    identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection, msgTrackIds, msgBboxes,
+                             *detectionMsg);
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");

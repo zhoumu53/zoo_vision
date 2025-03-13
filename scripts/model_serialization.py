@@ -1,8 +1,9 @@
+from project_root import PROJECT_ROOT
+from zoo_vision.training.identity.model import get_model
+
 from pathlib import Path
 import torch
 import torchvision as tv
-
-from project_root import PROJECT_ROOT
 
 
 class ModelWithTransforms(torch.nn.Module):
@@ -11,9 +12,21 @@ class ModelWithTransforms(torch.nn.Module):
         self.model = model
         self.transforms = transforms
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         xn = self.transforms(x)
         y = self.model.forward(xn)
+        return y
+
+
+class StateModelWithTransforms(torch.nn.Module):
+    def __init__(self, model, transforms):
+        super().__init__()
+        self.model = model
+        self.transforms = transforms
+
+    def forward(self, x: torch.Tensor, state0: torch.Tensor | None = None):
+        xn = self.transforms(x)
+        y = self.model.forward(x=xn, gru_state0=state0)
         return y
 
 
@@ -22,6 +35,7 @@ def load_model(path: Path):
         model = torch.jit.load(path)
     else:
         extra_transforms = None
+        state_in_forward = False
 
         print("Loading empty model...")
         if path.name.startswith("maskrcnn_c2_"):
@@ -37,6 +51,14 @@ def load_model(path: Path):
             extra_transforms = tv.models.DenseNet121_Weights.IMAGENET1K_V1.transforms(
                 antialias=True
             )
+        elif path.name.startswith("zoo_id_gru"):
+            model = get_model("zoo_id_gru", num_classes=5)
+            model.gru.flatten_parameters()
+            state_in_forward = True
+
+            extra_transforms = tv.models.DenseNet121_Weights.IMAGENET1K_V1.transforms(
+                antialias=True
+            )
         else:
             raise RuntimeError("Unknown model")
 
@@ -47,6 +69,9 @@ def load_model(path: Path):
         model.load_state_dict(checkpoint["model"])
 
         if extra_transforms is not None:
-            model = model = ModelWithTransforms(model, extra_transforms)
+            if state_in_forward:
+                model = StateModelWithTransforms(model, extra_transforms)
+            else:
+                model = ModelWithTransforms(model, extra_transforms)
 
     return model

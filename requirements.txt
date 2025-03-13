@@ -23,6 +23,7 @@ pycocotools
 opencv-python
 torch
 torchvision
+torchinfo
 lark
 fiftyone # To browse coco datasets and predictions
 

@@ -49,15 +49,30 @@ namespace zoo {
 
 TrackMatcher::TrackMatcher() = default;
 
+TrackData *TrackMatcher::getTrackData(TrackId id) {
+  auto it = tracks_.find(id);
+  if (it == tracks_.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
 void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds) {
   const size_t inputBoxCount = boxes.size();
 
-  Eigen::MatrixXf score;
-  score.resize(validTrackCount_, inputBoxCount);
+  // Build a mapping index->track iterator
+  std::vector<decltype(tracks_)::iterator> trackIts;
+  for (auto it = tracks_.begin(); it != tracks_.end(); ++it) {
+    trackIts.push_back(it);
+  }
 
-  for (const int r : std::views::iota(0uz, validTrackCount_)) {
+  // Build score matrix: scores(track_idx, box_idx)
+  Eigen::MatrixXf score;
+  score.resize(tracks_.size(), inputBoxCount);
+
+  for (const auto &[r, trackIt] : std::views::enumerate(trackIts)) {
     for (const int c : std::views::iota(0uz, inputBoxCount)) {
-      score(r, c) = iou(tracks_[r].second, boxes[c]);
+      score(r, c) = iou(trackIt->second.box, boxes[c]);
     }
   }
 
@@ -66,12 +81,15 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
   std::array<bool, MAX_TRACK_COUNT> trackUsed{false};
 
   // Greedy matching
-  if (validTrackCount_ > 0 && inputBoxCount > 0) {
+  if (tracks_.size() > 0 && inputBoxCount > 0) {
     auto argmax = eigen_argmax(score);
     while (argmax.second > 0) {
       const auto [r, c] = argmax.first;
-      outputTrackIds[c] = tracks_[r].first;
-      tracks_[r].second = boxes[c];
+
+      TrackData &track = trackIts[r]->second;
+      outputTrackIds[c] = track.id;
+      track.box = boxes[c];
+
       inputUsed[c] = true;
       trackUsed[r] = true;
       score.row(r).setConstant(0.0f);
@@ -82,26 +100,12 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
   }
 
   // Drop missed tracks
-  for (const int r : std::views::iota(0uz, validTrackCount_)) {
+  for (const auto &[r, it] : std::views::enumerate(trackIts)) {
     if (!trackUsed[r]) {
-      tracks_[r].first = INVALID_TRACK_ID;
+      it->second.id = INVALID_TRACK_ID;
     }
   }
-
-  // Compact
-  {
-    size_t dst = 0;
-    for (size_t src = 0; src < validTrackCount_; src++) {
-      const bool isValid = tracks_[src].first != INVALID_TRACK_ID;
-      if (isValid) {
-        if (src != dst) {
-          tracks_[dst] = tracks_[src];
-        }
-        dst += 1;
-      }
-    }
-    validTrackCount_ = dst;
-  }
+  std::erase_if(tracks_, [](const std::pair<TrackId, TrackData> &item) { return item.second.id == INVALID_TRACK_ID; });
 
   // Create new tracks
   for (const int c : std::views::iota(0uz, inputBoxCount)) {
@@ -112,8 +116,7 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
     nextTrackId_ += 1;
 
     outputTrackIds[c] = newTrackId;
-    tracks_[validTrackCount_] = {newTrackId, boxes[c]};
-    validTrackCount_ += 1;
+    tracks_.insert({newTrackId, TrackData{newTrackId, boxes[c], std::nullopt}});
   }
 }
 } // namespace zoo

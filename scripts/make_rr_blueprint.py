@@ -52,6 +52,12 @@ def make_blueprint():
                             origin="/processing_times/msec",
                             # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
                         ),
+                        rrb.TimeSeriesView(
+                            name="Logits",
+                            origin="/identity_logits",
+                            contents="/identity_logits/zag_elp_cam_019/track_1/**",
+                            # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
+                        ),
                     ]
                 ),
             ],

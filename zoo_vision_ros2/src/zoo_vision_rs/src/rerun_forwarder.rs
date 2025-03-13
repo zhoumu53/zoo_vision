@@ -321,8 +321,18 @@ impl RerunForwarder {
         let identity_ids: Vec<u16> = (0..detection_count)
             .map(|x| msg.identity_ids[x] as u16)
             .collect();
-        let labels: Vec<&str> = (0..detection_count)
-            .map(|x| self.name_from_identity[&msg.identity_ids[x]].as_str())
+        let labels: Vec<String> = (0..detection_count)
+            .map(|x| {
+                let id = msg.identity_ids[x];
+                if self.name_from_identity.contains_key(&id) == false {
+                    print!("About to panic with identity id=={}", id);
+                }
+                format!(
+                    "{} (T{})",
+                    self.name_from_identity[&id].as_str(),
+                    msg.track_ids[x]
+                )
+            })
             .collect();
         // Map message data to image array
         assert!(msg.detection_count == msg.masks.sizes[0]);
