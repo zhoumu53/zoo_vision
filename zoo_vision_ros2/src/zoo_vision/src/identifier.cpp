@@ -54,6 +54,8 @@ void Identifier::readConfig(const nlohmann::json &config) {
   // Load model
   const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["identity"]);
   loadModel(modelPath);
+  isStatefulModel_ = (modelPath.filename().string().contains("gru"));
+  RCLCPP_INFO(get_logger(), "Is model stateful: %d", int(isStatefulModel_));
 }
 
 void Identifier::loadModel(const std::filesystem::path &modelPath) {
@@ -159,29 +161,17 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
   return bestIdentities;
 }
 
-void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
-                             const float scale_image_from_detection, const std::span<const TrackId> trackIds,
-                             const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
-                             zoo_msgs::msg::Detection &msg) {
-  at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
-  at::InferenceMode inferenceGuard;
-  std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
-
-  assert(imageGpu.device().is_cuda());
-
+void Identifier::extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu,
+                              const float scale_image_from_detection,
+                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
   constexpr int CROP_SIZE = 256;
   const int detectionCount = bboxes.size();
   const int channels = 3;
 
-  constexpr size_t TRACK_STATE_SIZE = 1024;
-  auto trackState0 = at::zeros({1, detectionCount, TRACK_STATE_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
-  auto inputRegions =
-      at::zeros({detectionCount, 1, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+  patches = at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
 
   // Extract crops
-  for (const auto &[i, item] : std::views::enumerate(std::views::zip(trackIds, bboxes))) {
-    const auto &[trackId, bbox] = item;
-
+  for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
     const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
     Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
     Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
@@ -214,9 +204,17 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     const Eigen::Vector2i c0 = (Eigen::Vector2i(CROP_SIZE, CROP_SIZE) - rescaleSize) / 2;
     const Eigen::Vector2i c1 = c0 + rescaleSize;
 
-    auto destRegion = inputRegions[i][0].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
-    destRegion.copy_(rescaledPatch[0]);
+    auto patch_i = patches[i].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
+    patch_i.copy_(rescaledPatch[0]);
+  }
+}
 
+void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
+                                   const std::span<const TrackId> trackIds) {
+  const int detectionCount = trackIds.size();
+  constexpr size_t TRACK_STATE_SIZE = 1024;
+  auto trackState0 = at::zeros({1, detectionCount, TRACK_STATE_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+  for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
     // Copy track state
     TrackData *track = trackMatcher_.getTrackData(trackId);
     assert(track != nullptr);
@@ -225,17 +223,10 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     }
   }
 
-  // Send to model
-  at::Tensor identityLogitsGpu;
+  auto patchesTime = patches.unsqueeze(1);
   at::Tensor trackState;
-  at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
   {
-    nvtxLabel.emplace("id_net (" + cameraName_ + ")");
-    eventBeforeNetwork.record();
-    at::List<at::Tensor> inputs{inputRegions, trackState0};
-    auto method = identityNetwork_.get_method("forward");
-    // c10::IValue modelResult = method(std::move(inputs));
-    c10::IValue modelResult = identityNetwork_.forward({inputRegions, trackState0});
+    c10::IValue modelResult = identityNetwork_.forward({patchesTime, trackState0});
     c10::Dict<c10::IValue, c10::IValue> modelResultDict = modelResult.toGenericDict();
 
     identityLogitsGpu = modelResultDict.at("logits").toTensor();
@@ -243,9 +234,7 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
 
     trackState = modelResultDict.at("gru_state").toTensor();
     trackState = trackState.squeeze(0); // Remove dummy time dimension
-    eventAfterNetwork.record();
   }
-  nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
   // Remember track state
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
@@ -253,6 +242,39 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
     assert(track != nullptr);
     track->identityState.emplace(trackState[i]);
   }
+}
+
+void Identifier::callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches) {
+  c10::IValue modelResult = identityNetwork_.forward({patches});
+  identityLogitsGpu = modelResult.toTensor();
+}
+
+void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
+                             const float scale_image_from_detection, const std::span<const TrackId> trackIds,
+                             const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
+                             zoo_msgs::msg::Detection &msg) {
+  at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
+  at::InferenceMode inferenceGuard;
+  std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
+
+  assert(imageGpu.device().is_cuda());
+
+  // Prepare
+  at::Tensor patches;
+  extractCrops(patches, imageGpu, scale_image_from_detection, bboxes);
+
+  // Send to model
+  at::Tensor identityLogitsGpu;
+  nvtxLabel.emplace("id_net (" + cameraName_ + ")");
+  at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
+  eventBeforeNetwork.record();
+  if (isStatefulModel_) {
+    callStatefulModel(identityLogitsGpu, patches, trackIds);
+  } else {
+    callStatelessModel(identityLogitsGpu, patches);
+  }
+  eventAfterNetwork.record();
+  nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
   // std::cout << identityResultGpu.to(torch::kCPU);
   // for (auto i : std::views::iota(0, detectionCount)) {

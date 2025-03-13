@@ -44,11 +44,18 @@ public:
                    const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes, zoo_msgs::msg::Detection &msg);
 
 private:
+  void extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu, const float scale_image_from_detection,
+                    const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
+  void callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
+                         const std::span<const TrackId> trackIds);
+  void callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches);
+
   std::string cameraName_;
   RateSampler rateSampler_;
 
   TrackMatcher &trackMatcher_;
 
+  bool isStatefulModel_;
   torch::jit::script::Module identityNetwork_;
 };
 } // namespace zoo
