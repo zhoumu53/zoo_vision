@@ -82,6 +82,9 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::shared_ptr<rclcpp::Node>> nodes;
 
+  // Start rerun first so we can connect right away
+  nodes.push_back(std::make_shared<RerunForwarder>(options));
+
   const bool useLiveStream = config["live_stream"].get<bool>();
   if (!useLiveStream) {
     nodes.push_back(std::make_shared<VideoLoader>(options));
@@ -98,8 +101,6 @@ int main(int argc, char *argv[]) {
     nodes.push_back(std::make_shared<Segmenter>(optionsCamera, index));
     index += 1;
   }
-
-  nodes.push_back(std::make_shared<RerunForwarder>(options));
 
   for (const auto &node : nodes) {
     exec.add_node(node);
