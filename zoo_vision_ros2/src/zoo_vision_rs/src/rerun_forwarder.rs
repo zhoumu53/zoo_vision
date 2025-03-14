@@ -330,9 +330,9 @@ impl RerunForwarder {
         )?;
 
         let detection_count = msg.detection_count as usize;
-        let track_ids: Vec<u16> = (0..detection_count)
-            .map(|x| msg.track_ids[x] as u16)
-            .collect();
+        // let track_ids: Vec<u16> = (0..detection_count)
+        //     .map(|x| msg.track_ids[x] as u16)
+        //     .collect();
         let identity_ids: Vec<u16> = (0..detection_count)
             .map(|x| msg.identity_ids[x] as u16)
             .collect();

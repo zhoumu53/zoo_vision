@@ -106,7 +106,7 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
 
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
-    imageCaches_.insert({name, {}});
+    imageCaches_.emplace(name, std::make_unique<ImageQueue>());
 
     // subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
     subscribeImage(name, name + "/image"); // Full-res image from camera
@@ -123,12 +123,8 @@ void RerunForwarder::onImage(const std::string &cameraName, const std::string & 
   //                      msg.header.frame_id.data.data());
 
   // Store the image in the cache to use when we get the detections
-  std::lock_guard<std::mutex> lock(imageCachesMutex_);
-  ImageCache &cache = imageCaches_[cameraName];
-  if (cache.size() >= MAX_CACHE_SIZE) {
-    cache.pop_front();
-  }
-  cache.push_back(std::move(msg));
+  ImageQueue &cache = *imageCaches_[cameraName];
+  cache.pushImage(std::move(msg));
   // zoo_rs_image_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
 }
 
@@ -141,34 +137,7 @@ void RerunForwarder::onDetection(const std::string &cameraName, const std::strin
   std::string_view id = getMsgString(msg.header.frame_id);
 
   // Find image
-  std::shared_ptr<const zoo_msgs::msg::Image12m> image = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(imageCachesMutex_);
-    ImageCache &cache = imageCaches_[cameraName];
-
-    ImageCache::iterator matchingImageIt = cache.begin();
-    for (; matchingImageIt != cache.end(); ++matchingImageIt) {
-      const auto &image_i = **matchingImageIt;
-      std::string_view id_i = getMsgString(image_i.header.frame_id);
-
-      if (id.compare(id_i) == 0) {
-        break;
-      }
-    }
-
-    if (matchingImageIt != cache.end()) {
-      image = *matchingImageIt;
-
-      // We can drop all images before this one
-      auto eraseIt = cache.begin();
-      while (*eraseIt != image) {
-        eraseIt = cache.erase(eraseIt);
-      }
-      cache.erase(eraseIt);
-    } else {
-      RCLCPP_ERROR(get_logger(), "Could not find image %s in cache.", id.data());
-    }
-  }
+  std::shared_ptr<const zoo_msgs::msg::Image12m> image = imageCaches_[cameraName]->popImage(id);
   if (image != nullptr) {
     // Image with same frame id found
     // Forward and clear cache

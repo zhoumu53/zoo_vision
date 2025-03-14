@@ -67,6 +67,8 @@ add_executable(zoo_vision
   src/segmenter.cpp
   src/identifier.hpp
   src/identifier.cpp
+  src/image_queue.hpp
+  src/image_queue.cpp
   src/rerun_forwarder.hpp
   src/rerun_forwarder.cpp
   src/track_matcher.hpp
