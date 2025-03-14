@@ -72,24 +72,13 @@ def get_dataset(is_train, args):
         )
     elif args.dataset == "mixed_elephants":
         num_classes = 2
-        ds1 = get_coco(
-            root="/home/dherrera/data/coco",
-            image_set=image_set,
-            mode="elephants",
-            transforms=get_transform(is_train, args),
-            use_v2=args.use_v2,
-            with_masks=with_masks,
-        )
-        ds2 = get_zoo_elephants_ds(
-            root="/home/dherrera/data/elephants/training_data",
+        ds = get_zoo_elephants_ds(
+            root=args.data_path,
             image_set=image_set,
             transforms=get_transform(is_train, args),
             use_v2=args.use_v2,
             with_masks=with_masks,
         )
-        from torch.utils.data.dataset import ConcatDataset
-
-        ds = ConcatDataset([ds1, ds2])
     return ds, num_classes
 
 
@@ -320,6 +309,7 @@ def main(args):
 
     dataset, num_classes = get_dataset(is_train=True, args=args)
     dataset_test, _ = get_dataset(is_train=False, args=args)
+    print(f"Dataset size: train={len(dataset)}, val={len(dataset_test)}")
 
     print("Creating data loaders")
     if args.distributed:
@@ -501,7 +491,13 @@ def main(args):
             )
 
         # evaluate after every epoch
-        # evaluate(model, data_loader_test, device=device)
+        evaluate(
+            model,
+            data_loader_test,
+            device=device,
+            epoch=epoch,
+            tb_writer=tb_writer,
+        )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

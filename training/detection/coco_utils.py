@@ -245,11 +245,9 @@ def get_coco(
 
 
 def get_zoo_elephants_ds(root, image_set, transforms, use_v2=False, with_masks=False):
-    image_set = "train"  # TODO: We need a validation set too!
-
     PATHS = {
-        "train": (".", "annotations.json"),
-        "val": (".", "validation.json"),
+        "train": (".", "coco_v1_d2_good.json"),
+        "val": (".", "val_coco_dan1.json"),
     }
 
     img_folder, ann_file = PATHS[image_set]
