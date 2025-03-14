@@ -48,10 +48,10 @@
   "models": {
     "elephant_label_id": 1,
     "segmentation": "../models/model_coco_4cam_8k/maskrcnn_c2_coco_4cam_8k.ptc",
-    "identity": "../models/identity/gru_v1/zoo_id_gru.ptc"
+    "identity": "../models/identity/gru_v2/zoo_id_gru_v2.ptc"
   },
   "live_stream": false,
-  "video_db": "/home/dherrera/data/elephants/identity/videos/src/identity_days/video_db.json",
+  "video_db": "/home/dherrera/data/elephants/videos/video_db.json",
   "replay_time": "2025-01-25T06:00:29",
   "enabled_cameras": [
     "zag_elp_cam_016",
