@@ -25,6 +25,8 @@ pub struct RerunForwarder {
     name_from_identity: HashMap<u32, String>,
     color_from_identity: HashMap<u32, rerun::Color>,
 
+    camera_short_from_name: HashMap<String, String>,
+
     key_colors: HashMap<String, rerun::Color>,
 }
 
@@ -156,6 +158,19 @@ impl RerunForwarder {
         }
 
         // Log an annotation context to assign a label and color to each class
+        let mut identity_ctx = vec![(
+            0u16,
+            "Background",
+            rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
+        )];
+        for (name, individual) in config.individuals.iter() {
+            let color = HexColor::parse_rgb(&individual.color)?;
+            identity_ctx.push((
+                individual.id as u16,
+                name,
+                rerun::Rgba32::from_unmultiplied_rgba(color.r, color.g, color.b, 128),
+            ));
+        }
         for (camera_name, _) in config.cameras.iter() {
             recording.log_static(
                 format!("/cameras/{}/detections", camera_name),
@@ -165,25 +180,17 @@ impl RerunForwarder {
                     rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
                 )]),
             )?;
-            let mut identity_ctx = vec![(
-                0u16,
-                "Background",
-                rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
-            )];
-            for (name, individual) in config.individuals.iter() {
-                let color = HexColor::parse_rgb(&individual.color)?;
-                identity_ctx.push((
-                    individual.id as u16,
-                    name,
-                    rerun::Rgba32::from_unmultiplied_rgba(color.r, color.g, color.b, 128),
-                ));
-            }
             recording.log_static(
                 format!("/cameras/{}/identities", camera_name),
-                &rerun::AnnotationContext::new(identity_ctx),
+                &rerun::AnnotationContext::new(identity_ctx.clone()),
             )?;
         }
+        recording.log_static(
+            format!("/world/detections"),
+            &rerun::AnnotationContext::new(identity_ctx),
+        )?;
 
+        const ASCII_A: u8 = 'a' as u8;
         Ok(Self {
             recording,
             first_ros_time_ns: None,
@@ -199,6 +206,14 @@ impl RerunForwarder {
                     (
                         individual.id,
                         rerun_from_hex(&HexColor::parse_rgb(&individual.color).unwrap()),
+                    )
+                },
+            )),
+            camera_short_from_name: HashMap::from_iter(config.cameras.iter().enumerate().map(
+                |(i, (name, _))| {
+                    (
+                        name.to_owned(),
+                        format!("{}", (ASCII_A + (i as u8)) as char),
                     )
                 },
             )),
@@ -328,8 +343,9 @@ impl RerunForwarder {
                     print!("About to panic with identity id=={}", id);
                 }
                 format!(
-                    "{} (T{})",
+                    "{} (T{}{})",
                     self.name_from_identity[&id].as_str(),
+                    self.camera_short_from_name[camera],
                     msg.track_ids[x]
                 )
             })
@@ -375,7 +391,9 @@ impl RerunForwarder {
             rerun::Points2D::new(world_positions.axis_iter(Axis(0)).map(|x| (x[0], x[1])));
         self.recording.log(
             format!("/world/detections/{}/positions", camera),
-            &world_points_rr.with_class_ids(track_ids).with_radii([1.0]),
+            &world_points_rr
+                .with_class_ids(identity_ids)
+                .with_radii([1.0]),
         )?;
 
         // Log detection masks
@@ -412,8 +430,10 @@ impl RerunForwarder {
 
                     // let logits = all_logits.slice(s![idx, ..]);
                     let rr_path = format!(
-                        "/identity_logits/{}/track_{}/id_{}",
-                        camera, msg.track_ids[idx], self.name_from_identity[&id]
+                        "/identity_logits/T{}{}/id_{}",
+                        self.camera_short_from_name[camera],
+                        msg.track_ids[idx],
+                        self.name_from_identity[&id]
                     );
 
                     self.recording.log(

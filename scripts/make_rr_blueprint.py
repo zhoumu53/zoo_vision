@@ -3,8 +3,8 @@ import rerun.blueprint as rrb
 
 def make_blueprint():
     cameras = [
-        "zag_elp_cam_016",
         "zag_elp_cam_017",
+        "zag_elp_cam_016",
         "zag_elp_cam_018",
         "zag_elp_cam_019",
     ]
@@ -28,37 +28,56 @@ def make_blueprint():
         rrb.Vertical(
             contents=[
                 rrb.Horizontal(
+                    column_shares=[2, 1],
                     contents=[
                         camera_grid,
                         rrb.Spatial2DView(
                             origin="/world",
                             visual_bounds=rrb.VisualBounds2D(
                                 # Hard-coded world area
-                                x_range=[-114, 11],
-                                y_range=[-64, 40],
+                                # x_range=[-114, 11],
+                                # y_range=[-64, 40],
+                                # Hard-code only sandboxes
+                                x_range=[-81, -42],
+                                y_range=[-71, -38],
                             ),
                         ),
-                    ]
+                    ],
                 ),
                 rrb.Horizontal(
+                    column_shares=[1, 3, 3, 3, 3],
                     contents=[
                         rrb.TimeSeriesView(
                             name="Frequency (Hz)",
                             origin="/processing_times/hz",
                             # axis_y=rrb.ScalarAxis(range=(0, 20), zoom_lock=False),
                         ),
+                        # rrb.TimeSeriesView(
+                        #     name="Processing times (msec)",
+                        #     origin="/processing_times/msec",
+                        #     # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
+                        # ),
                         rrb.TimeSeriesView(
-                            name="Processing times (msec)",
-                            origin="/processing_times/msec",
-                            # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Logits",
+                            name="Logits Ta1",
                             origin="/identity_logits",
-                            contents="/identity_logits/zag_elp_cam_019/track_1/**",
-                            # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
+                            contents="/identity_logits/Ta1/**",
                         ),
-                    ]
+                        rrb.TimeSeriesView(
+                            name="Logits Tb1",
+                            origin="/identity_logits",
+                            contents="/identity_logits/Tb1/**",
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Logits Tc1",
+                            origin="/identity_logits",
+                            contents="/identity_logits/Tc1/**",
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Logits Td1",
+                            origin="/identity_logits",
+                            contents="/identity_logits/Td1/**",
+                        ),
+                    ],
                 ),
             ],
             row_shares=[0.8, 0.2],
