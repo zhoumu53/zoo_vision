@@ -131,6 +131,7 @@ def main():
 
     # Parse all video files
     files = list(input_path.glob("**/*.mp4"))
+    print(f"Found {len(files)} videos")
     video_info_by_camera = parse_video_files(files)
 
     # Find min/max
