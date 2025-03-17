@@ -51,6 +51,7 @@ private:
   void callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches);
 
   std::string cameraName_;
+  bool recordTracks_;
   RateSampler rateSampler_;
 
   TrackMatcher &trackMatcher_;

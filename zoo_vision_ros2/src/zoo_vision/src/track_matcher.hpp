@@ -26,6 +26,7 @@ using TrackId = uint32_t;
 
 struct TrackData {
   TrackId id;
+  size_t trackLength;
   Eigen::AlignedBox2f box;
   std::optional<at::Tensor> identityState;
 };

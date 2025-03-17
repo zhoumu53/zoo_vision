@@ -51,6 +51,9 @@ Identifier::Identifier(TrackMatcher &trackMatcher, const rclcpp::NodeOptions &op
 }
 
 void Identifier::readConfig(const nlohmann::json &config) {
+  // Settings
+  recordTracks_ = config["record_tracks"].get<bool>();
+
   // Load model
   const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["identity"]);
   loadModel(modelPath);
@@ -76,7 +79,6 @@ void Identifier::loadModel(const std::filesystem::path &modelPath) {
 }
 
 void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
-  std::cout << "Size: " << imgTensor.sizes() << std::endl;
   const auto region0 = (imgTensor.permute({1, 2, 0}).to(at::kCPU) * 255).toType(at::kByte).contiguous();
   assert(region0.stride(1) == 3);
   assert(region0.stride(2) == 1);
@@ -263,6 +265,14 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   at::Tensor patches;
   extractCrops(patches, imageGpu, scale_image_from_detection, bboxes);
 
+  // Save images for this track
+  if (recordTracks_) {
+    for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
+      TrackData *track = trackMatcher_.getTrackData(trackId);
+      saveTensorImage(patches[idx], std::format("debug/{}_t{}_{}.png", cameraName_, trackId, track->trackLength));
+    }
+  }
+
   // Send to model
   at::Tensor identityLogitsGpu;
   nvtxLabel.emplace("id_net (" + cameraName_ + ")");
@@ -275,14 +285,6 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   }
   eventAfterNetwork.record();
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
-
-  // std::cout << identityResultGpu.to(torch::kCPU);
-  // for (auto i : std::views::iota(0, detectionCount)) {
-  //   saveTensorImage(inputRegions[i], std::format("debug/region{}.png", i));
-  // }
-  // if (detectionCount){
-  //   throw std::runtime_error("err");
-  // }
 
   at::Tensor identityLogits = identityLogitsGpu.to(at::kCPU); // Dims: [track, identity]
   at::Tensor identityProbs =

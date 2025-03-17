@@ -88,6 +88,7 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
 
       TrackData &track = trackIts[r]->second;
       outputTrackIds[c] = track.id;
+      track.trackLength += 1;
       track.box = boxes[c];
 
       inputUsed[c] = true;
@@ -116,7 +117,7 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
     nextTrackId_ += 1;
 
     outputTrackIds[c] = newTrackId;
-    tracks_.insert({newTrackId, TrackData{newTrackId, boxes[c], std::nullopt}});
+    tracks_.insert({newTrackId, TrackData{newTrackId, /*trackLength*/ 0, boxes[c], /*identityState*/ std::nullopt}});
   }
 }
 } // namespace zoo
