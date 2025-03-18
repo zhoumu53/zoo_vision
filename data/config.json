@@ -47,8 +47,8 @@
   },
   "models": {
     "elephant_label_id": 1,
-    "segmentation": "../models/model_coco_4cam_8k/maskrcnn_c2_coco_4cam_8k.ptc",
-    "identity": "../models/identity/gru_v2/zoo_id_gru_v2.ptc"
+    "segmentation": "../models/segmentation/d2/maskrcnn_c2_coco_d1_d2_10k.ptc",
+    "identity": "../models/identity/gru_v2/zoo_id_gru.ptc"
   },
   "record_tracks": false,
   "live_stream": false,
