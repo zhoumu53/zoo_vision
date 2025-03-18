@@ -57,7 +57,8 @@ TrackData *TrackMatcher::getTrackData(TrackId id) {
   return &it->second;
 }
 
-void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds) {
+void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
+                          std::span<TrackId> outputTrackIds) {
   const size_t inputBoxCount = boxes.size();
 
   // Build a mapping index->track iterator
@@ -89,6 +90,7 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
       TrackData &track = trackIts[r]->second;
       outputTrackIds[c] = track.id;
       track.trackLength += 1;
+      track.lastObservation = now;
       track.box = boxes[c];
 
       inputUsed[c] = true;
@@ -103,7 +105,12 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
   // Drop missed tracks
   for (const auto &[r, it] : std::views::enumerate(trackIts)) {
     if (!trackUsed[r]) {
-      it->second.id = INVALID_TRACK_ID;
+      TrackData &data = it->second;
+      auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - data.lastObservation);
+      data.skippedObservationCount += 1;
+      if (ellapsedTime > MAX_INACTIVE_DURATION) {
+        it->second.id = INVALID_TRACK_ID;
+      }
     }
   }
   std::erase_if(tracks_, [](const std::pair<TrackId, TrackData> &item) { return item.second.id == INVALID_TRACK_ID; });
@@ -117,7 +124,11 @@ void TrackMatcher::update(std::span<const Eigen::AlignedBox2f> boxes, std::span<
     nextTrackId_ += 1;
 
     outputTrackIds[c] = newTrackId;
-    tracks_.insert({newTrackId, TrackData{newTrackId, /*trackLength*/ 0, boxes[c], /*identityState*/ std::nullopt}});
+    tracks_.insert({newTrackId, TrackData{
+                                    newTrackId,
+                                    now,
+                                    boxes[c],
+                                }});
   }
 }
 } // namespace zoo

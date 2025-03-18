@@ -21,16 +21,6 @@ from torch.utils.tensorboard import SummaryWriter
 from model import get_model
 
 
-def adjust_sequence_output(output, target):
-    if isinstance(output, dict):
-        output = output["logits"]
-        output = output[:, -1, :]
-        # batch_size, time_count, class_count = output.shape
-        # output = output.reshape((batch_size * time_count, class_count))
-        # target = torch.cat([target] * time_count, dim=0)
-    return output, target
-
-
 def train_one_epoch(
     model,
     criterion,
@@ -46,20 +36,51 @@ def train_one_epoch(
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
-    metric_logger.add_meter("img/s", utils.SmoothedValue(window_size=10, fmt="{value}"))
+    metric_logger.add_meter(
+        "item/s", utils.SmoothedValue(window_size=10, fmt="{value}")
+    )
 
     batch_count = len(data_loader)
+    class_count = 5
 
     header = f"Epoch: [{epoch}]"
     for i, (image, target) in enumerate(
         metric_logger.log_every(data_loader, args.print_freq, header)
     ):
         start_time = time.time()
-        image, target = image.to(device), target.to(device)
+        target_t = target.to(device)
         with torch.cuda.amp.autocast(enabled=scaler is not None):
-            output = model(image)
-            output, target = adjust_sequence_output(output, target)
-            loss = criterion(output, target)
+            # image.shape is either [b,t,c,h,w] or [b,c,h,w]
+            batch_size = image.shape[0]
+            if len(image.shape) == 5:
+                # We are using sequences, process each time step individually
+                time_count = image.shape[1]
+
+                hidden_state = None
+                prediction = torch.zeros(
+                    [batch_size, time_count, class_count],
+                    dtype=torch.float32,
+                    device=device,
+                )
+                target = torch.zeros(
+                    [batch_size, time_count], dtype=torch.int64, device=device
+                )
+                for t in range(time_count):
+                    image_t = image[:, [t], ...].to(device)
+                    output_t = model(image_t, hidden_state)
+                    prediction_t = output_t["logits"]
+                    hidden_state = output_t["gru_state"]
+
+                    prediction[:, [t], :] = prediction_t
+                    target[:, t] = target_t
+                prediction = prediction.reshape([batch_size * time_count, class_count])
+                target = target.reshape([batch_size * time_count])
+            else:
+                # Single image dataset
+                image = image.to(device)
+                prediction = model(image)
+                target = target_t
+            loss = criterion(prediction, target)
 
         optimizer.zero_grad()
         if scaler is not None:
@@ -82,12 +103,12 @@ def train_one_epoch(
                 # Reset ema buffer to keep copying weights during warmup period
                 model_ema.n_averaged.fill_(0)
 
-        acc1, acc2 = utils.accuracy(output, target, topk=(1, 2))
-        batch_size = image.shape[0]
+        acc1, acc2 = utils.accuracy(prediction, target, topk=(1, 2))
+        target_count = target.shape[0]
         metric_logger.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
-        metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
-        metric_logger.meters["acc2"].update(acc2.item(), n=batch_size)
-        metric_logger.meters["img/s"].update(batch_size / (time.time() - start_time))
+        metric_logger.meters["acc1"].update(acc1.item(), n=target_count)
+        metric_logger.meters["acc2"].update(acc2.item(), n=target_count)
+        metric_logger.meters["item/s"].update(batch_size / (time.time() - start_time))
 
         if tb_writer:
             global_step = epoch * batch_count + i
@@ -114,22 +135,52 @@ def evaluate(
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Test: {log_suffix}"
 
+    class_count = 5
     num_processed_samples = 0
     with torch.inference_mode():
-        for image, target in metric_logger.log_every(data_loader, print_freq, header):
+        for image, target_t in metric_logger.log_every(data_loader, print_freq, header):
             image = image.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            output = model(image)
-            output, target = adjust_sequence_output(output, target)
-            loss = criterion(output, target)
+            target_t = target_t.to(device, non_blocking=True)
 
-            acc1, acc2 = utils.accuracy(output, target, topk=(1, 2))
+            # image.shape is either [b,t,c,h,w] or [b,c,h,w]
+            batch_size = image.shape[0]
+
+            if len(image.shape) == 5:
+                # We are using sequences, process each time step individually
+                time_count = image.shape[1]
+
+                prediction = torch.zeros(
+                    [batch_size, time_count, class_count],
+                    dtype=torch.float32,
+                    device=device,
+                )
+                target = torch.zeros(
+                    [batch_size, time_count], dtype=torch.int64, device=device
+                )
+                hidden_state = None
+                for t in range(time_count):
+                    image_t = image[:, [t], ...]
+                    output_t = model(image_t, hidden_state)
+                    prediction_t = output_t["logits"]
+                    hidden_state = output_t["gru_state"]
+
+                    prediction[:, [t], :] = prediction_t
+                    target[:, t] = target_t
+                prediction = prediction.reshape([batch_size * time_count, class_count])
+                target = target.reshape([batch_size * time_count])
+            else:
+                # Single image
+                prediction = model(image)
+                target = target_t
+            loss = criterion(prediction, target)
+
+            acc1, acc2 = utils.accuracy(prediction, target, topk=(1, 2))
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
-            batch_size = image.shape[0]
+            target_count = target.shape[0]
             metric_logger.update(loss=loss.item())
-            metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
-            metric_logger.meters["acc2"].update(acc2.item(), n=batch_size)
+            metric_logger.meters["acc1"].update(acc1.item(), n=target_count)
+            metric_logger.meters["acc2"].update(acc2.item(), n=target_count)
             num_processed_samples += batch_size
     # gather the stats from all processes
 
@@ -152,9 +203,9 @@ def evaluate(
     print(
         f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@2 {metric_logger.acc2.global_avg:.3f}"
     )
-    assert tb_writer is not None
-    tb_writer.add_scalar("Val/acc1", metric_logger.acc1.global_avg, epoch)
-    tb_writer.add_scalar("Val/acc2", metric_logger.acc2.global_avg, epoch)
+    if tb_writer is not None:
+        tb_writer.add_scalar("Val/acc1", metric_logger.acc1.global_avg, epoch)
+        tb_writer.add_scalar("Val/acc2", metric_logger.acc2.global_avg, epoch)
 
     return metric_logger.acc1.global_avg
 
@@ -222,7 +273,7 @@ def load_data(traindir, valdir, use_sequence_dataset: bool, args):
         # TODO: this could probably be weights_only=True
         dataset_test, _ = torch.load(cache_path, weights_only=False)
     else:
-        if args.weights and args.test_only:
+        if False and args.weights and args.test_only:
             weights = torchvision.models.get_weight(args.weights)
             preprocessing = weights.transforms(antialias=True)
             if args.backend == "tensor":
@@ -340,6 +391,9 @@ def main(args):
 
     # Freeze backbone layers
     for layer_idx in range(args.freeze):
+        if layer_idx >= len(model.features):
+            print("All backbone layers frozen")
+            break
         layer = model.features[layer_idx]
         params = list(layer.parameters())
         if not params:
@@ -499,10 +553,20 @@ def main(args):
                 model_ema, criterion, data_loader_test, device=device, log_suffix="EMA"
             )
         else:
-            evaluate(model, criterion, data_loader_test, device=device)
+            evaluate(model, 0, criterion, data_loader_test, device=device)
         return
 
     tb_writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "tensorboard"))
+
+    print("Evaluation before training")
+    evaluate(
+        model,
+        -1,
+        criterion,
+        data_loader_test,
+        device=device,
+        tb_writer=tb_writer,
+    )
 
     print("Start training")
     start_time = time.time()

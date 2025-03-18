@@ -6,22 +6,23 @@ import torchinfo
 
 
 class ZooIdGruModel(torch.nn.Module):
-    def __init__(self, backbone_features, classifier):
+    def __init__(self, backbone_features):
         super().__init__()
         self.feature_count = 1024
         self.individual_count = 5
         self.features = backbone_features
-        self.gru_layer_count = 1
+        self.gru_layer_count = 3
 
-        self.gru_feature_count = self.feature_count
+        self.gru_feature_count = 128
+
         self.gru = torch.nn.GRU(
             input_size=self.feature_count,
             hidden_size=self.gru_feature_count,
             num_layers=self.gru_layer_count,
             batch_first=True,
+            dropout=0.2,
         )
-        # self.classifier = nn.Linear(self.gru_feature_count, self.individual_count)
-        self.classifier = classifier
+        self.classifier = nn.Linear(self.gru_feature_count, self.individual_count)
 
     def forward(
         self, x: torch.Tensor, gru_state0: torch.Tensor | None = None
@@ -51,7 +52,6 @@ class ZooIdGruModel(torch.nn.Module):
             features = out.reshape([batch_count, time_count, -1])  # Add time
 
         out, gru_state = self.gru(features, gru_state0)
-        # out = features
 
         out = out.reshape([time_count * batch_count, -1])  # Remove time
         out = self.classifier(out)
@@ -85,12 +85,15 @@ def get_model(
             num_classes=5,
         )
 
-        if weights is not None:
+        if weights is not None and "gru" not in weights:
             checkpoint = torch.load(weights, weights_only=False)
             weights = checkpoint["model"]
             backbone.load_state_dict(checkpoint["model"])
 
-        model = ZooIdGruModel(
-            backbone_features=backbone.features, classifier=backbone.classifier
-        )
+        model = ZooIdGruModel(backbone_features=backbone.features)
+        if weights is not None and "gru" in weights:
+            checkpoint = torch.load(weights, weights_only=False)
+            weights = checkpoint["model"]
+            model.load_state_dict(checkpoint["model"])
+
     return model

@@ -89,6 +89,15 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
   // DEBUG print model info
 }
 
+void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const Eigen::AlignedBox2f &in) {
+  const Eigen::Vector2f center = in.center();
+  const Eigen::Vector2f halfSize = in.sizes() / 2;
+  outBbox.center[0] = center[0];
+  outBbox.center[1] = center[1];
+  outBbox.half_size[0] = halfSize[0];
+  outBbox.half_size[1] = halfSize[1];
+}
+
 void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
   rateSampler_.tick();
   const auto &imageMsg = *imageMsgPtr;
@@ -225,18 +234,12 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
     const at::Tensor bbox = boxesNet[i];
     const Eigen::Vector2f x0{bbox[0].item<float32_t>(), bbox[1].item<float32_t>()};
     const Eigen::Vector2f x1{bbox[2].item<float32_t>(), bbox[3].item<float32_t>()};
-    boxes.push_back(Eigen::AlignedBox2f(x0, x1));
-
-    const Eigen::Vector2f center = (x0 + x1) / 2;
-    const Eigen::Vector2f halfSize = x1 - center;
-    detectionMsg->bboxes[outIndex].center[0] = center[0];
-    detectionMsg->bboxes[outIndex].center[1] = center[1];
-    detectionMsg->bboxes[outIndex].half_size[0] = halfSize[0];
-    detectionMsg->bboxes[outIndex].half_size[1] = halfSize[1];
+    const auto bboxEigen = Eigen::AlignedBox2f(x0, x1);
+    boxes.push_back(bboxEigen);
+    copyBboxToRos(detectionMsg->bboxes[outIndex], bboxEigen);
 
     // Project to world
-    const Eigen::Vector2f imagePosition = (center + Eigen::Vector2f{0, halfSize[1]}) * resizeFactor;
-
+    const Eigen::Vector2f imagePosition = Eigen::Vector2f{bboxEigen.center()[0], bboxEigen.max()[1]} * resizeFactor;
     const Eigen::Vector3f worldPosition =
         world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
     worldPositionsMap.col(outIndex) = worldPosition;
@@ -251,7 +254,9 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   auto msgTrackIds = std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count};
 
   // Assign track ids
-  trackMatcher_.update(boxes, msgTrackIds);
+  rclcpp::Time msgTime(imageMsgPtr->header.stamp);
+  std::chrono::system_clock::time_point sysTime{std::chrono::nanoseconds{msgTime.nanoseconds()}};
+  trackMatcher_.update(sysTime, boxes, msgTrackIds);
 
   ////////////////////////////////////////////////////////////
   // Forward detecto for identification

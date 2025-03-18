@@ -25,22 +25,39 @@ using float32_t = float;
 using TrackId = uint32_t;
 
 struct TrackData {
+  using time_point = std::chrono::system_clock::time_point;
+
   TrackId id;
+  time_point startTime;
+
+  time_point lastObservation;
+  int skippedObservationCount;
+
   size_t trackLength;
   Eigen::AlignedBox2f box;
   std::optional<at::Tensor> identityState;
+
+  TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
+      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, skippedObservationCount{0}, trackLength{1},
+        box{box_}, identityState{std::nullopt} {}
 };
 
 class TrackMatcher {
 public:
+  using Clock = std::chrono::system_clock;
+
   static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 15;
+  static constexpr auto MAX_INACTIVE_DURATION = std::chrono::milliseconds{3000};
 
   TrackMatcher();
 
-  void update(std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds);
+  void update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds);
 
   TrackData *getTrackData(TrackId id);
+
+  std::unordered_map<TrackId, TrackData>::const_iterator begin() const { return tracks_.begin(); }
+  std::unordered_map<TrackId, TrackData>::const_iterator end() const { return tracks_.end(); }
 
 private:
   TrackId nextTrackId_ = 1;

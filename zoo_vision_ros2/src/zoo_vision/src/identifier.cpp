@@ -214,14 +214,16 @@ void Identifier::extractCrops(torch::Tensor &patches, const torch::Tensor &image
 void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
                                    const std::span<const TrackId> trackIds) {
   const int detectionCount = trackIds.size();
-  constexpr size_t TRACK_STATE_SIZE = 1024;
-  auto trackState0 = at::zeros({1, detectionCount, TRACK_STATE_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+  constexpr size_t HIDDEN_LAYER_COUNT = 3;
+  constexpr size_t HIDDEN_STATE_SIZE = 128;
+  auto trackState0 = at::zeros({HIDDEN_LAYER_COUNT, detectionCount, HIDDEN_STATE_SIZE},
+                               at::TensorOptions(at::kCUDA).dtype(at::kFloat));
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
     // Copy track state
     TrackData *track = trackMatcher_.getTrackData(trackId);
     assert(track != nullptr);
     if (track->identityState.has_value()) {
-      trackState0[0][i].copy_(track->identityState.value());
+      trackState0.index({Slice(), i, Ellipsis}).copy_(track->identityState.value());
     }
   }
 
@@ -235,14 +237,13 @@ void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::T
     identityLogitsGpu = identityLogitsGpu.squeeze(1); // Remove dummy time dimension
 
     trackState = modelResultDict.at("gru_state").toTensor();
-    trackState = trackState.squeeze(0); // Remove dummy time dimension
   }
 
   // Remember track state
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
     TrackData *track = trackMatcher_.getTrackData(trackId);
     assert(track != nullptr);
-    track->identityState.emplace(trackState[i]);
+    track->identityState.emplace(trackState.index({Slice(), i, Ellipsis}));
   }
 }
 
