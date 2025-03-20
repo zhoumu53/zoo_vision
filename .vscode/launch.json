@@ -18,7 +18,10 @@
             "preLaunchTask": "Colcon: build debug",
             "request": "launch",
             "program": "${workspaceFolder}/zoo_vision_ros2/build/zoo_vision/zoo_vision",
-            "args": [],
+            "args": [
+                "-c",
+                "/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

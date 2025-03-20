@@ -47,7 +47,7 @@ class ElephantIdentityDataset(VisionDataset):
         super().__init__(root, None, transform, target_transform)
 
         sub_dirs = ["good", "bad", "terrible"]
-        uncertainties = [0.3, 0.8, 1.0]
+        uncertainties = [0.3, 1.0, 1.0]
 
         self.datasets = {
             name: UncertainImageFolder(
