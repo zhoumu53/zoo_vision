@@ -25,6 +25,24 @@
       "color": "#C1FF9B"
     }
   },
+  "behaviours": {
+    "Invalid": {
+      "id": 0,
+      "color": "#FFFFFF"
+    },
+    "Standing": {
+      "id": 1,
+      "color": "#7FB069"
+    },
+    "SleepR": {
+      "id": 2,
+      "color": "#197278"
+    },
+    "SleepL": {
+      "id": 3,
+      "color": "#FF6978"
+    }
+  },
   "map": {
     "image": "kkep_floorplan.png",
     "T_map_from_world2": [
@@ -49,7 +67,8 @@
     "elephant_label_id": 1,
     "segmentation": "../models/segmentation/d2/maskrcnn_c2_coco_d1_d2_10k.ptc",
     "identity2": "../models/identity/gru_uncertain/zoo_id_gru_best.ptc",
-    "identity": "../models/identity/id_uncertain2/dense121_c5_identity_best.ptc"
+    "identity": "../models/identity/id_uncertain2/dense121_c5_identity_best.ptc",
+    "behaviour": "../models/sleep/basic/dense.ptc"
   },
   "record_tracks": false,
   "live_stream": false,

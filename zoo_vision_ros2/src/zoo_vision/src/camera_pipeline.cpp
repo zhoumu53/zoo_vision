@@ -41,7 +41,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
       trackMatcher_{}, segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
-      identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_} {
+      identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
+      behaviourer_{nameIndex, cameraName_, cudaStream_} {
 
   readConfig(getConfig());
 
@@ -93,7 +94,11 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     auto msgBboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
     auto msgTrackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
-    identifier_.onDetection(detectionMsg, imageTensor, detectionMsg.scale_image_from_detection, msgTrackIds, msgBboxes);
+    at::Tensor patches;
+    cropper_.extractCrops(patches, imageTensor, detectionMsg.scale_image_from_detection, msgBboxes);
+
+    identifier_.onDetection(detectionMsg, patches, msgTrackIds);
+    behaviourer_.onDetection(detectionMsg, patches);
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");

@@ -39,14 +39,12 @@ public:
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
 
-  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &imageGpu, const float scale_image_from_detection,
-                   const std::span<const TrackId> trackIds, const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
+  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches,
+                   const std::span<const TrackId> trackIds);
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
 
-  void extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu, const float scale_image_from_detection,
-                    const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
   void callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
                          const std::span<const TrackId> trackIds);
   void callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches);

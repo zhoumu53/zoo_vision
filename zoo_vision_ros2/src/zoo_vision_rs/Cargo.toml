@@ -19,7 +19,7 @@ serde = "*"
 serde_derive = "*"
 serde_json = "*" 
 nalgebra = "*"
-hex_color = {version = "3", features = ["rand", "std"]}
+hex_color = {version = "3", features = ["rand", "std", "serde"]}
 
 
 [dependencies.rclrs]

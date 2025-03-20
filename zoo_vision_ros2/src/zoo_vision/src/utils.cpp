@@ -17,6 +17,9 @@
 #include <sensor_msgs/image_encodings.hpp>
 
 #include <ATen/ops/from_blob.h>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+#include <torch/torch.h>
 
 #include <filesystem>
 #include <fstream>
@@ -117,6 +120,16 @@ nlohmann::json &getConfig() {
     throw std::runtime_error("Config not loaded, call loadConfig() first");
   }
   return *global_config;
+}
+
+void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
+  const auto region0 = (imgTensor.permute({1, 2, 0}).to(at::kCPU) * 255).toType(at::kByte).contiguous();
+  assert(region0.stride(1) == 3);
+  assert(region0.stride(2) == 1);
+  auto img = cv::Mat(region0.size(0), region0.size(1), CV_8UC3, region0.data_ptr(), region0.stride(0));
+  cv::Mat imgRgb;
+  cv::cvtColor(img, imgRgb, cv::COLOR_RGB2BGR);
+  cv::imwrite(name.c_str(), imgRgb);
 }
 
 } // namespace zoo

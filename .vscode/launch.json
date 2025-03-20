@@ -20,7 +20,8 @@
             "program": "${workspaceFolder}/zoo_vision_ros2/build/zoo_vision/zoo_vision",
             "args": [
                 "-c",
-                "/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]"
+                //"/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]"
+                "/replay_time=\\\"2025-01-25T02:04:50\\\""
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

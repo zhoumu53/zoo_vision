@@ -1,18 +1,20 @@
+use hex_color::HexColor;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Deserialize, Debug)]
 pub struct ZooConfig {
-    pub individuals: HashMap<String, Individual>,
+    pub individuals: HashMap<String, ClassifierClassInfo>,
+    pub behaviours: HashMap<String, ClassifierClassInfo>,
     pub map: Map,
     // pub models: Models,
     pub cameras: HashMap<String, CameraCalib>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Individual {
+#[derive(Deserialize, Debug, Clone)]
+pub struct ClassifierClassInfo {
     pub id: u32,
-    pub color: String,
+    pub color: HexColor,
 }
 
 #[derive(Deserialize, Debug)]

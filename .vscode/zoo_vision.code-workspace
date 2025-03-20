@@ -107,7 +107,14 @@
 			"ranges": "cpp",
 			"__locale": "cpp",
 			"dense": "cpp",
-			"__nullptr": "cpp"
+			"__nullptr": "cpp",
+			"spanstream": "cpp",
+			"__hash_table": "cpp",
+			"__split_buffer": "cpp",
+			"__tree": "cpp",
+			"queue": "cpp",
+			"stack": "cpp",
+			"filesystem": "cpp"
 		},
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"

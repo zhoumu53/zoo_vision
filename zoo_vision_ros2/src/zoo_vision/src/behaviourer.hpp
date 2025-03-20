@@ -16,44 +16,41 @@
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
-#include "zoo_vision/behaviourer.hpp"
-#include "zoo_vision/identifier.hpp"
-#include "zoo_vision/patch_cropper.hpp"
-#include "zoo_vision/segmenter.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 
 #include <Eigen/Dense>
+#include <c10/cuda/CUDAStream.h>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <torch/script.h>
 
 #include <filesystem>
+#include <string>
 
 namespace zoo {
 
 using float32_t = float;
 
-class CameraPipeline : public rclcpp::Node {
+class Behaviourer {
 public:
-  explicit CameraPipeline(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
+  explicit Behaviourer(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream);
 
   void readConfig(const nlohmann::json &config);
+  void loadModel(const std::filesystem::path &modelPath);
 
-  void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
+  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches);
 
 private:
+  const rclcpp::Logger &get_logger() const { return logger_; }
+
+  void callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &patches);
+
+  std::string name_;
+  rclcpp::Logger logger_;
+  at::cuda::CUDAStream cudaStream_;
   std::string cameraName_;
 
-  RateSampler rateSampler_;
-
-  at::cuda::CUDAStream cudaStream_;
-  TrackMatcher trackMatcher_;
-  PatchCropper cropper_;
-  Segmenter segmenter_;
-  Identifier identifier_;
-  Behaviourer behaviourer_;
-
-  std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
-  std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
+  torch::jit::script::Module model_;
 };
 } // namespace zoo

@@ -114,7 +114,7 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
   // Execute segmentation network
   at::IValue detectionResult;
   {
-    // torch::jit::GraphOptimizerEnabledGuard optGuard(false);
+    torch::jit::GraphOptimizerEnabledGuard optGuard(false);
 
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 

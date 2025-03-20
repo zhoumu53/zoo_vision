@@ -21,9 +21,6 @@
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <nvtx3/nvtx3.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <torch/torch.h>
@@ -37,9 +34,10 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Identifier::Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher, at::cuda::CUDAStream cudaStream)
-    : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream}, cameraName_{cameraName},
-      trackMatcher_{trackMatcher} {
+Identifier::Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
+                       at::cuda::CUDAStream cudaStream)
+    : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
+      cameraName_{cameraName}, trackMatcher_{trackMatcher} {
   at::InferenceMode inferenceGuard;
 
   RCLCPP_INFO(get_logger(), "Starting identifier for %s", cameraName_.c_str());
@@ -73,16 +71,6 @@ void Identifier::loadModel(const std::filesystem::path &modelPath) {
     std::terminate();
   }
   // DEBUG print model info
-}
-
-void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
-  const auto region0 = (imgTensor.permute({1, 2, 0}).to(at::kCPU) * 255).toType(at::kByte).contiguous();
-  assert(region0.stride(1) == 3);
-  assert(region0.stride(2) == 1);
-  auto img = cv::Mat(region0.size(0), region0.size(1), CV_8UC3, region0.data_ptr(), region0.stride(0));
-  cv::Mat imgRgb;
-  cv::cvtColor(img, imgRgb, cv::COLOR_RGB2BGR);
-  cv::imwrite(name.c_str(), imgRgb);
 }
 
 float calculateWeight(const std::span<const int> identities, const Eigen::MatrixXf &prior) {
@@ -160,61 +148,13 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
     const float32_t top2 = maxProbs.index({i, 1}).item<float32_t>();
     if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
       const int maxIdx = maxIndices.index({i, 0}).item<int>();
-      bestIdentities[i] = maxIdx + 1;
+      bestIdentities[i] = maxIdx + 1; // Add one because class 0 is invalid
     } else {
       bestIdentities[i] = 0;
     }
   }
 
   return bestIdentities;
-}
-
-void Identifier::extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu,
-                              const float scale_image_from_detection,
-                              const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
-  constexpr int CROP_SIZE = 256;
-  const int detectionCount = bboxes.size();
-  const int channels = 3;
-
-  patches = at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
-
-  // Extract crops
-  for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
-    const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
-    Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
-    Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
-
-    Eigen::Vector2f center = bboxCenter * scale_image_from_detection;
-    Eigen::Vector2f half_size = bboxHalfSize * scale_image_from_detection;
-
-    Eigen::Vector2f corner0 = center - half_size;
-    Eigen::Vector2f corner1 = center + half_size;
-    const auto bboxPatch = imageGpu.index({
-        None,
-        Slice(),
-        Slice(corner0[1], corner1[1]),
-        Slice(corner0[0], corner1[0]),
-    });
-
-    const auto rescaleSize = (bboxAspect >= 1.0f) ? Eigen::Vector2i(CROP_SIZE, std::round(CROP_SIZE / bboxAspect))
-                                                  : Eigen::Vector2i(std::round(CROP_SIZE * bboxAspect), CROP_SIZE);
-
-    namespace F = torch::nn::functional;
-    const auto interpolateOpts = F::InterpolateFuncOptions()
-                                     .size({{rescaleSize.y(), rescaleSize.x()}})
-                                     .mode(torch::kBilinear)
-                                     .antialias(true)
-                                     .align_corners(false);
-    assert(std::holds_alternative<torch::enumtype::kBilinear>(interpolateOpts.mode()));
-    auto rescaledPatch = at::ones({1, channels, rescaleSize.y(), rescaleSize.x()});
-    rescaledPatch = F::interpolate(bboxPatch, interpolateOpts);
-
-    const Eigen::Vector2i c0 = (Eigen::Vector2i(CROP_SIZE, CROP_SIZE) - rescaleSize) / 2;
-    const Eigen::Vector2i c1 = c0 + rescaleSize;
-
-    auto patch_i = patches[i].index({Slice(), Slice(c0.y(), c1.y()), Slice(c0.x(), c1.x())});
-    patch_i.copy_(rescaledPatch[0]);
-  }
 }
 
 void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
@@ -258,17 +198,12 @@ void Identifier::callStatelessModel(at::Tensor &identityLogitsGpu, const torch::
   identityLogitsGpu = modelResult.toTensor();
 }
 
-void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &imageGpu,
-                             const float scale_image_from_detection, const std::span<const TrackId> trackIds,
-                             const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
+void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches,
+                             const std::span<const TrackId> trackIds) {
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
-  assert(imageGpu.device().is_cuda());
-
-  // Prepare
-  at::Tensor patches;
-  extractCrops(patches, imageGpu, scale_image_from_detection, bboxes);
+  assert(patches.device().is_cuda());
 
   // Save images for this track
   if (recordTracks_) {
@@ -318,9 +253,9 @@ void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor 
 
   // TODO: sort tracks based on score
   const std::vector<int> identities = selectOptimalIdentities(identityProbs, prior);
-  assert(identities.size() == bboxes.size());
+  assert(identities.size() == trackIds.size());
 
-  for (const auto i : std::views::iota(0u, bboxes.size())) {
+  for (const auto i : std::views::iota(0u, trackIds.size())) {
     msg.identity_ids[i] = identities[i];
     for (const auto j : std::views::iota(0u, identityCount)) {
       // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();

@@ -1,3 +1,5 @@
+use crate::zoo_config::ClassifierClassInfo;
+
 use super::zoo_config::ZooConfig;
 use anyhow::{Error, Result};
 use hex_color::HexColor;
@@ -22,8 +24,8 @@ pub struct RerunForwarder {
     recording: rerun::RecordingStream,
     first_ros_time_ns: Option<i64>,
     // camera_indices: HashMap<String, usize>,
-    name_from_identity: HashMap<u32, String>,
-    color_from_identity: HashMap<u32, rerun::Color>,
+    identity_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
+    behaviour_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
 
     camera_short_from_name: HashMap<String, String>,
 
@@ -164,7 +166,7 @@ impl RerunForwarder {
             rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
         )];
         for (name, individual) in config.individuals.iter() {
-            let color = HexColor::parse_rgb(&individual.color)?;
+            let color = individual.color;
             identity_ctx.push((
                 individual.id as u16,
                 name,
@@ -195,20 +197,18 @@ impl RerunForwarder {
             recording,
             first_ros_time_ns: None,
             // camera_indices: HashMap::new(),
-            name_from_identity: HashMap::from_iter(
+            identity_from_id: HashMap::from_iter(
                 config
                     .individuals
                     .iter()
-                    .map(|(name, individual)| (individual.id, name.clone())),
+                    .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
             ),
-            color_from_identity: HashMap::from_iter(config.individuals.iter().map(
-                |(_, individual)| {
-                    (
-                        individual.id,
-                        rerun_from_hex(&HexColor::parse_rgb(&individual.color).unwrap()),
-                    )
-                },
-            )),
+            behaviour_from_id: HashMap::from_iter(
+                config
+                    .behaviours
+                    .iter()
+                    .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
+            ),
             camera_short_from_name: HashMap::from_iter(config.cameras.iter().enumerate().map(
                 |(i, (name, _))| {
                     (
@@ -339,14 +339,16 @@ impl RerunForwarder {
         let labels: Vec<String> = (0..detection_count)
             .map(|x| {
                 let id = msg.identity_ids[x];
-                if self.name_from_identity.contains_key(&id) == false {
+                let behaviour_id = msg.behaviour_ids[x];
+                if self.identity_from_id.contains_key(&id) == false {
                     print!("About to panic with identity id=={}", id);
                 }
                 format!(
-                    "{} (T{}{})",
-                    self.name_from_identity[&id].as_str(),
+                    "T{}{}-{}-{}",
                     self.camera_short_from_name[camera],
-                    msg.track_ids[x]
+                    msg.track_ids[x],
+                    self.identity_from_id[&id].0.as_str(),
+                    self.behaviour_from_id[&behaviour_id].0.as_str(),
                 )
             })
             .collect();
@@ -433,12 +435,13 @@ impl RerunForwarder {
                         "/identity_logits/T{}{}/id_{}",
                         self.camera_short_from_name[camera],
                         msg.track_ids[idx],
-                        self.name_from_identity[&id]
+                        self.identity_from_id[&id].0
                     );
 
                     self.recording.log(
                         rr_path.as_str(),
-                        &rerun::SeriesLine::new().with_color(self.color_from_identity[&id]),
+                        &rerun::SeriesLine::new()
+                            .with_color(rerun_from_hex(&self.identity_from_id[&id].1.color)),
                     )?;
                     self.recording
                         .log(rr_path, &rerun::Scalar::new(all_logits[[idx, id0]] as f64))?;

@@ -65,8 +65,12 @@ add_executable(zoo_vision
   src/video_loader.cpp
   src/segmenter.hpp
   src/segmenter.cpp
+  src/patch_cropper.hpp
+  src/patch_cropper.cpp
   src/identifier.hpp
   src/identifier.cpp
+  src/behaviourer.hpp
+  src/behaviourer.cpp
   src/image_queue.hpp
   src/image_queue.cpp
   src/rerun_forwarder.hpp
