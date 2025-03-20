@@ -121,6 +121,29 @@ def main():
         args,
     )
 
+    # Behaviour dataset
+    process_classification_dataset(
+        "zoo-elephants-sleep-train",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "behaviour/train",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
+    process_classification_dataset(
+        "zoo-elephants-sleep-val",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "behaviour/val",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
 
 if __name__ == "__main__":
     main()

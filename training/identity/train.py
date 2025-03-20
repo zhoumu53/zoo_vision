@@ -257,8 +257,10 @@ def load_data(traindir, valdir, use_sequence_dataset: bool, args):
             use_v2=args.use_v2,
         )
 
-        # dataset = torchvision.datasets.ImageFolder(traindir, transform)
-        dataset = ElephantIdentityDataset(traindir, transform)
+        if args.use_uncertainty_data:
+            dataset = ElephantIdentityDataset(traindir, transform)
+        else:
+            dataset = torchvision.datasets.ImageFolder(traindir, transform)
         if args.cache_dataset:
             print(f"Saving dataset_train to {cache_path}")
             utils.mkdir(os.path.dirname(cache_path))
@@ -388,9 +390,8 @@ def main(args):
     )
 
     print("Creating model")
-    INDIVIDUAL_COUNT = 5
     model = get_model(
-        model_name=args.model, weights=args.weights, num_classes=INDIVIDUAL_COUNT
+        model_name=args.model, weights=args.weights, num_classes=num_classes
     )
 
     # Freeze backbone layers
@@ -903,6 +904,11 @@ def get_args_parser(add_help=True):
         default=0,
         type=int,
         help="Rate of images with terrible uncertainty in a sequence (only applicable to gru model)",
+    )
+    parser.add_argument(
+        "--use_uncertainty_data",
+        action="store_true",
+        help="Expect a dataset that has (good, bad, terrible) certainty hyper-classes",
     )
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
     return parser

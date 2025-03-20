@@ -37,22 +37,33 @@ def load_model(path: Path):
         extra_transforms = None
         state_in_forward = False
 
+        print("Loading weights from disk...")
+        checkpoint = torch.load(PROJECT_ROOT / path, weights_only=False)
+        model_name = (
+            checkpoint["args"].model
+            if hasattr(checkpoint["args"], "model")
+            else checkpoint["args"]["model"]
+        )
+
         print("Loading empty model...")
-        if path.name.startswith("maskrcnn_c2_"):
+        if model_name == "maskrcnn_resnet50_fpn_v2":
+            num_classes = checkpoint["model"]["rpn.head.cls_logits.bias"].shape[0]
             model = tv.models.detection.maskrcnn_resnet50_fpn_v2(
                 weights=None,
                 weights_backbone=None,
-                num_classes=2,
+                num_classes=num_classes,
             )
-        elif path.name.startswith("dense121_c5_"):
+        elif model_name == "densenet121":
+            num_classes = checkpoint["model"]["classifier.weight"].shape[0]
             model = tv.models.densenet121(
-                num_classes=5,
+                num_classes=num_classes,
             )
             extra_transforms = tv.models.DenseNet121_Weights.IMAGENET1K_V1.transforms(
                 antialias=True
             )
-        elif path.name.startswith("zoo_id_gru"):
-            model = get_model("zoo_id_gru", num_classes=5)
+        elif model_name == "zoo_id_gru":
+            num_classes = checkpoint["model"]["classifier.weight"].shape[0]
+            model = get_model("zoo_id_gru", num_classes=num_classes)
             model.gru.flatten_parameters()
             state_in_forward = True
 
@@ -61,9 +72,6 @@ def load_model(path: Path):
             )
         else:
             raise RuntimeError("Unknown model")
-
-        print("Loading weights from disk...")
-        checkpoint = torch.load(PROJECT_ROOT / path, weights_only=False)
 
         print("Restoring weights...")
         model.load_state_dict(checkpoint["model"])
