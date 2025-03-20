@@ -31,28 +31,32 @@ namespace zoo {
 
 using float32_t = float;
 
-class Identifier : public rclcpp::Node {
+class Identifier {
 public:
-  explicit Identifier(TrackMatcher &trackMatcher, const rclcpp::NodeOptions &options = rclcpp::NodeOptions(),
-                      int nameIndex = 999);
+  explicit Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
+                      at::cuda::CUDAStream cudaStream);
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
 
-  void onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
-                   const float scale_image_from_detection, const std::span<const TrackId> trackIds,
-                   const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes, zoo_msgs::msg::Detection &msg);
+  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &imageGpu, const float scale_image_from_detection,
+                   const std::span<const TrackId> trackIds, const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
 
 private:
+  const rclcpp::Logger &get_logger() const { return logger_; }
+
   void extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu, const float scale_image_from_detection,
                     const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
   void callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
                          const std::span<const TrackId> trackIds);
   void callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches);
 
+  std::string name_;
+  rclcpp::Logger logger_;
+  at::cuda::CUDAStream cudaStream_;
   std::string cameraName_;
+
   bool recordTracks_;
-  RateSampler rateSampler_;
 
   TrackMatcher &trackMatcher_;
 

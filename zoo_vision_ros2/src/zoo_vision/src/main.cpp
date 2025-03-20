@@ -12,9 +12,8 @@
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
-#include "zoo_vision/identifier.hpp"
+#include "zoo_vision/camera_pipeline.hpp"
 #include "zoo_vision/rerun_forwarder.hpp"
-#include "zoo_vision/segmenter.hpp"
 #include "zoo_vision/utils.hpp"
 #include "zoo_vision/video_loader.hpp"
 #include "zoo_vision/zoo_camera.hpp"
@@ -98,7 +97,7 @@ int main(int argc, char *argv[]) {
     if (useLiveStream) {
       nodes.push_back(std::make_shared<ZooCamera>(optionsCamera, index));
     }
-    nodes.push_back(std::make_shared<Segmenter>(optionsCamera, index));
+    nodes.push_back(std::make_shared<CameraPipeline>(optionsCamera, index));
     index += 1;
   }
 

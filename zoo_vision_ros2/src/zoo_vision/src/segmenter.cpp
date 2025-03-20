@@ -38,27 +38,13 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Segmenter::Segmenter(const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("segmenter_{}", nameIndex), options), cudaStream_{at::cuda::getStreamFromPool()} {
+Segmenter::Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher, at::cuda::CUDAStream cudaStream)
+    : name_{std::format("segmenter_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
+      cameraName_{cameraName}, trackMatcher_{trackMatcher} {
   at::InferenceMode inferenceGuard;
-
-  cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting segmenter for %s", cameraName_.c_str());
 
   readConfig(getConfig());
-
-  // Subscribe to receive images from camera
-  const auto imageTopic = cameraName_ + "/image";
-  imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10,
-      [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(std::move(msg)); });
-
-  // Publish detections
-  const auto detectionsTopic = cameraName_ + "/detections";
-  detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
-  RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
-
-  identifier_ = std::make_shared<Identifier>(trackMatcher_, options, nameIndex);
 }
 
 void Segmenter::readConfig(const nlohmann::json &config) {
@@ -98,46 +84,25 @@ void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const Eigen::AlignedBo
   outBbox.half_size[1] = halfSize[1];
 }
 
-void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
-  rateSampler_.tick();
-  const auto &imageMsg = *imageMsgPtr;
+void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor) {
+  // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
-  at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
   // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
   at::NoGradGuard nograd;
   std::optional<nvtx3::scoped_range> nvtxLabel{"seg_before (" + cameraName_ + ")"};
 
   at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
 
-  // Allocate detection message so we can already start putting things here
-  auto detectionMsg = std::make_unique<zoo_msgs::msg::Detection>();
-  detectionMsg->header = imageMsg.header;
-  addRosKeyValue(detectionMsg->timings.items_hz, std::format("seg", cameraName_), rateSampler_.rateHz());
-
-  ////////////////////////////////////////////////////////////
-  // Prepare image for segmentation network
-  const cv::Mat3b img = wrapMat3bFromMsg(imageMsg);
-  assert(imageMsg.step == imageMsg.width * 3 * sizeof(char));
-  at::Tensor imageTensorCPU =
-      at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
-          .permute({2, 0, 1});
-
-  at::Tensor imageTensor;
-  {
-    // Convert to float
-    imageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat) / 255.0f;
-  }
-
   // Resize
   const int DETECTION_HEIGHT = 600;
-  detectionMsg->scale_image_from_detection = static_cast<float>(imageMsg.height) / DETECTION_HEIGHT;
+  detectionMsg.scale_image_from_detection = static_cast<float>(imageTensor.size(1)) / DETECTION_HEIGHT;
   at::Tensor detectionImage;
   {
     namespace F = torch::nn::functional;
     const auto interpolateOpts =
         F::InterpolateFuncOptions()
-            .size({{static_cast<int>(imageMsg.height / detectionMsg->scale_image_from_detection),
-                    static_cast<int>(imageMsg.width / detectionMsg->scale_image_from_detection)}})
+            .size({{static_cast<int>(imageTensor.size(1) / detectionMsg.scale_image_from_detection),
+                    static_cast<int>(imageTensor.size(2) / detectionMsg.scale_image_from_detection)}})
             .mode(torch::kBilinear)
             .antialias(true)
             .align_corners(false);
@@ -149,7 +114,7 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   // Execute segmentation network
   at::IValue detectionResult;
   {
-    torch::jit::GraphOptimizerEnabledGuard optGuard(false);
+    // torch::jit::GraphOptimizerEnabledGuard optGuard(false);
 
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 
@@ -188,13 +153,12 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   assert(boxesGpu.sizes()[0] == masksGpu.sizes()[0]);
   const int64_t maskHeight = masksGpu.sizes()[1];
   const int64_t maskWidth = masksGpu.sizes()[2];
-  const float32_t resizeFactor = static_cast<float32_t>(img.rows) / maskHeight;
 
-  detectionMsg->detection_count = modelDetectionCount;
-  detectionMsg->masks.sizes[0] = modelDetectionCount;
-  detectionMsg->masks.sizes[1] = maskHeight;
-  detectionMsg->masks.sizes[2] = maskWidth;
-  at::Tensor masksMap = mapRosTensor(detectionMsg->masks);
+  detectionMsg.detection_count = modelDetectionCount;
+  detectionMsg.masks.sizes[0] = modelDetectionCount;
+  detectionMsg.masks.sizes[1] = maskHeight;
+  detectionMsg.masks.sizes[2] = maskWidth;
+  at::Tensor masksMap = mapRosTensor(detectionMsg.masks);
 
   // Move all to cpu
   const at::Tensor boxesNet = boxesGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
@@ -204,10 +168,10 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
   cudaStreamSynchronize(cudaStream_);
 
   constexpr auto MS_TO_NS = 1e6f;
-  addRosKeyValue(detectionMsg->timings.items_ns, "seg_net",
+  addRosKeyValue(detectionMsg.timings.items_ns, "seg_net",
                  eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 
-  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg->world_positions.data(), 3, modelDetectionCount};
+  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg.world_positions.data(), 3, modelDetectionCount};
 
   size_t outIndex = 0;
   const auto world_from_world2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
@@ -236,10 +200,11 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
     const Eigen::Vector2f x1{bbox[2].item<float32_t>(), bbox[3].item<float32_t>()};
     const auto bboxEigen = Eigen::AlignedBox2f(x0, x1);
     boxes.push_back(bboxEigen);
-    copyBboxToRos(detectionMsg->bboxes[outIndex], bboxEigen);
+    copyBboxToRos(detectionMsg.bboxes[outIndex], bboxEigen);
 
     // Project to world
-    const Eigen::Vector2f imagePosition = Eigen::Vector2f{bboxEigen.center()[0], bboxEigen.max()[1]} * resizeFactor;
+    const Eigen::Vector2f imagePosition =
+        Eigen::Vector2f{bboxEigen.center()[0], bboxEigen.max()[1]} * detectionMsg.scale_image_from_detection;
     const Eigen::Vector3f worldPosition =
         world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
     worldPositionsMap.col(outIndex) = worldPosition;
@@ -247,30 +212,16 @@ void Segmenter::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgP
     outIndex += 1;
   }
   const auto detectionCount = outIndex;
-  detectionMsg->detection_count = detectionCount;
-  detectionMsg->masks.sizes[0] = detectionCount;
+  detectionMsg.detection_count = detectionCount;
+  detectionMsg.masks.sizes[0] = detectionCount;
 
-  auto msgBboxes = std::span{detectionMsg->bboxes.data(), detectionMsg->detection_count};
-  auto msgTrackIds = std::span{detectionMsg->track_ids.data(), detectionMsg->detection_count};
+  auto msgBboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
+  auto msgTrackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
   // Assign track ids
-  rclcpp::Time msgTime(imageMsgPtr->header.stamp);
+  rclcpp::Time msgTime(detectionMsg.header.stamp);
   std::chrono::system_clock::time_point sysTime{std::chrono::nanoseconds{msgTime.nanoseconds()}};
   trackMatcher_.update(sysTime, boxes, msgTrackIds);
-
-  ////////////////////////////////////////////////////////////
-  // Forward detecto for identification
-  if (detectionCount > 0) {
-    identifier_->onDetection(cudaStream_, imageTensor, detectionMsg->scale_image_from_detection, msgTrackIds, msgBboxes,
-                             *detectionMsg);
-  }
-
-  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
-  detectionPublisher_->publish(std::move(detectionMsg));
 }
 
 } // namespace zoo
-
-#include "rclcpp_components/register_node_macro.hpp"
-
-RCLCPP_COMPONENTS_REGISTER_NODE(zoo::Segmenter)

@@ -37,17 +37,14 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Identifier::Identifier(TrackMatcher &trackMatcher, const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("identifier_{}", nameIndex), options), trackMatcher_{trackMatcher} {
+Identifier::Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher, at::cuda::CUDAStream cudaStream)
+    : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream}, cameraName_{cameraName},
+      trackMatcher_{trackMatcher} {
   at::InferenceMode inferenceGuard;
 
-  cameraName_ = declare_parameter<std::string>("camera_name");
-  RCLCPP_INFO(get_logger(), "Starting segmenter for %s", cameraName_.c_str());
+  RCLCPP_INFO(get_logger(), "Starting identifier for %s", cameraName_.c_str());
 
   readConfig(getConfig());
-
-  // Subscribe to receive images from camera
-  // Publish results
 }
 
 void Identifier::readConfig(const nlohmann::json &config) {
@@ -158,7 +155,7 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
 
   // Force to max probability
   const auto &[maxProbs, maxIndices] = probabilities.topk(/*k*/ 2, /*dim*/ 1);
-  for (int i = 0; i < trackCount; ++i) {
+  for (int i = 0; i < static_cast<int>(trackCount); ++i) {
     const float32_t top1 = maxProbs.index({i, 0}).item<float32_t>();
     const float32_t top2 = maxProbs.index({i, 1}).item<float32_t>();
     if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
@@ -261,11 +258,9 @@ void Identifier::callStatelessModel(at::Tensor &identityLogitsGpu, const torch::
   identityLogitsGpu = modelResult.toTensor();
 }
 
-void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torch::Tensor &imageGpu,
+void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &imageGpu,
                              const float scale_image_from_detection, const std::span<const TrackId> trackIds,
-                             const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes,
-                             zoo_msgs::msg::Detection &msg) {
-  at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
+                             const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
@@ -339,7 +334,3 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
 }
 
 } // namespace zoo
-
-// #include "rclcpp_components/register_node_macro.hpp"
-
-// RCLCPP_COMPONENTS_REGISTER_NODE(zoo::Identifier)

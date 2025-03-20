@@ -17,14 +17,13 @@
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_vision/identifier.hpp"
+#include "zoo_vision/segmenter.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 
 #include <Eigen/Dense>
-#include <c10/cuda/CUDAStream.h>
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <torch/script.h>
 
 #include <filesystem>
 
@@ -32,30 +31,25 @@ namespace zoo {
 
 using float32_t = float;
 
-class Segmenter {
+class CameraPipeline : public rclcpp::Node {
 public:
-  explicit Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                     at::cuda::CUDAStream cudaStream);
+  explicit CameraPipeline(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
 
   void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor);
+
+  void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
 private:
-  const rclcpp::Logger &get_logger() const { return logger_; }
-
-  std::string name_;
-  rclcpp::Logger logger_;
-  at::cuda::CUDAStream cudaStream_;
-
   std::string cameraName_;
 
-  Eigen::Matrix3f H_world2FromCamera_;
-  Eigen::Matrix3f H_mapFromWorld2_;
+  RateSampler rateSampler_;
 
-  int elephant_label_id_;
-  torch::jit::script::Module model_;
+  at::cuda::CUDAStream cudaStream_;
+  TrackMatcher trackMatcher_;
+  Segmenter segmenter_;
+  Identifier identifier_;
 
-  TrackMatcher &trackMatcher_;
+  std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
+  std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
 };
 } // namespace zoo
