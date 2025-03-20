@@ -103,7 +103,7 @@ def main():
         "zoo-elephants-identity-train",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "identity/dataset/train",
+            dataset_dir=elephant_ds_root / "identity/dataset/certainty/train/good",
             name=name,
             persistent=True,
         ),
@@ -114,7 +114,7 @@ def main():
         "zoo-elephants-identity-val",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "identity/dataset/val",
+            dataset_dir=elephant_ds_root / "identity/dataset/certainty/val",
             name=name,
             persistent=True,
         ),

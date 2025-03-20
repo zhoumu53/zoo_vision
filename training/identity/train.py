@@ -16,6 +16,7 @@ from torch.utils.data.dataloader import default_collate
 from torchvision.transforms.functional import InterpolationMode
 from transforms import get_mixup_cutmix
 from identity_sequence_dataset import IdentitySequenceDataset
+from elephant_identity_dataset import ElephantIdentityDataset
 
 from torch.utils.tensorboard import SummaryWriter
 from model import get_model
@@ -48,7 +49,7 @@ def train_one_epoch(
         metric_logger.log_every(data_loader, args.print_freq, header)
     ):
         start_time = time.time()
-        target_t = target.to(device)
+        target = target.to(device)
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             # image.shape is either [b,t,c,h,w] or [b,c,h,w]
             batch_size = image.shape[0]
@@ -62,9 +63,6 @@ def train_one_epoch(
                     dtype=torch.float32,
                     device=device,
                 )
-                target = torch.zeros(
-                    [batch_size, time_count], dtype=torch.int64, device=device
-                )
                 for t in range(time_count):
                     image_t = image[:, [t], ...].to(device)
                     output_t = model(image_t, hidden_state)
@@ -72,14 +70,16 @@ def train_one_epoch(
                     hidden_state = output_t["gru_state"]
 
                     prediction[:, [t], :] = prediction_t
-                    target[:, t] = target_t
                 prediction = prediction.reshape([batch_size * time_count, class_count])
-                target = target.reshape([batch_size * time_count])
+                target = target.reshape(
+                    [batch_size * time_count, class_count]
+                    if len(target.shape) == 3
+                    else [batch_size * time_count]
+                )
             else:
                 # Single image dataset
                 image = image.to(device)
                 prediction = model(image)
-                target = target_t
             loss = criterion(prediction, target)
 
         optimizer.zero_grad()
@@ -138,9 +138,9 @@ def evaluate(
     class_count = 5
     num_processed_samples = 0
     with torch.inference_mode():
-        for image, target_t in metric_logger.log_every(data_loader, print_freq, header):
+        for image, target in metric_logger.log_every(data_loader, print_freq, header):
             image = image.to(device, non_blocking=True)
-            target_t = target_t.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
 
             # image.shape is either [b,t,c,h,w] or [b,c,h,w]
             batch_size = image.shape[0]
@@ -154,9 +154,6 @@ def evaluate(
                     dtype=torch.float32,
                     device=device,
                 )
-                target = torch.zeros(
-                    [batch_size, time_count], dtype=torch.int64, device=device
-                )
                 hidden_state = None
                 for t in range(time_count):
                     image_t = image[:, [t], ...]
@@ -165,13 +162,15 @@ def evaluate(
                     hidden_state = output_t["gru_state"]
 
                     prediction[:, [t], :] = prediction_t
-                    target[:, t] = target_t
                 prediction = prediction.reshape([batch_size * time_count, class_count])
-                target = target.reshape([batch_size * time_count])
+                target = target.reshape(
+                    [batch_size * time_count, class_count]
+                    if len(target.shape) == 3
+                    else [batch_size * time_count]
+                )
             else:
                 # Single image
                 prediction = model(image)
-                target = target_t
             loss = criterion(prediction, target)
 
             acc1, acc2 = utils.accuracy(prediction, target, topk=(1, 2))
@@ -204,6 +203,7 @@ def evaluate(
         f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@2 {metric_logger.acc2.global_avg:.3f}"
     )
     if tb_writer is not None:
+        tb_writer.add_scalar("Val/loss", metric_logger.loss.global_avg, epoch)
         tb_writer.add_scalar("Val/acc1", metric_logger.acc1.global_avg, epoch)
         tb_writer.add_scalar("Val/acc2", metric_logger.acc2.global_avg, epoch)
 
@@ -246,19 +246,19 @@ def load_data(traindir, valdir, use_sequence_dataset: bool, args):
         random_erase_prob = getattr(args, "random_erase", 0.0)
         ra_magnitude = getattr(args, "ra_magnitude", None)
         augmix_severity = getattr(args, "augmix_severity", None)
-        dataset = torchvision.datasets.ImageFolder(
-            traindir,
-            presets.ClassificationPresetTrain(
-                crop_size=train_crop_size,
-                interpolation=interpolation,
-                auto_augment_policy=auto_augment_policy,
-                random_erase_prob=random_erase_prob,
-                ra_magnitude=ra_magnitude,
-                augmix_severity=augmix_severity,
-                backend=args.backend,
-                use_v2=args.use_v2,
-            ),
+        transform = presets.ClassificationPresetTrain(
+            crop_size=train_crop_size,
+            interpolation=interpolation,
+            auto_augment_policy=auto_augment_policy,
+            random_erase_prob=random_erase_prob,
+            ra_magnitude=ra_magnitude,
+            augmix_severity=augmix_severity,
+            backend=args.backend,
+            use_v2=args.use_v2,
         )
+
+        # dataset = torchvision.datasets.ImageFolder(traindir, transform)
+        dataset = ElephantIdentityDataset(traindir, transform)
         if args.cache_dataset:
             print(f"Saving dataset_train to {cache_path}")
             utils.mkdir(os.path.dirname(cache_path))
@@ -300,8 +300,12 @@ def load_data(traindir, valdir, use_sequence_dataset: bool, args):
             utils.save_on_master((dataset_test, valdir), cache_path)
 
     if use_sequence_dataset:
-        dataset = IdentitySequenceDataset(args.sequence_length, dataset)
-        dataset_test = IdentitySequenceDataset(args.sequence_length, dataset_test)
+        dataset = IdentitySequenceDataset(
+            args.sequence_length, args.uncertain_rate, dataset
+        )
+        dataset_test = IdentitySequenceDataset(
+            args.sequence_length, args.uncertain_rate, dataset_test
+        )
 
     print("Creating data loaders")
     if args.distributed:
@@ -893,6 +897,12 @@ def get_args_parser(add_help=True):
         default=10,
         type=int,
         help="Number of images in the sequence (only applicable to gru model)",
+    )
+    parser.add_argument(
+        "--uncertain_rate",
+        default=0,
+        type=int,
+        help="Rate of images with terrible uncertainty in a sequence (only applicable to gru model)",
     )
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
     return parser

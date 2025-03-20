@@ -1,6 +1,7 @@
 # Command used for elephants
 ```
-python train.py --data-path /home/dherrera/data/elephants/identity/dataset --epochs 100 --model densenet121 --weights DenseNet121_Weights.IMAGENET1K_V1 --auto-augment augmix --lr-scheduler steplr --lr-step-size 30 --lr-warmup-epochs 0 --random-erase 0.1 --output-dir /home/dherrera/git/zoo_vision/models/identity/freeze09 --freeze 9 --label-smoothing 0.3
+python train.py --data-path /home/dherrera/data/elephants/identity/dataset/certainty --epochs 400 --model densenet121 --weights DenseNet121_Weights.IMAGENET1K_V1 --auto-augment augmix --lr-scheduler steplr --lr-step-size 30 --lr-warmup-epochs 0 --random-erase 0.1 --output-dir /home/dherrera/temp/none --freeze 9
+python train.py --data-path /home/dherrera/data/elephants/identity/dataset/mix --epochs 400 --model zoo_id_gru --weights /home/dherrera/temp/id_gru/best.pth --auto-augment augmix --lr-scheduler steplr --lr-step-size 30 --lr-warmup-epochs 0 --random-erase 0.1 --output-dir /home/dherrera/temp/id_gru_f4 --freeze 99 --batch-size=16 --sequence_length=5 
 ```
 
 # Image classification reference training scripts

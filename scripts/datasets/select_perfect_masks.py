@@ -79,12 +79,12 @@ def process_image(
         if key == "q":
             sys.exit()
         elif key == "d":
-            # Good, move to good folder
+            # Good
             shutil.move(img_file, good_path / img_file.name)
             shutil.move(seg_file, good_path / seg_file.name)
             keepAsking = False
         elif key == "a":
-            # Bad , move to good folder
+            # Bad
             shutil.move(img_file, bad_path / img_file.name)
             shutil.move(seg_file, bad_path / seg_file.name)
             keepAsking = False

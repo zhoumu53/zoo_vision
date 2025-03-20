@@ -154,10 +154,19 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
   // TODO: fix this
   bestIdentities.resize(trackCount, identityCount + 1);
 
+  constexpr float32_t CONFIDENCE_THRESHOLD = 0.4f;
+
   // Force to max probability
-  at::Tensor minProbs = probabilities.argmax(1);
-  for (size_t i = 0; i < trackCount; ++i) {
-    bestIdentities[i] = minProbs[i].item<int>();
+  const auto &[maxProbs, maxIndices] = probabilities.topk(/*k*/ 2, /*dim*/ 1);
+  for (int i = 0; i < trackCount; ++i) {
+    const float32_t top1 = maxProbs.index({i, 0}).item<float32_t>();
+    const float32_t top2 = maxProbs.index({i, 1}).item<float32_t>();
+    if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
+      const int maxIdx = maxIndices.index({i, 0}).item<int>();
+      bestIdentities[i] = maxIdx + 1;
+    } else {
+      bestIdentities[i] = 0;
+    }
   }
 
   return bestIdentities;
@@ -317,10 +326,10 @@ void Identifier::onDetection(const at::cuda::CUDAStream &cudaStream_, const torc
   assert(identities.size() == bboxes.size());
 
   for (const auto i : std::views::iota(0u, bboxes.size())) {
-    msg.identity_ids[i] = identities[i] + 1; // Add one because 0 is background
+    msg.identity_ids[i] = identities[i];
     for (const auto j : std::views::iota(0u, identityCount)) {
-      msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
-      // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
+      // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
+      msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
     }
   }
 
