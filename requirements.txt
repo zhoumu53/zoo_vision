@@ -27,6 +27,10 @@ torchinfo
 lark
 fiftyone # To browse coco datasets and predictions
 
+git+https://github.com/huggingface/transformers.git
+datasets
+albumentations
+
 # Rerun is our main visualization library
 rerun-sdk==0.22.1
 
