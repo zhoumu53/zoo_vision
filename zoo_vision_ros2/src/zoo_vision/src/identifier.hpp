@@ -54,8 +54,6 @@ private:
   at::cuda::CUDAStream cudaStream_;
   std::string cameraName_;
 
-  bool recordTracks_;
-
   TrackMatcher &trackMatcher_;
 
   bool isStatefulModel_;

@@ -46,6 +46,8 @@ private:
 
   RateSampler rateSampler_;
 
+  bool recordTracks_;
+
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;

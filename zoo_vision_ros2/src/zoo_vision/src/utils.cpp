@@ -123,6 +123,7 @@ nlohmann::json &getConfig() {
 }
 
 void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
+  // std::cout << "Recording at " << name << std::endl;
   const auto region0 = (imgTensor.permute({1, 2, 0}).to(at::kCPU) * 255).toType(at::kByte).contiguous();
   assert(region0.stride(1) == 3);
   assert(region0.stride(2) == 1);

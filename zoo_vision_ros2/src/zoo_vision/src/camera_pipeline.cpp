@@ -58,11 +58,20 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
 }
 
-void CameraPipeline::readConfig(const nlohmann::json & /*config*/) {}
+void CameraPipeline::readConfig(const nlohmann::json &config) {
+  // Settings
+  recordTracks_ = config["record_tracks"].get<bool>();
+}
+
+// std::mutex globalMutex;
 
 void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
   const auto &imageMsg = *imageMsgPtr;
-
+  std::optional<std::lock_guard<std::mutex>> lock;
+  // if (imageMsg.header.frame_id.data[0] == '7' && imageMsg.header.frame_id.data[1] == '3') {
+  //   lock.emplace(globalMutex);
+  // }
+  // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
   rateSampler_.tick();
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
 
@@ -91,13 +100,53 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 
   // Identification
   if (detectionMsg.detection_count > 0) {
-    auto msgBboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
-    auto msgTrackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
+    auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
+    auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
     at::Tensor patches;
-    cropper_.extractCrops(patches, imageTensor, detectionMsg.scale_image_from_detection, msgBboxes);
+    cropper_.extractCrops(patches, imageTensor, detectionMsg.scale_image_from_detection, bboxes);
 
-    identifier_.onDetection(detectionMsg, patches, msgTrackIds);
+    // Save track images
+    if (recordTracks_) {
+      constexpr int MIN_TRACK_LENGTH = 20;
+      constexpr int SKIP_COUNT = 20;
+      static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
+
+      using Clock = std::chrono::system_clock;
+      using nanoseconds = std::chrono::nanoseconds;
+      using seconds = std::chrono::seconds;
+
+      const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
+      const auto frameTime =
+          std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
+
+      for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
+        TrackData *track = trackMatcher_.getTrackData(trackId);
+        const std::string imgName =
+            std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track->trackLength);
+        const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
+
+        if (track->trackLength <= MIN_TRACK_LENGTH) {
+          continue;
+        }
+        if ((track->trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
+          continue;
+        }
+
+        if (trackId > 3000) {
+          std::terminate();
+        }
+        // The first image makes sure we create the directory
+        // and it is also stored at the root for quick preview
+        if (track->trackLength == MIN_TRACK_LENGTH + 1) {
+          std::filesystem::create_directories(trackDir);
+          saveTensorImage(patches[idx], rootPath / imgName);
+        }
+        saveTensorImage(patches[idx], trackDir / imgName);
+      }
+    }
+
+    identifier_.onDetection(detectionMsg, patches, trackIds);
     behaviourer_.onDetection(detectionMsg, patches);
   }
 

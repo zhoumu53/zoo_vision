@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <string.h>
 
 using namespace std::chrono_literals;
@@ -46,9 +47,6 @@ Identifier::Identifier(int nameIndex, std::string cameraName, TrackMatcher &trac
 }
 
 void Identifier::readConfig(const nlohmann::json &config) {
-  // Settings
-  recordTracks_ = config["record_tracks"].get<bool>();
-
   // Load model
   const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["identity"]);
   loadModel(modelPath);
@@ -204,14 +202,6 @@ void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor 
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
   assert(patches.device().is_cuda());
-
-  // Save images for this track
-  if (recordTracks_) {
-    for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
-      TrackData *track = trackMatcher_.getTrackData(trackId);
-      saveTensorImage(patches[idx], std::format("debug/{}_t{}_{}.png", cameraName_, trackId, track->trackLength));
-    }
-  }
 
   // Send to model
   at::Tensor identityLogitsGpu;

@@ -35,22 +35,35 @@ void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &ima
                                 const float scale_image_from_detection,
                                 const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
   constexpr int CROP_SIZE = 256;
+  constexpr float CONTEXT_FACTOR = 1.1f;
   const int detectionCount = bboxes.size();
   const int channels = 3;
 
+  const std::array<int64_t, 2> imageSize = {/*width*/ imageGpu.size(2), /*height*/ imageGpu.size(1)};
   patches = at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
 
   // Extract crops
   for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
     const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
-    Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
-    Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
+    const Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
+    const Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
 
-    Eigen::Vector2f center = bboxCenter * scale_image_from_detection;
-    Eigen::Vector2f half_size = bboxHalfSize * scale_image_from_detection;
+    const Eigen::Vector2f center = bboxCenter * scale_image_from_detection;
+    const Eigen::Vector2f half_size = bboxHalfSize * (scale_image_from_detection * CONTEXT_FACTOR);
 
     Eigen::Vector2f corner0 = center - half_size;
     Eigen::Vector2f corner1 = center + half_size;
+    // Make sure corners are inside the image (because we increased patch size by CONTEXT_FACTOR)
+    for (Eigen::Vector2f *pcorner : {&corner0, &corner1}) {
+      auto &corner = *pcorner;
+      for (int i : {0, 1}) {
+        if (corner[i] < 0) {
+          corner[i] = 0;
+        } else if (corner[i] >= imageSize[i]) {
+          corner[i] = imageSize[i] - 1;
+        }
+      }
+    }
     const auto bboxPatch = imageGpu.index({
         None,
         Slice(),

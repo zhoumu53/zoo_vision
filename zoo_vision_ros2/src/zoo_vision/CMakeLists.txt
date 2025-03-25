@@ -30,7 +30,8 @@ FetchContent_Declare(TorchRelease URL https://download.pytorch.org/libtorch/cu12
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
 FetchContent_Declare(nvtx3 URL https://github.com/NVIDIA/NVTX/archive/refs/tags/v3.1.0.tar.gz)
 FetchContent_Declare(argparse GIT_REPOSITORY https://github.com/p-ranav/argparse.git)
-FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse)
+FetchContent_Declare(date GIT_REPOSITORY https://github.com/HowardHinnant/date.git)
+FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse date)
 
 # torch
 list(APPEND CMAKE_PREFIX_PATH "${torchrelease_SOURCE_DIR}")
@@ -100,6 +101,7 @@ target_link_libraries(zoo_vision
   nvtx3-cpp
   zoo_vision_rs
   argparse
+  date
 )
 
 install(TARGETS

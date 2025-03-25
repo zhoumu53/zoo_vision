@@ -16,6 +16,7 @@
 
 #include "zoo_vision/utils.hpp"
 
+#include <date/chrono_io.h>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -32,16 +33,12 @@ namespace zoo {
 namespace {
 
 std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
-  // using Clock = std::chrono::system_clock;
-  std::tm parsedTime = {};
   std::ispanstream ss(timeStr);
 
   constexpr auto DATE_FORMAT = "%Y-%m-%dT%H:%M:%S";
-  ss >> std::get_time(&parsedTime, DATE_FORMAT);
-
-  std::chrono::system_clock::time_point parsedPoint = std::chrono::system_clock::from_time_t(std::mktime(&parsedTime));
-
-  return parsedPoint;
+  std::chrono::system_clock::time_point time_point;
+  ss >> date::parse(DATE_FORMAT, time_point);
+  return time_point;
 }
 
 // std::chrono::system_clock::duration parseDuration(std::string_view timeStr) {
@@ -137,8 +134,9 @@ void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraDat
                                         static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
       cameraData.videoStartTime_ = startTime;
       cameraData.videoStream_ = std::move(cvVideo);
-      RCLCPP_INFO(get_logger(), "Loaded video %s (%dx%d) start time %s", videoFile.filename().c_str(),
-                  cameraData.frameSize.width, cameraData.frameSize.height,
+      RCLCPP_INFO(get_logger(), "Loaded video %s", videoFile.c_str());
+      RCLCPP_INFO(get_logger(), "Resolution=%dx%d, now=%s, start time=%s", cameraData.frameSize.width,
+                  cameraData.frameSize.height, std::format("{:%Y-%m-%d %T}", time).c_str(),
                   std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
 
       // Adjust time
@@ -151,7 +149,26 @@ void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraDat
     } else {
       RCLCPP_ERROR(get_logger(), "Failed to open video %s", videoFile.c_str());
     }
+  } else {
+    RCLCPP_ERROR(get_logger(), "No video found for camera %s at time %s", cameraName.c_str(),
+                 std::format("{}", time).c_str());
   }
+}
+
+auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
+  std::optional<Clock::time_point> bestTime;
+
+  for (const auto &[_, cameraData] : cameras_) {
+    for (const auto &videoInfo : cameraData.videoList_) {
+      if (videoInfo.startTime > replayNow_) {
+        if (!bestTime.has_value() || *bestTime > videoInfo.startTime) {
+          bestTime = videoInfo.startTime;
+        }
+        break;
+      }
+    }
+  }
+  return bestTime;
 }
 
 void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
@@ -167,10 +184,21 @@ void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
 
 void VideoLoader::onTimer() {
   std::optional<Clock::time_point> newReplayTime;
+  bool framePublished = false;
 
   for (auto &[cameraName, cameraData] : cameras_) {
+    if (!cameraData.videoStream_.has_value()) {
+      // Load video before we start
+      loadVideo(cameraName, cameraData, replayNow_);
+      if (!cameraData.videoStream_.has_value()) {
+        // No video can be loaded for this camera
+        continue;
+      }
+    }
+
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
-    msg->header.stamp = now();
+    msg->header.stamp =
+        rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
     setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
     setMsgString(msg->encoding, sensor_msgs::image_encodings::RGB8);
     msg->width = cameraData.frameSize.width;
@@ -187,6 +215,9 @@ void VideoLoader::onTimer() {
       cameraData.videoStream_.reset();
       loadVideo(cameraName, cameraData, replayNow_);
       loadImage(cameraData, image);
+      if (image.empty()) {
+        RCLCPP_ERROR(get_logger(), "%s: Loading image frailed from new video", cameraName.c_str());
+      }
     }
     if (image.empty()) {
       continue;
@@ -196,20 +227,39 @@ void VideoLoader::onTimer() {
       // Calculate replay time based on how much we've advanced in the video
       const auto offsetMs = cameraData.videoStream_->get(cv::CAP_PROP_POS_MSEC);
       newReplayTime = *cameraData.videoStartTime_ + std::chrono::milliseconds(static_cast<int64_t>(offsetMs));
+      assert(newReplayTime.value() >= replayNow_);
     }
 
     // TODO: converting BGR->RGB like this is inefficient!
     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     cameraData.publisher_->publish(std::move(msg));
+    framePublished = true;
+  }
+  if (framePublished) {
+    frameIndex_ += 1;
   }
 
-  if (newReplayTime.has_value()) {
-    replayNow_ = *newReplayTime;
-  } else {
+  if (!newReplayTime.has_value()) {
+    assert(framePublished == false);
     RCLCPP_WARN(get_logger(), "No images produced");
-    replayNow_ += std::chrono::milliseconds(40);
+    newReplayTime = findNextValidReplayTime();
+    if (newReplayTime.has_value()) {
+      RCLCPP_INFO(get_logger(), "No images produced, advancing to %s", std::format("{}", *newReplayTime).c_str());
+    } else {
+      RCLCPP_INFO(get_logger(), "End of all videos");
+      std::terminate();
+    }
   }
-  frameIndex_++;
+
+  assert(newReplayTime.has_value());
+  replayNow_ = *newReplayTime;
+
+  static int64_t minutesLastLog = 0;
+  const int64_t minutesNow = std::chrono::duration_cast<std::chrono::minutes>(replayNow_.time_since_epoch()).count();
+  if (abs(minutesNow - minutesLastLog) > 5) {
+    minutesLastLog = minutesNow;
+    RCLCPP_INFO(get_logger(), "Replay time: %s", std::format("{}", replayNow_).c_str());
+  }
 }
 
 } // namespace zoo
