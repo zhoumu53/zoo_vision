@@ -19,9 +19,14 @@
             "request": "launch",
             "program": "${workspaceFolder}/zoo_vision_ros2/build/zoo_vision/zoo_vision",
             "args": [
+                // "-c",
+                // "/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]",
                 "-c",
-                //"/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]"
-                "/replay_time=\\\"2025-01-25T02:04:50\\\""
+                "/video_db=\\\"/media/dherrera/ElephantExternal/elephants/night_sarah/zurich/2023/video_db.json\\\"",
+                "-c",
+                "/replay_time=\\\"2023-08-21T20:32:00\\\"",
+                "-c",
+                "/record_tracks=false"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
