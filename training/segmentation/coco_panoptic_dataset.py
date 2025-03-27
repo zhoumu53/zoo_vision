@@ -8,7 +8,7 @@ from pathlib import Path
 class CocoPanopticDataset(torch.utils.data.Dataset):
     """Image segmentation dataset."""
 
-    def __init__(self, annotations_path: Path, processor, transform=None):
+    def __init__(self, annotations_path: Path, processor=None, transform=None):
         self.root_path = annotations_path.parent
         with annotations_path.open() as f:
             annotations_json = json.load(f)

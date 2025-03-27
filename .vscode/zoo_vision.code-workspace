@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "../../vision"
+		},
+		{
+			"path": "../../transformers"
 		}
 	],
 	"settings": {

@@ -28,8 +28,11 @@ lark
 fiftyone # To browse coco datasets and predictions
 
 git+https://github.com/huggingface/transformers.git
+accelerate>=0.26.0
 datasets
 albumentations
+torchmetrics
+tf-keras # Solves compatibility issue between transformers.Trainer and Keras 3
 
 # Rerun is our main visualization library
 rerun-sdk==0.22.1
@@ -40,3 +43,4 @@ pyside6 # UI components
 
 # Other
 enlighten # Progress bar
+git+https://github.com/XuehaiPan/nvitop.git#egg=nvitop # Check gpu usage in real-time
