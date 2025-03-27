@@ -56,6 +56,7 @@ void Segmenter::readConfig(const nlohmann::json &config) {
   const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["segmentation"]);
   loadModel(modelPath);
   elephant_label_id_ = config["models"]["elephant_label_id"].get<int>();
+  scoreThreshold_ = config["models"]["score_threshold"].get<float>();
 }
 
 void Segmenter::loadModel(const std::filesystem::path &modelPath) {
@@ -84,6 +85,41 @@ void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const Eigen::AlignedBo
   outBbox.half_size[1] = halfSize[1];
 }
 
+auto Segmenter::callMaskrcnn(const at::Tensor &image) -> SegmentationResult {
+  // TorchScript models require a List[IValue] as input
+  at::List<at::Tensor> imageList({image});
+  at::IValue detectionResult = model_.forward({imageList});
+
+  const auto detections = detectionResult.toTuple()->elements()[1].toList()[0].get().toGenericDict();
+
+  // Results in gpu
+  const at::Tensor masks_f32 = detections.at("masks").toTensor().squeeze(1);
+  const at::Tensor boxes = detections.at("boxes").toTensor();
+  const at::Tensor scores = detections.at("scores").toTensor();
+  const at::Tensor labels = detections.at("labels").toTensor();
+
+  // const torch::Tensor scores = detections.at("scores").toTensor().to(torch::kCPU);
+
+  // Masks to u8
+  const at::Tensor masks_u8 = masks_f32.mul(255).clamp(0, 255).to(at::kByte);
+
+  return SegmentationResult{masks_u8, boxes, scores, labels};
+}
+
+auto Segmenter::callMask2Former(const at::Tensor &image) -> SegmentationResult {
+  // TorchScript models require a List[IValue] as input
+  const at::IValue detectionResult = model_.forward({image.unsqueeze(0)});
+
+  const auto detections = detectionResult.toGenericDict();
+
+  // Results in gpu
+  const at::Tensor masks_u8 = detections.at("masks").toTensor().squeeze(1);
+  const at::Tensor scores = detections.at("scores").toTensor();
+  const at::Tensor boxes = detections.at("boxes").toTensor();
+  const at::Tensor labels = detections.at("labels").toTensor();
+
+  return SegmentationResult{masks_u8, boxes, scores, labels};
+}
 void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
@@ -95,33 +131,28 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
 
   // Resize
   const int DETECTION_HEIGHT = 600;
-  detectionMsg.scale_image_from_detection = static_cast<float>(imageTensor.size(1)) / DETECTION_HEIGHT;
+  const int DETECTION_WIDTH = 1060;
   at::Tensor detectionImage;
   {
     namespace F = torch::nn::functional;
-    const auto interpolateOpts =
-        F::InterpolateFuncOptions()
-            .size({{static_cast<int>(imageTensor.size(1) / detectionMsg.scale_image_from_detection),
-                    static_cast<int>(imageTensor.size(2) / detectionMsg.scale_image_from_detection)}})
-            .mode(torch::kBilinear)
-            .antialias(true)
-            .align_corners(false);
-    const auto imageTensor4D = imageTensor.index({None, Ellipsis});
-    detectionImage = F::interpolate(imageTensor4D, interpolateOpts)[0];
+    const auto interpolateOpts = F::InterpolateFuncOptions()
+                                     .size({{DETECTION_HEIGHT, DETECTION_WIDTH}})
+                                     .mode(torch::kBilinear)
+                                     .antialias(true)
+                                     .align_corners(false);
+    detectionImage = F::interpolate(imageTensor.unsqueeze(0), interpolateOpts)[0];
   }
 
   ////////////////////////////////////////////////////////////
   // Execute segmentation network
-  at::IValue detectionResult;
+  SegmentationResult segmentationResult;
   {
     torch::jit::GraphOptimizerEnabledGuard optGuard(false);
 
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 
     eventBeforeNetwork.record();
-    // TorchScript models require a List[IValue] as input
-    at::List<at::Tensor> imageList({detectionImage});
-    detectionResult = model_.forward({imageList});
+    segmentationResult = callMask2Former(detectionImage);
     eventAfterNetwork.record();
   }
 
@@ -130,90 +161,88 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
 
   nvtxLabel.emplace("seg_after (" + cameraName_ + ")");
 
-  const auto detections = detectionResult.toTuple()->elements()[1].toList()[0].get().toGenericDict();
-
-  // Results in gpu
-  const at::Tensor masksfGpu = detections.at("masks").toTensor().squeeze(1);
-  const at::Tensor boxesGpu = detections.at("boxes").toTensor();
-  const at::Tensor scoresGpu = detections.at("scores").toTensor();
-  const at::Tensor labelsGpu = detections.at("labels").toTensor();
-
-  // const torch::Tensor scores = detections.at("scores").toTensor().to(torch::kCPU);
-
-  // Masks to u8
-  const at::Tensor masksGpu = masksfGpu.mul(255).clamp(0, 255).to(at::kByte);
-
   // Check dimensions
-  assert(boxesGpu.dim() == 2);
+  assert(segmentationResult.scores.dim() == 1);
+  assert(segmentationResult.labels.dim() == 1);
+  assert(segmentationResult.boxes.dim() == 2);
+  assert(segmentationResult.masks_u8.dim() == 3);
+
+  const int64_t modelDetectionCount = segmentationResult.scores.sizes()[0];
+  assert(segmentationResult.scores.size(0) == modelDetectionCount);
+  assert(segmentationResult.labels.size(0) == modelDetectionCount);
+  assert(segmentationResult.boxes.size(0) == modelDetectionCount);
+  assert(segmentationResult.masks_u8.size(0) == modelDetectionCount);
+
+  const int64_t maskHeight = segmentationResult.masks_u8.sizes()[1];
+  const int64_t maskWidth = segmentationResult.masks_u8.sizes()[2];
+  detectionMsg.scalex_image_from_detection = static_cast<float>(imageTensor.size(2)) / maskWidth;
+  detectionMsg.scaley_image_from_detection = static_cast<float>(imageTensor.size(1)) / maskHeight;
 
   const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
-  const int64_t modelDetectionCount = std::min(MAX_DETECTION_COUNT, boxesGpu.sizes()[0]);
-
-  assert(masksGpu.dim() == 3);
-  assert(boxesGpu.sizes()[0] == masksGpu.sizes()[0]);
-  const int64_t maskHeight = masksGpu.sizes()[1];
-  const int64_t maskWidth = masksGpu.sizes()[2];
-
-  detectionMsg.detection_count = modelDetectionCount;
-  detectionMsg.masks.sizes[0] = modelDetectionCount;
+  detectionMsg.masks.sizes[0] = MAX_DETECTION_COUNT;
   detectionMsg.masks.sizes[1] = maskHeight;
   detectionMsg.masks.sizes[2] = maskWidth;
   at::Tensor masksMap = mapRosTensor(detectionMsg.masks);
 
   // Move all to cpu
-  const at::Tensor boxesNet = boxesGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
-  const at::Tensor labels = labelsGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
-  const at::Tensor scores = scoresGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
-  const at::Tensor masks = masksGpu.index({Slice(0, modelDetectionCount)}).to(at::kCPU, true);
+  const at::Tensor scores = segmentationResult.scores.to(at::kCPU, true);
+  const at::Tensor labels = segmentationResult.labels.to(at::kCPU, true);
+  const at::Tensor boxesNet = segmentationResult.boxes.to(at::kCPU, true);
+  const at::Tensor masks = segmentationResult.masks_u8.to(at::kCPU, true);
   cudaStreamSynchronize(cudaStream_);
+
+  // Sort scores
+  const auto [sortedScores, sortedIndices] = torch::sort(scores, /*dim*/ 0, /*descending*/ true);
 
   constexpr auto MS_TO_NS = 1e6f;
   addRosKeyValue(detectionMsg.timings.items_ns, "seg_net",
                  eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 
-  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg.world_positions.data(), 3, modelDetectionCount};
+  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap{detectionMsg.world_positions.data(), 3, MAX_DETECTION_COUNT};
 
-  size_t outIndex = 0;
+  detectionMsg.detection_count = 0;
+
   const auto world_from_world2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
   std::vector<Eigen::AlignedBox2f> boxes;
-  for (int i = 0; i < modelDetectionCount; ++i) {
-    const int label = labels[i].item<int>();
+  for (int i = 0; i < modelDetectionCount && detectionMsg.detection_count < MAX_DETECTION_COUNT; ++i) {
+    const auto inputIndex = sortedIndices[i].item<int>();
+
+    const float score = sortedScores[i].item<float>();
+    if (score < scoreThreshold_) {
+      continue;
+    }
+
+    const int label = labels[inputIndex].item<int>();
     if (label != elephant_label_id_) {
       continue;
     }
 
-    const float score = scores[i].item<float>();
-    const float SCORE_THRESHOLD = 0.85;
-    if (score < SCORE_THRESHOLD) {
-      continue;
-    }
+    const auto outputIndex = detectionMsg.detection_count;
+    detectionMsg.detection_count += 1;
 
     // Track ids are decided later
 
     // Mask
-    const at::Tensor mask = masks[i];
-    masksMap[outIndex].copy_(mask);
+    const at::Tensor mask = masks[inputIndex];
+    masksMap[outputIndex].copy_(mask);
 
     // Bbox
-    const at::Tensor bbox = boxesNet[i];
+    const at::Tensor bbox = boxesNet[inputIndex];
     const Eigen::Vector2f x0{bbox[0].item<float32_t>(), bbox[1].item<float32_t>()};
     const Eigen::Vector2f x1{bbox[2].item<float32_t>(), bbox[3].item<float32_t>()};
     const auto bboxEigen = Eigen::AlignedBox2f(x0, x1);
     boxes.push_back(bboxEigen);
-    copyBboxToRos(detectionMsg.bboxes[outIndex], bboxEigen);
+    copyBboxToRos(detectionMsg.bboxes[outputIndex], bboxEigen);
 
     // Project to world
     const Eigen::Vector2f imagePosition =
-        Eigen::Vector2f{bboxEigen.center()[0], bboxEigen.max()[1]} * detectionMsg.scale_image_from_detection;
+        Eigen::Vector2f{bboxEigen.center()[0] * detectionMsg.scalex_image_from_detection,
+                        bboxEigen.max()[1] * detectionMsg.scaley_image_from_detection};
     const Eigen::Vector3f worldPosition =
         world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
-    worldPositionsMap.col(outIndex) = worldPosition;
-
-    outIndex += 1;
+    worldPositionsMap.col(outputIndex) = worldPosition;
   }
-  const auto detectionCount = outIndex;
-  detectionMsg.detection_count = detectionCount;
-  detectionMsg.masks.sizes[0] = detectionCount;
+  detectionMsg.masks.sizes[0] = detectionMsg.detection_count;
 
   auto msgBboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
   auto msgTrackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};

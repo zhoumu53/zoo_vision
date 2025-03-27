@@ -326,7 +326,17 @@ impl RerunForwarder {
 
         self.recording.log(
             format!("/cameras/{}/fullres", camera),
-            &rerun::Transform3D::from_scale(1.0 / msg.scale_image_from_detection),
+            &rerun::Transform3D::from_mat3x3([
+                1.0 / msg.scalex_image_from_detection,
+                0.0,
+                0.0,
+                0.0,
+                1.0 / msg.scaley_image_from_detection,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ]),
         )?;
 
         let detection_count = msg.detection_count as usize;
@@ -399,7 +409,8 @@ impl RerunForwarder {
         )?;
 
         // Log detection masks
-        const THRESHOLD: u8 = (0.8 * 255.0) as u8;
+        // const THRESHOLD: u8 = (0.8 * 255.0) as u8;
+        const THRESHOLD: u8 = 1 as u8;
         let mut image_classes = ndarray::Array2::<u8>::zeros((mask_height, mask_width).f());
         for idx in 0..detection_count {
             let track_id = msg.track_ids[idx];

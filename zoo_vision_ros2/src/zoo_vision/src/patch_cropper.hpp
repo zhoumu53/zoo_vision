@@ -28,7 +28,7 @@ class PatchCropper {
 public:
   explicit PatchCropper();
 
-  void extractCrops(at::Tensor &patches, const at::Tensor &imageGpu, const float scale_image_from_detection,
+  void extractCrops(at::Tensor &patches, const at::Tensor &imageGpu, const Eigen::Vector2f &scale_image_from_detection,
                     const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes);
 };
 } // namespace zoo

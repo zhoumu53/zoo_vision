@@ -32,7 +32,7 @@ namespace zoo {
 PatchCropper::PatchCropper() {}
 
 void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu,
-                                const float scale_image_from_detection,
+                                const Eigen::Vector2f &scale_image_from_detection,
                                 const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
   constexpr int CROP_SIZE = 256;
   constexpr float CONTEXT_FACTOR = 1.1f;
@@ -48,8 +48,8 @@ void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &ima
     const Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
     const Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};
 
-    const Eigen::Vector2f center = bboxCenter * scale_image_from_detection;
-    const Eigen::Vector2f half_size = bboxHalfSize * (scale_image_from_detection * CONTEXT_FACTOR);
+    const Eigen::Vector2f center = bboxCenter.cwiseProduct(scale_image_from_detection);
+    const Eigen::Vector2f half_size = bboxHalfSize.cwiseProduct(scale_image_from_detection) * CONTEXT_FACTOR;
 
     Eigen::Vector2f corner0 = center - half_size;
     Eigen::Vector2f corner1 = center + half_size;

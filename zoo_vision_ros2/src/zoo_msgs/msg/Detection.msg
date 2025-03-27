@@ -3,7 +3,8 @@ uint32 INDIVIDUAL_COUNT=5               # Fix capacity to enable shared-memory z
 
 zoo_msgs/Header header                  # Header timestamp should be acquisition time of image
 
-float32 scale_image_from_detection
+float32 scalex_image_from_detection
+float32 scaley_image_from_detection
 
 uint32 detection_count
 

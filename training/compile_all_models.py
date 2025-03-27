@@ -6,8 +6,6 @@ from enlighten.counter import Counter as ECounter
 from project_root import PROJECT_ROOT
 from scripts.model_serialization import load_model
 
-from transformers import Mask2FormerForUniversalSegmentation
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compiles models with torchscript.")
@@ -19,13 +17,14 @@ def parse_args() -> argparse.Namespace:
 def compile_model(weights_path: Path, output_path: Path) -> None:
     print(f"Compiling {weights_path}")
     model = load_model(weights_path)
-    model = model.to(torch.device("cuda"))
-    if isinstance(model, Mask2FormerForUniversalSegmentation):
+    device = torch.device("cuda")
+    model = model.to(device)
+    if not model.supports_jit:
         image_size = model.input_image_size
         sample_inputs = torch.rand(
             (1, 3, image_size["height"], image_size["width"]),
             dtype=torch.float32,
-            device=model.device,
+            device=device,
         )
         traced_module = torch.jit.trace(model, [sample_inputs], strict=False)
     else:

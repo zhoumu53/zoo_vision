@@ -1,10 +1,11 @@
-from project_root import PROJECT_ROOT
 import transformers
-from zoo_vision.training.identity.model import get_model
-
 from pathlib import Path
 import torch
 import torchvision as tv
+
+from project_root import PROJECT_ROOT
+from zoo_vision.training.identity.model import get_model
+from zoo_vision.training.segmentation.mask2former_adapter import Mask2FormerAdapter
 
 
 class ModelWithTransforms(torch.nn.Module):
@@ -46,6 +47,8 @@ def load_model(path: Path):
             model = transformers.AutoModelForUniversalSegmentation.from_pretrained(
                 model_dir, return_dict=True
             )
+            model = Mask2FormerAdapter(model)
+            model.supports_jit = False
             model.input_image_size = image_processor.size
 
         else:
@@ -92,11 +95,13 @@ def load_model(path: Path):
 
             print("Restoring weights...")
             model.load_state_dict(checkpoint["model"])
+            model.supports_jit = True
 
         if extra_transforms is not None:
             if state_in_forward:
                 model = StateModelWithTransforms(model, extra_transforms)
             else:
                 model = ModelWithTransforms(model, extra_transforms)
+            model.supports_jit = model.model.supports_jit
 
     return model

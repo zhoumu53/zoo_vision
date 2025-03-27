@@ -46,11 +46,30 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   readConfig(getConfig());
 
+  {
+    auto preprocessMeanData =
+        std::array<float32_t, 3>({0.48500001430511475f, 0.4560000002384186f, 0.4059999883174896f});
+    auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672, 0.2239999920129776, 0.22499999403953552});
+
+    preprocessMean_ =
+        (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
+            .to(torch::kCUDA);
+    preprocessStd_ =
+        (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
+            .to(torch::kCUDA);
+  }
+
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10,
-      [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) { this->onImage(std::move(msg)); });
+      *this, imageTopic, 10, [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
+        try {
+          this->onImage(std::move(msg));
+        } catch (const std::exception &e) {
+          RCLCPP_ERROR(this->get_logger(), "Exception:\n%s\nTerminating\n", e.what());
+          std::terminate();
+        }
+      });
 
   // Publish detections
   const auto detectionsTopic = cameraName_ + "/detections";
@@ -63,11 +82,18 @@ void CameraPipeline::readConfig(const nlohmann::json &config) {
   recordTracks_ = config["record_tracks"].get<bool>();
 }
 
+at::Tensor CameraPipeline::preprocessImage(const at::Tensor &image) {
+  // Convert to float
+  at::Tensor image_f32 = image.to(at::kFloat);
+  at::Tensor imageNorm = (image_f32 - preprocessMean_) / preprocessStd_;
+  return imageNorm;
+}
+
 // std::mutex globalMutex;
 
 void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
   const auto &imageMsg = *imageMsgPtr;
-  std::optional<std::lock_guard<std::mutex>> lock;
+  // std::optional<std::lock_guard<std::mutex>> lock;
   // if (imageMsg.header.frame_id.data[0] == '7' && imageMsg.header.frame_id.data[1] == '3') {
   //   lock.emplace(globalMutex);
   // }
@@ -89,11 +115,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  at::Tensor imageTensor;
-  {
-    // Convert to float
-    imageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat) / 255.0f;
-  }
+  const at::Tensor imageTensor = preprocessImage(imageTensorCPU.to(at::kCUDA));
 
   // Segmentation
   segmenter_.onImage(detectionMsg, imageTensor);
@@ -104,7 +126,8 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
     at::Tensor patches;
-    cropper_.extractCrops(patches, imageTensor, detectionMsg.scale_image_from_detection, bboxes);
+    cropper_.extractCrops(patches, imageTensor,
+                          {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
 
     // Save track images
     if (recordTracks_) {

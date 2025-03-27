@@ -42,11 +42,15 @@ public:
   void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
 private:
+  at::Tensor preprocessImage(const at::Tensor &image);
   std::string cameraName_;
 
   RateSampler rateSampler_;
 
   bool recordTracks_;
+
+  at::Tensor preprocessMean_;
+  at::Tensor preprocessStd_;
 
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
