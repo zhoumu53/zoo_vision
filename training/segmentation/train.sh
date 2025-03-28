@@ -3,21 +3,21 @@ python training/segmentation/train_instance_segmentation.py \
     --dataset_name zoo_elephants \
     --image_width 1060 \
     --image_height 600 \
-    --output_dir /home/dherrera/temp/mask2former_zoo \
     --remove_unused_columns False \
     --dataloader_num_workers 12 \
     --dataloader_prefetch_factor 2 \
     --do_train \
     --do_eval \
     --eval_strategy epoch \
-    --num_train_epochs 8 \
+    --num_train_epochs 20 \
     --learning_rate 0.00006 \
     --lr_scheduler_type polynomial \
-    --per_device_train_batch_size 16 \
+    --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 12 \
     --logging_strategy steps \
     --logging_steps 100 \
     --save_strategy epoch \
     --seed 1337 \
     --do_reduce_labels True \
-    --overwrite_output_dir
+    --overwrite_output_dir \
+    --output_dir /home/dherrera/temp/mask2former_zoo_all

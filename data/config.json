@@ -66,7 +66,7 @@
   "models": {
     "elephant_label_id": 0,
     "score_threshold": 0.5,
-    "segmentation": "../models/segmentation/mask2former/first/config.ptc",
+    "segmentation": "../models/segmentation/mask2former/all/config.ptc",
     "identity2": "../models/identity/gru_uncertain/zoo_id_gru_best.ptc",
     "identity": "../models/identity/id_uncertain2/dense121_c5_identity_best.ptc",
     "behaviour": "../models/sleep/basic/dense.ptc"

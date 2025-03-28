@@ -458,11 +458,14 @@ def main():
         args.model_name_or_path,
         label2id=label2id,
         id2label=id2label,
+        num_queries=20,
         ignore_mismatched_sizes=True,
         token=args.token,
     )
-    for p in model.model.parameters():
-        p.requires_grad = False
+
+    # Freeze some of the parameters
+    # for p in model.model.parameters():
+    #     p.requires_grad = False
 
     image_processor = AutoImageProcessor.from_pretrained(
         args.model_name_or_path,
