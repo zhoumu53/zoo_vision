@@ -2,6 +2,7 @@ import transformers
 from pathlib import Path
 import torch
 import torchvision as tv
+import json
 
 from project_root import PROJECT_ROOT
 from zoo_vision.training.identity.model import get_model
@@ -41,15 +42,29 @@ def load_model(path: Path):
 
         if path.name == "config.json":
             # This is a huggingface.transformers model
-
             model_dir = path.parent
             image_processor = transformers.AutoImageProcessor.from_pretrained(model_dir)
-            model = transformers.AutoModelForUniversalSegmentation.from_pretrained(
-                model_dir, return_dict=True
-            )
-            model = Mask2FormerAdapter(model)
-            model.supports_jit = False
-            model.input_image_size = image_processor.size
+
+            with path.open() as f:
+                config_json = json.load(f)
+            model_type = config_json["model_type"]
+            if model_type == "vit":
+                # Classification task
+                model = transformers.AutoModelForImageClassification.from_pretrained(
+                    model_dir, return_dict=True
+                )
+                # extra_transforms = tv.transforms.Resize([224, 224])
+                model.supports_jit = False
+                model.input_image_size = image_processor.size
+
+            elif model_type == "mask2former":
+                # Segmentation task
+                model = transformers.AutoModelForUniversalSegmentation.from_pretrained(
+                    model_dir, return_dict=True
+                )
+                model = Mask2FormerAdapter(model)
+                model.supports_jit = False
+                model.input_image_size = image_processor.size
 
         else:
             # This is a torchvision model

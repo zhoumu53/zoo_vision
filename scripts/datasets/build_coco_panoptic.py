@@ -135,8 +135,10 @@ def main():
 
     annotation_count = len(elephant_annotations["annotations"])
     print(f"{annotation_count=}")
-    with (input_path / "annotations_pan.json").open("w") as f:
+    output_file = input_path / "annotations_pan.json"
+    with output_file.open("w") as f:
         json.dump(elephant_annotations, f, indent=1)
+    print(f"Saved dataset to {str(output_file)}")
 
 
 if __name__ == "__main__":

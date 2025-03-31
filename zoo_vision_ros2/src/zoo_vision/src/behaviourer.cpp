@@ -74,7 +74,13 @@ void Behaviourer::loadModel(const std::filesystem::path &modelPath) {
 
 void Behaviourer::callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &patches) {
   c10::IValue modelResult = model_.forward({patches});
-  logitsGpu = modelResult.toTensor();
+  if (modelResult.isTensor()) {
+    logitsGpu = modelResult.toTensor();
+  } else {
+    auto dict = modelResult.toGenericDict();
+    logitsGpu = dict.at("logits").toTensor();
+    logitsGpu = logitsGpu.squeeze(1); // Remove dummy time dimension
+  }
 }
 
 void Behaviourer::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches) {

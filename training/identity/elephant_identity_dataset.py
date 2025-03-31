@@ -40,7 +40,7 @@ class UncertainImageFolder(ImageFolder):
 class ElephantIdentityDataset(VisionDataset):
     def __init__(
         self,
-        root: Union[str, Path] = None,  # type: ignore[assignment]
+        root: Union[str, Path],
         transform: Callable | None = None,
         target_transform: Callable | None = None,
     ):

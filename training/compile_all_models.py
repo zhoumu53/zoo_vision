@@ -42,6 +42,10 @@ def main() -> None:
         )
         pbar = ECounter(total=len(weights_paths))
         for weights_path in pbar(weights_paths):
+            # Ignore other files that we know are not models
+            if weights_path.name == "rng_state.pth":
+                continue
+
             pbar.desc = str(weights_path.relative_to(PROJECT_ROOT))
 
             output_path = PROJECT_ROOT / weights_path.with_suffix(".ptc")

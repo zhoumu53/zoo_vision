@@ -41,6 +41,11 @@ from transformers.trainer import EvalPrediction
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+from torchvision.transforms import (
+    RandomRotation,
+    RandomErasing,
+    RandomAutocontrast,
+)
 
 from coco_panoptic_dataset import CocoPanopticDataset
 from project_root import DATASETS_ROOT
@@ -458,14 +463,15 @@ def main():
         args.model_name_or_path,
         label2id=label2id,
         id2label=id2label,
-        num_queries=20,
         ignore_mismatched_sizes=True,
         token=args.token,
     )
 
     # Freeze some of the parameters
-    # for p in model.model.parameters():
-    #     p.requires_grad = False
+    to_freeze = [model.model.pixel_level_module.encoder]
+    for x in to_freeze:
+        for p in x.parameters():
+            p.requires_grad = False
 
     image_processor = AutoImageProcessor.from_pretrained(
         args.model_name_or_path,
@@ -493,9 +499,11 @@ def main():
     # )
     train_augment_and_transform = A.Compose(
         [
+            A.Rotate(limit=[-10, +10]),
             A.SmallestMaxSize(max_size=min(args.image_width, args.image_height)),
             A.RandomCrop(width=512, height=512),
             A.HorizontalFlip(p=0.5),
+            A.Erasing(),
             A.GaussNoise(mean_range=[0, 0], std_range=[0.1, 0.2]),
         ]
     )

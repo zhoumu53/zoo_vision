@@ -29,6 +29,7 @@ fiftyone # To browse coco datasets and predictions
 
 git+https://github.com/huggingface/transformers.git
 accelerate>=0.26.0
+evaluate
 datasets
 albumentations
 torchmetrics

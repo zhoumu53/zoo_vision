@@ -22,18 +22,10 @@ from typing import Optional
 import evaluate
 import numpy as np
 import torch
+import datasets
 from datasets import load_dataset
 from PIL import Image
-from torchvision.transforms import (
-    CenterCrop,
-    Compose,
-    Lambda,
-    Normalize,
-    RandomHorizontalFlip,
-    RandomResizedCrop,
-    Resize,
-    ToTensor,
-)
+import torchvision.transforms as tvt
 
 import transformers
 from transformers import (
@@ -132,6 +124,10 @@ class DataTrainingArguments:
         metadata={
             "help": "The name of the dataset column containing the labels. Defaults to 'label'."
         },
+    )
+    no_flip: bool = field(
+        default=False,
+        metadata={"help": "Disables flipping during augmentation."},
     )
 
     def __post_init__(self):
@@ -289,15 +285,29 @@ def main():
             trust_remote_code=model_args.trust_remote_code,
         )
     else:
-        data_files = {}
-        if data_args.train_dir is not None:
-            data_files["train"] = os.path.join(data_args.train_dir, "**")
-        if data_args.validation_dir is not None:
-            data_files["validation"] = os.path.join(data_args.validation_dir, "**")
-        dataset = load_dataset(
-            "imagefolder",
-            data_files=data_files,
-            cache_dir=model_args.cache_dir,
+        # data_files = {}
+        # if data_args.train_dir is not None:
+        #     data_files["train"] = os.path.join(data_args.train_dir, "**")
+        # if data_args.validation_dir is not None:
+        #     data_files["validation"] = os.path.join(data_args.validation_dir, "**")
+        # dataset = load_dataset(
+        #     "imagefolder",
+        #     data_files=data_files,
+        #     cache_dir=model_args.cache_dir,
+        # )
+        dataset = datasets.dataset_dict.DatasetDict(
+            {
+                "train": load_dataset(
+                    "imagefolder",
+                    data_dir=data_args.train_dir,
+                    split=datasets.Split.TRAIN,
+                ),
+                "validation": load_dataset(
+                    "imagefolder",
+                    data_dir=data_args.validation_dir,
+                    split=datasets.Split.TRAIN,
+                ),
+            }
         )
 
     dataset_column_names = (
@@ -374,6 +384,9 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
+    for p in model.vit.embeddings.parameters():
+        p.requires_grad = False
+
     image_processor = AutoImageProcessor.from_pretrained(
         model_args.image_processor_name or model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -392,28 +405,37 @@ def main():
         else:
             size = (image_processor.size["height"], image_processor.size["width"])
 
+        dummy_transform = tvt.Lambda(lambda x: x)
+
         # Create normalization transform
         if hasattr(image_processor, "image_mean") and hasattr(
             image_processor, "image_std"
         ):
-            normalize = Normalize(
+            normalize = tvt.Normalize(
                 mean=image_processor.image_mean, std=image_processor.image_std
             )
         else:
-            normalize = Lambda(lambda x: x)
-        _train_transforms = Compose(
+            normalize = dummy_transform
+        _train_transforms = tvt.Compose(
             [
-                RandomResizedCrop(size),
-                RandomHorizontalFlip(),
-                ToTensor(),
+                tvt.ToTensor(),
+                tvt.RandomResizedCrop(size),
+                (
+                    tvt.RandomHorizontalFlip()
+                    if not data_args.no_flip
+                    else dummy_transform
+                ),
+                tvt.RandomRotation(3),
+                tvt.RandomAutocontrast(),
+                tvt.RandomErasing(),
                 normalize,
             ]
         )
-        _val_transforms = Compose(
+        _val_transforms = tvt.Compose(
             [
-                Resize(size),
-                CenterCrop(size),
-                ToTensor(),
+                tvt.ToTensor(),
+                tvt.Resize(size),
+                tvt.CenterCrop(size),
                 normalize,
             ]
         )

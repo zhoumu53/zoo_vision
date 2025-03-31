@@ -32,6 +32,7 @@ def process_dataset(
             fo.delete_dataset(name)
         print(f"Building {name}...")
         dataset = make_func(name)
+        print(f"Size of {name}={len(dataset)}")
         return dataset
 
     return None
@@ -55,7 +56,7 @@ def process_classification_dataset(
 def main():
     args = parse_args()
 
-    coco_root = DATASETS_ROOT / "coco"
+    coco_root = DATASETS_ROOT / "elephants/segmentation/coco"
     elephant_ds_root = DATASETS_ROOT / "elephants"
 
     print(f"Existing datasets: {fo.list_datasets()}")
@@ -65,7 +66,7 @@ def main():
         "coco-elephants-train2017",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path="/home/dherrera/data/coco/train2017",
+            data_path=DATASETS_ROOT / "train2017",
             labels_path=coco_root / "annotations/elephants_train2017.json",
             name=name,
             persistent=True,
@@ -77,7 +78,7 @@ def main():
         "coco-elephants-val2017",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path="/home/dherrera/data/coco/val2017",
+            data_path=DATASETS_ROOT / "val2017",
             labels_path=coco_root / "annotations/elephants_val2017.json",
             name=name,
             persistent=True,
@@ -90,8 +91,19 @@ def main():
         "zoo-elephants-detection-train",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path=elephant_ds_root / "training_data",
-            labels_path=elephant_ds_root / "training_data/annotations.json",
+            data_path=elephant_ds_root,
+            labels_path=elephant_ds_root / "segmentation/coco_v1_d2_good.json",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+    process_dataset(
+        "zoo-elephants-detection-val",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.COCODetectionDataset,
+            data_path=elephant_ds_root,
+            labels_path=elephant_ds_root / "segmentation/val_coco_dan1.json",
             name=name,
             persistent=True,
         ),

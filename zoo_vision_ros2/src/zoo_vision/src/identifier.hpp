@@ -45,9 +45,8 @@ public:
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
 
-  void callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
-                         const std::span<const TrackId> trackIds);
-  void callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches);
+  void callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &patches, const std::span<const TrackId> trackIds);
+  void callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &patches);
 
   std::string name_;
   rclcpp::Logger logger_;

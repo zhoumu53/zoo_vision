@@ -1,4 +1,4 @@
-python training/segmentation/train_instance_segmentation.py \
+python training/segmentation/train_segmentation.py \
     --model_name_or_path facebook/mask2former-swin-base-coco-panoptic \
     --dataset_name zoo_elephants \
     --image_width 1060 \
@@ -9,7 +9,7 @@ python training/segmentation/train_instance_segmentation.py \
     --do_train \
     --do_eval \
     --eval_strategy epoch \
-    --num_train_epochs 20 \
+    --num_train_epochs 200 \
     --learning_rate 0.00006 \
     --lr_scheduler_type polynomial \
     --per_device_train_batch_size 4 \
@@ -19,5 +19,6 @@ python training/segmentation/train_instance_segmentation.py \
     --save_strategy epoch \
     --seed 1337 \
     --do_reduce_labels True \
+    --load_best_model_at_end True \
     --overwrite_output_dir \
-    --output_dir /home/dherrera/temp/mask2former_zoo_all
+    "$@"

@@ -34,7 +34,7 @@ PatchCropper::PatchCropper() {}
 void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu,
                                 const Eigen::Vector2f &scale_image_from_detection,
                                 const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
-  constexpr int CROP_SIZE = 256;
+  constexpr int CROP_SIZE = 224;
   constexpr float CONTEXT_FACTOR = 1.1f;
   const int detectionCount = bboxes.size();
   const int channels = 3;

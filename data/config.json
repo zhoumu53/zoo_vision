@@ -65,11 +65,11 @@
   },
   "models": {
     "elephant_label_id": 0,
-    "score_threshold": 0.5,
-    "segmentation": "../models/segmentation/mask2former/all/config.ptc",
+    "score_threshold": 0.9,
+    "segmentation": "../models/segmentation/mask2former/freeze_encoder_q20/checkpoint-521200/config.ptc",
     "identity2": "../models/identity/gru_uncertain/zoo_id_gru_best.ptc",
-    "identity": "../models/identity/id_uncertain2/dense121_c5_identity_best.ptc",
-    "behaviour": "../models/sleep/basic/dense.ptc"
+    "identity": "../models/identity/vit_good_freeze_embeddings/config.ptc",
+    "behaviour": "../models/sleep/vit/first/config.ptc"
   },
   "record_tracks": false,
   "live_stream": false,

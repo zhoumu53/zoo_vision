@@ -155,7 +155,7 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
   return bestIdentities;
 }
 
-void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches,
+void Identifier::callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &patches,
                                    const std::span<const TrackId> trackIds) {
   const int detectionCount = trackIds.size();
   constexpr size_t HIDDEN_LAYER_COUNT = 3;
@@ -177,8 +177,8 @@ void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::T
     c10::IValue modelResult = identityNetwork_.forward({patchesTime, trackState0});
     c10::Dict<c10::IValue, c10::IValue> modelResultDict = modelResult.toGenericDict();
 
-    identityLogitsGpu = modelResultDict.at("logits").toTensor();
-    identityLogitsGpu = identityLogitsGpu.squeeze(1); // Remove dummy time dimension
+    logitsGpu = modelResultDict.at("logits").toTensor();
+    logitsGpu = logitsGpu.squeeze(1); // Remove dummy time dimension
 
     trackState = modelResultDict.at("gru_state").toTensor();
   }
@@ -191,9 +191,15 @@ void Identifier::callStatefulModel(at::Tensor &identityLogitsGpu, const torch::T
   }
 }
 
-void Identifier::callStatelessModel(at::Tensor &identityLogitsGpu, const torch::Tensor &patches) {
+void Identifier::callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &patches) {
   c10::IValue modelResult = identityNetwork_.forward({patches});
-  identityLogitsGpu = modelResult.toTensor();
+  if (modelResult.isTensor()) {
+    logitsGpu = modelResult.toTensor();
+  } else {
+    auto dict = modelResult.toGenericDict();
+    logitsGpu = dict.at("logits").toTensor();
+    logitsGpu = logitsGpu.squeeze(1); // Remove dummy time dimension
+  }
 }
 
 void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches,
