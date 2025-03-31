@@ -339,7 +339,8 @@ class MainWindow(QMainWindow):
             if not ret:
                 return
             self.image_ = cv_frame
-        assert self.image_ is not None
+        if self.image_ is None:
+            return
         self.image_label_.set_image(self.image_)
         self.position_slider_.setValue(self.frame_index_)
 
