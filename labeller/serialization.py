@@ -8,8 +8,8 @@ from typing import Any
 import numpy as np
 
 
-def get_db_serialization_path(video_path: Path) -> Path:
-    return video_path.parent / (video_path.with_suffix("").name + "_points.json")
+def get_db_serialization_path(video_path: Path, labels_path: Path) -> Path:
+    return labels_path / (video_path.with_suffix("").name + "_points.json")
 
 
 def convert_np_to_list(a: dict[str, Any]) -> dict[str, Any]:
@@ -26,7 +26,7 @@ def get_fields(a: object, fields: list[str]) -> dict[str, Any]:
 
 
 def serialize_database() -> None:
-    json_path = get_db_serialization_path(active_db().video_path)
+    json_path = active_db().json_path
     with json_path.open("w") as f:
         json.dump(
             [
@@ -50,10 +50,12 @@ def serialize_database() -> None:
     active_db().is_dirty = False
 
 
-def deserialize_database(video_path: Path, video_reader: cv2.VideoCapture) -> Database:
-    db = Database(video_path=video_path)
+def deserialize_database(
+    video_path: Path, labels_path: Path, video_reader: cv2.VideoCapture
+) -> Database:
+    json_path = get_db_serialization_path(video_path, labels_path)
+    db = Database(video_path=video_path, json_path=json_path)
 
-    json_path = get_db_serialization_path(video_path)
     if json_path.exists():
         try:
             with json_path.open("r") as f:

@@ -36,7 +36,9 @@ from utils import pretty_time_delta
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, work_queue: SimpleQueue, videos_path: str) -> None:
+    def __init__(
+        self, work_queue: SimpleQueue, videos_path: Path, labels_path: Path
+    ) -> None:
         super().__init__()
 
         # Initialize variables
@@ -46,17 +48,17 @@ class MainWindow(QMainWindow):
         self.last_advance_time_ms = 0
         self.image_: np.ndarray | None = None
         self.timer_ = QTimer()
-        self.timer_.setInterval(int(1000 / 24))  # will be overridden by video loader
+        self.timer_.setInterval(int(1000 / 240))  # More or less 10x per frame ~240fps
         self.timer_.timeout.connect(self.advance_frame)
         self.frame_index_ = 0
-        self.last_play_direction: int = 1
         self.playback_speed_: int = 0  # Playback speed multiplier
-        self.videos_path = Path(videos_path)
+        self.videos_path = videos_path
+        self.labels_path = labels_path
         self.current_video_index_ = 0
         self.frame_count_ = 0
 
         # Load video files
-        self.video_files_ = list(self.videos_path.glob("*.mp4"))
+        self.video_files_ = list(self.videos_path.glob("**/*.mp4"))
         if not self.video_files_:
             QMessageBox.critical(
                 self, "Error", f"No .mp4 files found in the {str(self.videos_path)}."
@@ -189,7 +191,11 @@ class MainWindow(QMainWindow):
 
         # Reset database
         set_db(
-            deserialize_database(video_path=video_path, video_reader=self.video_reader_)
+            deserialize_database(
+                video_path=video_path,
+                labels_path=self.labels_path,
+                video_reader=self.video_reader_,
+            )
         )
 
         # Submit all frames to background segmenter
@@ -200,8 +206,6 @@ class MainWindow(QMainWindow):
         self.video_fps_ = self.video_reader_.get(cv2.CAP_PROP_FPS)
         if self.video_fps_ < 1:
             self.video_fps_ = 24  # Assume if invalid
-
-        self.timer_.setInterval(int(1000 / self.video_fps_))
         print(f"FPS: {self.video_fps_}")
 
         # Get the first frame to determine the size
@@ -212,7 +216,9 @@ class MainWindow(QMainWindow):
         self.position_slider_.setMaximum(self.frame_count_ - 1)
         self.display_image_by_index(0)
 
-        json_file_path_for_movement = video_path.with_suffix(".json")
+        json_file_path_for_movement = (
+            self.labels_path / video_path.with_suffix(".json").name
+        )
 
         self.side_menu.display_records()
 
@@ -222,7 +228,7 @@ class MainWindow(QMainWindow):
             self.mark_canvas_.json_data = json_data
             self.mark_canvas_.update()  # Trigger a repaint
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load JSON file: {e}")
+            print(f"Error: Failed to load movment JSON file: {e}")
 
         self.update_window_title()
 
@@ -245,11 +251,12 @@ class MainWindow(QMainWindow):
 
     def toggle_play_pause(self):
         if self.playback_speed_ == 0:
-            self.set_play_speed(self.last_play_direction)
+            self.set_play_speed(1)  # Always start playing forward
         else:
             self.set_play_speed(0)
 
     def ensure_playing(self):
+        self.last_advance_time_ms = 0
         self.timer_.start()
         self.play_button.setText("Pause")
 
@@ -291,15 +298,19 @@ class MainWindow(QMainWindow):
 
     def advance_frame(self):
         now_ms = time.time() * 1000
-        duration_ms = (
-            now_ms - self.last_advance_time_ms if self.last_advance_time_ms > 1 else 1
-        )
-        self.last_advance_time_ms = now_ms
+        if self.last_advance_time_ms == 0:
+            self.last_advance_time_ms = now_ms - 1
 
-        time_factor = self.video_fps_ / (1000 / duration_ms)
+        duration_s = (now_ms - self.last_advance_time_ms) / 1000
 
-        new_frame_index = self.frame_index_ + int(self.playback_speed_ * time_factor)
-        self.display_image_by_index(new_frame_index)
+        time_factor = self.video_fps_ * duration_s
+        delta_frame = int(self.playback_speed_ * time_factor)
+        if delta_frame != 0:
+            new_frame_index = self.frame_index_ + delta_frame
+            self.display_image_by_index(new_frame_index)
+            self.last_advance_time_ms += (
+                delta_frame / self.video_fps_ * 1000 / self.playback_speed_
+            )
 
     def display_image_by_index(self, index: int):
         if not self.video_reader_:
@@ -407,7 +418,7 @@ class MainWindow(QMainWindow):
         self.setMenuBar(menu_bar)
 
     def detect_motion(self):
-        self.motion_detection_ui = MotionDetectorUi(self.videos_path)
+        self.motion_detection_ui = MotionDetectorUi(self.videos_path, self.labels_path)
         self.motion_detection_ui.show()
 
     def open_help_menu(self):

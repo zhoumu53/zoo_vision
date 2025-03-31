@@ -25,6 +25,7 @@ class DatabaseFrame:
 @dataclass
 class Database:
     video_path: Path
+    json_path: Path
     frames: dict[int, DatabaseFrame] = field(default_factory=dict)
     is_dirty: bool = False
 
@@ -84,7 +85,7 @@ class Database:
         record.segmentation = None
 
 
-_database = Database(video_path=Path())
+_database = Database(video_path=Path(), json_path=Path())
 
 
 def active_db() -> Database:

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 def detect_motion(
     video_path: Path,
+    labels_path: Path,
     movement_threshold=0.01,
     min_contour_area=0.001,
     step_sec=3,
@@ -167,7 +168,7 @@ def detect_motion(
         )
 
     # Save the motion periods to a JSON file
-    output_json = video_path.with_suffix(".json")
+    output_json = labels_path / video_path.with_suffix(".json").name
     with open(output_json, "w") as f:
         json.dump(motion_periods, f, indent=4)
 
@@ -210,7 +211,7 @@ def main() -> None:
         print("No videos to process!")
 
     for file in video_files:
-        detect_motion(file)
+        detect_motion(file, file.parent)
 
 
 if __name__ == "__main__":

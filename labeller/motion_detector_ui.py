@@ -17,10 +17,11 @@ from motion_detector import detect_motion
 
 
 class MotionDetectorUi(QWidget):
-    def __init__(self, folder_path):
+    def __init__(self, folder_path: Path, labels_path: Path):
         super().__init__()
 
-        self.folder_path_ = Path(folder_path)
+        self.folder_path_ = folder_path
+        self.labels_path_ = labels_path
         self.video_files_ = list(self.folder_path_.glob("*.mp4"))
 
         # Initialize UI elements
@@ -76,7 +77,7 @@ class MotionDetectorUi(QWidget):
 
         self.console_output.clear()
         for video_file in tqdm(missing_files, file=self.get_console_writer()):
-            detect_motion(video_file)
+            detect_motion(video_file, labels_path)
 
     def get_console_writer(self):
         # Writer for tqdm to write into the QTextEdit
