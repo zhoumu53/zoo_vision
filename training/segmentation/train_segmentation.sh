@@ -17,6 +17,7 @@ python training/segmentation/train_segmentation.py \
     --logging_strategy steps \
     --logging_steps 100 \
     --save_strategy epoch \
+    --save_total_limit 3 \
     --seed 1337 \
     --do_reduce_labels True \
     --load_best_model_at_end True \
