@@ -133,4 +133,10 @@ void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
   cv::imwrite(name.c_str(), imgRgb);
 }
 
+cv::Mat1b wrapCvFromTensor1b(const at::Tensor img) {
+  assert(img.dim() == 2);
+  assert(img.dtype().isScalarType(torch::kByte));
+  assert(img.stride(1) == 1);
+  return cv::Mat1b(img.size(0), img.size(1), reinterpret_cast<uchar *>(img.data_ptr()), img.stride(0));
+}
 } // namespace zoo

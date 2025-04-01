@@ -120,6 +120,48 @@ auto Segmenter::callMask2Former(const at::Tensor &image) -> SegmentationResult {
 
   return SegmentationResult{masks_u8, boxes, scores, labels};
 }
+
+struct MaskComponentResult {
+  at::Tensor mask;
+  int32_t area;
+  Eigen::AlignedBox2f bbox;
+};
+
+MaskComponentResult getBestMaskComponent(const at::Tensor rawMask) {
+  // Segmentation network doesn't always produce a single coherent segmentation
+  // Select largest connected component
+  const cv::Mat1b cvRawMask = wrapCvFromTensor1b(rawMask);
+
+  cv::Mat labels, stats, centroids;
+  cv::connectedComponentsWithStats(cvRawMask, labels, stats, centroids, 8, CV_16U);
+
+  // Find biggest component
+  int bestIdx = 0;
+  int32_t bestArea = 0;
+  for (int i = 1; i < stats.size[0]; ++i) {
+    const int32_t area = stats.at<int32_t>(i, cv::CC_STAT_AREA);
+    if (area > bestArea) {
+      bestIdx = i;
+      bestArea = area;
+    }
+  }
+
+  // Make mask
+  const at::Tensor labelsTensor =
+      at::from_blob(labels.data, {labels.rows, labels.cols}, at::TensorOptions().dtype(at::kUInt16));
+  at::Tensor bestMask = labelsTensor.eq(bestIdx);
+
+  // Make aligned box
+  const Eigen::Vector2f x0{static_cast<float>(stats.at<int32_t>(bestIdx, cv::CC_STAT_LEFT)),
+                           static_cast<float>(stats.at<int32_t>(bestIdx, cv::CC_STAT_TOP))};
+  const Eigen::Vector2f bboxSize{static_cast<float>(stats.at<int32_t>(bestIdx, cv::CC_STAT_WIDTH)),
+                                 static_cast<float>(stats.at<int32_t>(bestIdx, cv::CC_STAT_HEIGHT))};
+
+  auto bbox = Eigen::AlignedBox2f(x0, x0 + bboxSize);
+
+  return {bestMask, bestArea, bbox};
+}
+
 void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
@@ -217,27 +259,31 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
       continue;
     }
 
+    // Segmentation network doesn't always produce a single coherent segmentation
+    // Select largest connected component
+    const auto &[mask, area, bbox] = getBestMaskComponent(masks[inputIndex]);
+
+    // Threshold area
+    const int AREA_THRESHOLD = 5 * 5; // 5x5 box in a map of ~(150x270)
+    if (area < AREA_THRESHOLD) {
+      continue;
+    }
+
+    // All checks passed, keep this detection
     const auto outputIndex = detectionMsg.detection_count;
     detectionMsg.detection_count += 1;
 
     // Track ids are decided later
 
     // Mask
-    const at::Tensor mask = masks[inputIndex];
     masksMap[outputIndex].copy_(mask);
 
-    // Bbox
-    const at::Tensor bbox = boxesNet[inputIndex];
-    const Eigen::Vector2f x0{bbox[0].item<float32_t>(), bbox[1].item<float32_t>()};
-    const Eigen::Vector2f x1{bbox[2].item<float32_t>(), bbox[3].item<float32_t>()};
-    const auto bboxEigen = Eigen::AlignedBox2f(x0, x1);
-    boxes.push_back(bboxEigen);
-    copyBboxToRos(detectionMsg.bboxes[outputIndex], bboxEigen);
+    boxes.push_back(bbox);
+    copyBboxToRos(detectionMsg.bboxes[outputIndex], bbox);
 
     // Project to world
-    const Eigen::Vector2f imagePosition =
-        Eigen::Vector2f{bboxEigen.center()[0] * detectionMsg.scalex_image_from_detection,
-                        bboxEigen.max()[1] * detectionMsg.scaley_image_from_detection};
+    const Eigen::Vector2f imagePosition = Eigen::Vector2f{bbox.center()[0] * detectionMsg.scalex_image_from_detection,
+                                                          bbox.max()[1] * detectionMsg.scaley_image_from_detection};
     const Eigen::Vector3f worldPosition =
         world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
     worldPositionsMap.col(outputIndex) = worldPosition;
