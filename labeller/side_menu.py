@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 from queue import SimpleQueue
+from typing import cast
 
 import PySide6.QtWidgets as QtWidgets
 from PySide6.QtWidgets import (
@@ -13,10 +14,32 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QListWidgetItem,
+    QSpinBox,
 )
 
 from database import active_db, Record
 from serialization import serialize_database
+
+
+class RecordItemWidget(QWidget):
+    def __init__(self, record: Record):
+        super().__init__()
+        self.record = record
+
+        item_layout = QHBoxLayout()
+
+        # Display the record info
+        label = QLabel(
+            f"{record.name} at {record.frame} +{record.positive_points.shape[0]} -{record.negative_points.shape[0]}"
+        )
+        item_layout.addWidget(label)
+
+        # Add a "Delete" button for each record
+        self.delete_button = QPushButton("Delete")
+        item_layout.addWidget(self.delete_button)
+
+        # Set the layout to the custom widget
+        self.setLayout(item_layout)
 
 
 class SideMenu(QWidget):
@@ -29,6 +52,11 @@ class SideMenu(QWidget):
         # Main Layout
         self.file_name = None
         layout = QVBoxLayout()
+
+        # Instance id
+        self.instance_id_box = QSpinBox()
+        layout.addWidget(QLabel("Instance id:"))
+        layout.addWidget(self.instance_id_box)
 
         # Dropdown for names
         self.name_dropdown = QComboBox()
@@ -90,24 +118,10 @@ class SideMenu(QWidget):
         for frame in active_db().frames.values():
             for record in frame.records.values():
                 # Create a custom widget for each list item
-                item_widget = QWidget()
-                item_widget.record = record  # type: ignore
-
-                item_layout = QHBoxLayout()
-
-                # Display the record info
-                label = QLabel(
-                    f"{record.name} at {record.frame} +{record.positive_points.shape[0]} -{record.negative_points.shape[0]}"
+                item_widget = RecordItemWidget(record)
+                item_widget.delete_button.clicked.connect(
+                    lambda _, r=record: self.delete_record(r)
                 )
-                item_layout.addWidget(label)
-
-                # Add a "Delete" button for each record
-                delete_button = QPushButton("Delete")
-                delete_button.clicked.connect(lambda _, r=record: self.delete_record(r))
-                item_layout.addWidget(delete_button)
-
-                # Set the layout to the custom widget
-                item_widget.setLayout(item_layout)
 
                 # Create a QListWidgetItem
                 list_item = QListWidgetItem(self.record_list)
@@ -118,14 +132,16 @@ class SideMenu(QWidget):
                 self.record_list.setItemWidget(list_item, item_widget)
 
     def display_item(self, list_item: QListWidgetItem) -> None:
-        record = self.record_list.itemWidget(list_item).record  # type: ignore
-        print(record)
+        item = cast(RecordItemWidget, self.record_list.itemWidget(list_item))
+        record: Record = item.record
+        self.instance_id_box.setValue(record.instance_id)
+        # print(record)
         self.slider.setValue(record.frame)
 
     def delete_record(self, record: Record) -> None:
         # Remove the record from the list and refresh the UI
         frame_data = active_db().frames[record.frame]
-        frame_data.records.pop(record.name)
+        frame_data.records.pop(record.instance_id)
         frame_data.segmented_image = None
 
         if len(frame_data.records) == 0:

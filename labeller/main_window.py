@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self.image_: np.ndarray | None = None
         self.timer_ = QTimer()
         self.timer_.setInterval(int(1000 / 240))  # More or less 10x per frame ~240fps
-        self.timer_.timeout.connect(self.advance_frame)
+        self.timer_.timeout.connect(self.advance_frame)  # pyre-ignore
         self.frame_index_ = 0
         self.playback_speed_: int = 0  # Playback speed multiplier
         self.videos_path = videos_path
@@ -150,6 +150,15 @@ class MainWindow(QMainWindow):
         )
         self.addAction(
             self.create_action("Name ↓", self.side_menu.next_name, Qt.Key.Key_Down)
+        )
+        self.addAction(
+            self.create_action(
+                "New instance id",
+                lambda: self.side_menu.instance_id_box.setValue(
+                    self.side_menu.instance_id_box.value() + 1
+                ),
+                Qt.Key.Key_N,
+            )
         )
 
         # Load the first video
@@ -343,6 +352,7 @@ class MainWindow(QMainWindow):
             return
         self.image_label_.set_image(self.image_)
         self.position_slider_.setValue(self.frame_index_)
+        self.side_menu.instance_id_box.setValue(0)
 
         video_time = datetime.timedelta(seconds=self.frame_index_ / self.video_fps_)
         QApplication.sendEvent(
@@ -363,14 +373,17 @@ class MainWindow(QMainWindow):
 
             pixelPos = self.image_label_.event_to_image_position(ev.position())
 
-            active_db().add_point(
-                self.frame_index_,
+            frame = active_db().get_or_add_frame(self.frame_index_, self.image_)
+            record = active_db().get_or_add_record(
+                frame,
+                self.side_menu.instance_id_box.value(),
                 self.side_menu.get_selected_name(),
+            )
+            active_db().add_point(
+                record,
                 pixelPos,
                 is_positive=ev.button() == Qt.MouseButton.LeftButton,
-                original_image=self.image_,
             )
-            active_db().is_dirty = True
 
             # Do a quick draw with only clicks for feedback
             frame = active_db().frames[self.frame_index_]

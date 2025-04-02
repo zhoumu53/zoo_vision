@@ -64,13 +64,14 @@ def deserialize_database(
             for fdata in data:
                 frame_index: int = fdata["frame"]
                 records = {
-                    rdata["name"]: Record(
+                    idx: Record(
+                        instance_id=idx,
                         frame=frame_index,
                         name=rdata["name"],
                         positive_points=np.array(rdata["ppoints"]).reshape((-1, 2)),
                         negative_points=np.array(rdata["npoints"]).reshape((-1, 2)),
                     )
-                    for rdata in fdata["records"]
+                    for idx, rdata in enumerate(fdata["records"])
                 }
 
                 video_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_index)

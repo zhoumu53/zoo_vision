@@ -1,14 +1,22 @@
 from dataclasses import dataclass, field
 import numpy as np
 from pathlib import Path
+from typing import TypeAlias
+
+TInstanceId: TypeAlias = int
 
 
 @dataclass
 class Record:
     frame: int
+    instance_id: TInstanceId
     name: str
-    positive_points: np.ndarray  # [point, coords]
-    negative_points: np.ndarray  # [point, coords]
+    positive_points: np.ndarray = field(
+        default_factory=lambda: np.ndarray((0, 2))
+    )  # [point, coords]
+    negative_points: np.ndarray = field(
+        default_factory=lambda: np.ndarray((0, 2))
+    )  # [point, coords]
 
     segmentation: np.ndarray | None = None  # [H,W]
 
@@ -18,7 +26,7 @@ class DatabaseFrame:
     frame: int
     original_image: np.ndarray  # [H,W,3]
 
-    records: dict[str, Record] = field(default_factory=dict)
+    records: dict[TInstanceId, Record] = field(default_factory=dict)
     segmented_image: np.ndarray | None = None  # [H,W,3]
 
 
@@ -29,36 +37,56 @@ class Database:
     frames: dict[int, DatabaseFrame] = field(default_factory=dict)
     is_dirty: bool = False
 
-    def add_point(
+    def get_or_add_frame(
         self,
-        frame: int,
-        name: str,
-        point: np.ndarray,
-        is_positive: bool,
+        frame_index: int,
         original_image: np.ndarray,
-    ) -> None:
-        assert point.shape == (1, 2)
-
-        frame_data = self.frames.get(frame)
+    ) -> DatabaseFrame:
+        frame_data = self.frames.get(frame_index)
         if frame_data is None:
             frame_data = DatabaseFrame(
-                frame=frame,
+                frame=frame_index,
                 records={},
                 original_image=original_image,
                 segmented_image=None,
             )
-            self.frames[frame] = frame_data
+            self.frames[frame_index] = frame_data
+            self.is_dirty = True
+        return frame_data
 
-        record = frame_data.records.get(name)
-        if record is None:
-            record = Record(
-                frame=frame,
-                name=name,
-                positive_points=np.ndarray((0, 2)),
-                negative_points=np.ndarray((0, 2)),
-                segmentation=None,
+    def get_or_add_record(
+        self,
+        frame_data: DatabaseFrame,
+        instance_id: TInstanceId,
+        name: str,
+    ) -> Record:
+        record = frame_data.records.get(instance_id)
+        if record is not None and record.name != name:
+            # Instance id found but name doesn't match.
+            # Create a new record with a new instance id
+            record = None
+            instance_id = (
+                np.max([r.instance_id for r in frame_data.records.values()]) + 1
             )
-            frame_data.records[name] = record
+
+        if record is None:
+            # Matching node not found, create a new one
+            record = Record(
+                frame=frame_data.frame,
+                instance_id=instance_id,
+                name=name,
+            )
+            frame_data.records[instance_id] = record
+            self.is_dirty = True
+        return record
+
+    def add_point(
+        self,
+        record: Record,
+        point: np.ndarray,
+        is_positive: bool,
+    ) -> None:
+        assert point.shape == (1, 2)
 
         # Check if the point cancels out with another point
         other_points = record.negative_points if is_positive else record.positive_points
@@ -83,6 +111,7 @@ class Database:
                 record.negative_points = np.concatenate([record.negative_points, point])
         # Mask needs recalculating
         record.segmentation = None
+        self.is_dirty = True
 
 
 _database = Database(video_path=Path(), json_path=Path())

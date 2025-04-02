@@ -25,11 +25,10 @@ class BackgroundSegmenter:
 
     def run(self) -> None:
         while not self.should_stop:
-            if QApplication.activeWindow() is not None:
+            window = QApplication.activeWindow()
+            if window is not None:
                 if self.work_queue_.empty():
-                    QApplication.sendEvent(
-                        QApplication.activeWindow(), QStatusTipEvent("sam2:Ready")
-                    )
+                    QApplication.sendEvent(window, QStatusTipEvent("sam2:Ready"))
 
             try:
                 try:
@@ -42,9 +41,9 @@ class BackgroundSegmenter:
 
                 # Check that frame was not deleted
                 if frame is not None:
-                    if QApplication.activeWindow() is not None:
+                    if window is not None:
                         QApplication.sendEvent(
-                            QApplication.activeWindow(),
+                            window,
                             QStatusTipEvent(
                                 f"sam2:Segmenting {self.work_queue_.qsize() + 1} frames..."
                             ),

@@ -11,6 +11,7 @@ class ImageLabel(QLabel):
         super().__init__()
 
         self.image_: np.ndarray | None = None
+        self.qimage_: QImage | None = None
         self.aspect_ = 1.0
 
         self.setScaledContents(True)
@@ -27,18 +28,19 @@ class ImageLabel(QLabel):
         image_bytes = image.tobytes()
 
         # Create QImage from the byte array
-        self.qimage_ = QImage(
+        qimage = QImage(
             image_bytes,
             width,
             height,
             image.strides[0],  # bytes per line
-            QImage.Format_BGR888,
+            QImage.Format.Format_BGR888,
         )
+        self.qimage_ = qimage
 
         self.aspect_ = width / height
 
         # Create a QPixmap from the QImage
-        pixmap = QPixmap.fromImage(self.qimage_)
+        pixmap = QPixmap.fromImage(qimage)
         self.setPixmap(pixmap)
         self.setMinimumSize(1, 1)
         self.update_margins()
@@ -53,11 +55,11 @@ class ImageLabel(QLabel):
         label_aspect = width / height
 
         if label_aspect > self.aspect_:
-            hmargin = (width - height * self.aspect_) / 2
+            hmargin = int((width - height * self.aspect_) / 2)
             vmargin = 0
         else:
             hmargin = 0
-            vmargin = (height - width / self.aspect_) / 2
+            vmargin = int((height - width / self.aspect_) / 2)
         self.setContentsMargins(hmargin, vmargin, hmargin, vmargin)
 
     def event_to_image_position(self, event_position: QPointF) -> np.ndarray:
@@ -71,6 +73,7 @@ class ImageLabel(QLabel):
 
         relPos = localPos / labelSize
         relPos[0], relPos[1] = relPos[1], relPos[0]
+        assert self.image_ is not None
         pixelPos = relPos * self.image_.shape[0:2]
         pixelPos[0], pixelPos[1] = pixelPos[1], pixelPos[0]
         pixelPos = pixelPos.reshape(1, 2)

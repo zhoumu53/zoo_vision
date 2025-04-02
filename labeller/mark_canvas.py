@@ -13,15 +13,15 @@ class MarkCanvas(QWidget):
         super().paintEvent(event)
         painter = QPainter(self)
 
-        pen = QPen(QColor('red'))
+        pen = QPen(QColor("red"))
         pen.setWidth(6)
         painter.setPen(pen)
 
         width = self.width()
 
         for item in self.json_data:
-            start_frame = item['start_frames']
-            end_frame = item['end_frames']
+            start_frame = item["start_frames"]
+            end_frame = item["end_frames"]
 
             # Calculate the start and end positions on the canvas
             start_pos = (start_frame / (self.slider.maximum() - 1)) * width
@@ -31,7 +31,7 @@ class MarkCanvas(QWidget):
             painter.drawLine(start_pos, self.height() // 2, end_pos, self.height() // 2)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             x = event.position().x()
             width = self.width()
             frame = int((x / width) * (self.slider.maximum() - 1))

@@ -64,7 +64,7 @@ class MotionDetectorUi(QWidget):
                 item.setBackground(QColor("red"))  # Red if .json is missing
             self.file_list.addItem(item)
 
-    def process_missing_files(self):
+    def process_missing_files(self, labels_path: Path):
         missing_files = [
             video_file
             for video_file in self.video_files_
@@ -72,7 +72,12 @@ class MotionDetectorUi(QWidget):
         ]
 
         if not missing_files:
-            QMessageBox.information(self, "Info", "No missing files to process.")
+            QMessageBox.information(
+                self,
+                "Info",
+                "No missing files to process.",
+                QMessageBox.StandardButton.Ok,
+            )
             return
 
         self.console_output.clear()
