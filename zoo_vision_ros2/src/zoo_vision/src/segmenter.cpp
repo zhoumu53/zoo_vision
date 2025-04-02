@@ -269,6 +269,21 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
       continue;
     }
 
+    // Threshold intersection with others
+    int maxIntersectionArea = 0;
+    for (uint32_t maskIdx = 0; maskIdx < detectionMsg.detection_count; maskIdx++) {
+      const int intersection = (masksMap[maskIdx] * mask).sum().item<int>();
+      if (intersection > maxIntersectionArea) {
+        maxIntersectionArea = intersection;
+      }
+    }
+    const float intersectionRatio = static_cast<float>(maxIntersectionArea) / area;
+    const float MAX_INTERSECTION_RATIO = 0.5f;
+    if (intersectionRatio > MAX_INTERSECTION_RATIO) {
+      // std::cout << "Dropped mask with " << intersectionRatio << " intersection ratio" << std::endl;
+      continue;
+    }
+
     // All checks passed, keep this detection
     const auto outputIndex = detectionMsg.detection_count;
     detectionMsg.detection_count += 1;
