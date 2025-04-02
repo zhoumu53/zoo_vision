@@ -49,7 +49,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   {
     auto preprocessMeanData =
         std::array<float32_t, 3>({0.48500001430511475f, 0.4560000002384186f, 0.4059999883174896f});
-    auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672, 0.2239999920129776, 0.22499999403953552});
+    auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672f, 0.2239999920129776f, 0.22499999403953552f});
 
     preprocessMean_ =
         (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
@@ -115,7 +115,8 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  const at::Tensor imageTensor = preprocessImage(imageTensorCPU.to(at::kCUDA));
+  const at::Tensor rawImageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat);
+  const at::Tensor imageTensor = preprocessImage(rawImageTensor);
 
   // Segmentation
   segmenter_.onImage(detectionMsg, imageTensor);
@@ -125,9 +126,10 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
     auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
-    at::Tensor patches;
-    cropper_.extractCrops(patches, imageTensor,
+    at::Tensor rawPatches;
+    cropper_.extractCrops(rawPatches, rawImageTensor,
                           {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
+    at::Tensor patches = preprocessImage(rawPatches);
 
     // Save track images
     if (recordTracks_) {
@@ -159,13 +161,14 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
         if (trackId > 3000) {
           std::terminate();
         }
+        const auto patchNorm = (patches[idx] * preprocessStd_ + preprocessMean_) / 255;
         // The first image makes sure we create the directory
         // and it is also stored at the root for quick preview
         if (track->trackLength == MIN_TRACK_LENGTH + 1) {
           std::filesystem::create_directories(trackDir);
-          saveTensorImage(patches[idx], rootPath / imgName);
+          saveTensorImage(patchNorm, rootPath / imgName);
         }
-        saveTensorImage(patches[idx], trackDir / imgName);
+        saveTensorImage(patchNorm, trackDir / imgName);
       }
     }
 
