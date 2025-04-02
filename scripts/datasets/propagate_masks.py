@@ -15,9 +15,9 @@ from project_root import PROJECT_ROOT
 from segmentation_utils import grey_from_label
 
 
-def points_json_path_from_video_path(video_path: Path) -> Path:
+def points_json_path_from_video_path(labels_path: Path, video_path: Path) -> Path:
     # Avoid .with_suffix() because the filenames contain dots
-    points_json_path = Path(str(video_path).replace(".mp4", "_points.json"))
+    points_json_path = labels_path / video_path.name.replace(".mp4", "_points.json")
     return points_json_path
 
 
@@ -80,15 +80,15 @@ def save_frame(
     cv2.imwrite(f"{str(path_prefix)}_{index:08d}_seg.png", segmentation)
 
 
-def make_path_prefix(input_path: Path, video_file: Path, output_path: Path) -> Path:
-    relative_path = video_file.relative_to(input_path)
+def make_path_prefix(videos_path: Path, video_file: Path, output_path: Path) -> Path:
+    relative_path = video_file.relative_to(videos_path)
     relative_dir = relative_path.parent
     prefix = output_path / relative_dir / video_file.name.replace(".mp4", "")
     return prefix
 
 
-def are_results_present(input_path: Path, video_path: Path, output_path: Path):
-    prefix = make_path_prefix(input_path, video_path, output_path)
+def are_results_present(videos_path: Path, video_path: Path, output_path: Path):
+    prefix = make_path_prefix(videos_path, video_path, output_path)
     if len(list(prefix.parent.glob(f"{prefix.name}*"))) > 0:
         return True
     else:
@@ -98,7 +98,8 @@ def are_results_present(input_path: Path, video_path: Path, output_path: Path):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--frame_count", "-f", type=int, default=200)
-    parser.add_argument("--input_path", "-i", type=Path)
+    parser.add_argument("--videos_path", "-v", type=Path)
+    parser.add_argument("--labels_path", "-l", type=Path)
     parser.add_argument("--output_path", "-o", type=Path)
     return parser.parse_args()
 
@@ -112,7 +113,8 @@ class App:
     def main(self) -> None:
         args = parse_args()
         propagate_frame_count = args.frame_count
-        input_path = args.input_path
+        videos_path = args.videos_path
+        labels_path = args.labels_path if args.labels_path is not None else videos_path
         output_path = args.output_path
 
         print("Loading identity labels...")
@@ -123,6 +125,12 @@ class App:
         }
         # Correct misspelling
         self.id_from_name["Farha"] = self.id_from_name["Fahra"]
+        # self.id_from_name = {
+        #     "Invalid": 0,
+        #     "Standing": 1,
+        #     "SleepL": 2,
+        #     "SleepR": 3,
+        # }
         print(self.id_from_name)
 
         print("Loading SAM2...")
@@ -141,20 +149,22 @@ class App:
 
         print("Gathering inputs...")
 
-        videos = [f for f in input_path.glob("**/*.mp4")]
+        videos = [f for f in videos_path.glob("**/*.mp4")]
         labelled_videos = [
-            f for f in videos if points_json_path_from_video_path(f).exists()
+            f
+            for f in videos
+            if points_json_path_from_video_path(labels_path, f).exists()
         ]
 
         # Count annotations for early summary
         annotation_count = 0
         for f in labelled_videos:
-            with points_json_path_from_video_path(f).open("r") as f:
+            with points_json_path_from_video_path(labels_path, f).open("r") as f:
                 points_data = json.load(f)
             annotation_count += len(points_data)
 
         print(
-            f"{str(input_path)}: total videos={len(videos)}, labelled={len(labelled_videos)}, annotations={annotation_count}"
+            f"{str(videos_path)}: total videos={len(videos)}, labelled={len(labelled_videos)}, annotations={annotation_count}"
         )
 
         print("Processing...")
@@ -163,24 +173,29 @@ class App:
         )
         for video_path in pbar(labelled_videos):
             # Check to see if there are already images
-            if are_results_present(input_path, video_path, output_path):
+            if are_results_present(videos_path, video_path, output_path):
                 print(f"Found existing images for {str(video_path)}, skipping video")
             else:
                 self.process_video(
-                    video_path, input_path, output_path, propagate_frame_count
+                    video_path,
+                    labels_path,
+                    videos_path,
+                    output_path,
+                    propagate_frame_count,
                 )
         pbar.close()
 
     def process_video(
         self,
         video_path: Path,
-        input_path: Path,
+        labels_path: Path,
+        videos_path: Path,
         output_path: Path,
         propagate_frame_count: int,
     ):
         print(f"Processing {str(video_path)}...")
 
-        with points_json_path_from_video_path(video_path).open("r") as f:
+        with points_json_path_from_video_path(labels_path, video_path).open("r") as f:
             points_data = json.load(f)
 
         # Sort data
@@ -204,7 +219,7 @@ class App:
             f"distance_to_next_label: median={np.median(distance_to_next_label)}, min={np.min(distance_to_next_label)}, max={np.max(distance_to_next_label)}"
         )
 
-        prefix = make_path_prefix(input_path, video_path, output_path)
+        prefix = make_path_prefix(videos_path, video_path, output_path)
 
         pbar_anno = self.pbar_manager.counter(
             total=len(points_data),
@@ -241,6 +256,9 @@ class App:
         ref_frame_idx = annotation["frame"]
 
         frames = self.load_frames(video, ref_frame_idx, frame_count)
+        if len(frames) == 0:
+            return
+
         if "inference_state" in locals():
             del inference_state
         gc.collect()
