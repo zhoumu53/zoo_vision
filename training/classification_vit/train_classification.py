@@ -295,19 +295,37 @@ def main():
         #     data_files=data_files,
         #     cache_dir=model_args.cache_dir,
         # )
+        ds_train: datasets.Dataset = load_dataset(
+            "imagefolder",
+            data_dir=data_args.train_dir,
+            split=datasets.Split.TRAIN,
+        )
+        if data_args.validation_dir is None:
+            # Randomly split dataset into train/val
+            test_size = 0.2
+            print(
+                f"No validation dataset, splitting train dataset randomly. Validation size: {test_size}"
+            )
+            ds_dict = ds_train.train_test_split(
+                test_size=test_size, shuffle=True, seed=training_args.seed
+            )
+            ds_train = ds_dict["train"]
+            ds_val = ds_dict["test"]
+        else:
+            ds_val = load_dataset(
+                "imagefolder",
+                data_dir=data_args.validation_dir,
+                split=datasets.Split.TRAIN,
+            )
+
         dataset = datasets.dataset_dict.DatasetDict(
             {
-                "train": load_dataset(
-                    "imagefolder",
-                    data_dir=data_args.train_dir,
-                    split=datasets.Split.TRAIN,
-                ),
-                "validation": load_dataset(
-                    "imagefolder",
-                    data_dir=data_args.validation_dir,
-                    split=datasets.Split.TRAIN,
-                ),
+                "train": ds_train,
+                "validation": ds_val,
             }
+        )
+        print(
+            f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
         )
 
     dataset_column_names = (
@@ -374,7 +392,7 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
-    model = AutoModelForImageClassification.from_pretrained(
+    model = transformers.ViTForImageClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -386,6 +404,10 @@ def main():
     )
     for p in model.vit.embeddings.parameters():
         p.requires_grad = False
+    # for p in model.vit.encoder.parameters():
+    #     p.requires_grad = False
+    # for p in model.vit.parameters():
+    #     p.requires_grad = False
 
     image_processor = AutoImageProcessor.from_pretrained(
         model_args.image_processor_name or model_args.model_name_or_path,
@@ -394,6 +416,18 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
+
+    # Force mean and std to the same as the segmenter
+    image_processor.image_mean = [
+        0.48500001430511475,
+        0.4560000002384186,
+        0.4059999883174896,
+    ]
+    image_processor.image_std = [
+        0.2290000021457672,
+        0.2239999920129776,
+        0.22499999403953552,
+    ]
 
     # Define torchvision transforms to be applied to each image.
     if isinstance(image_processor, TimmWrapperImageProcessor):

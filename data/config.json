@@ -34,11 +34,11 @@
       "id": 1,
       "color": "#7FB069"
     },
-    "SleepR": {
+    "SleepL": {
       "id": 2,
       "color": "#197278"
     },
-    "SleepL": {
+    "SleepR": {
       "id": 3,
       "color": "#FF6978"
     }
@@ -66,10 +66,9 @@
   "models": {
     "elephant_label_id": 0,
     "score_threshold": 0.9,
-    "segmentation": "../models/segmentation/mask2former/freeze_encoder_q20/checkpoint-521200/config.ptc",
-    "identity2": "../models/identity/gru_uncertain/zoo_id_gru_best.ptc",
-    "identity": "../models/identity/vit_good_freeze_embeddings/config.ptc",
-    "behaviour": "../models/sleep/vit/first/config.ptc"
+    "segmentation": "../models/segmentation/mask2former/freeze_encoder_q100/config.ptc",
+    "identity": "../models/identity/vit/good_freeze_embeddings4/config.ptc",
+    "behaviour": "../models/sleep/vit/mix/config.ptc"
   },
   "record_tracks": false,
   "live_stream": false,

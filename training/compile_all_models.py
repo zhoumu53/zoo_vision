@@ -11,6 +11,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compiles models with torchscript.")
     parser.add_argument("--force", "-f", nargs="+", default=[], type=str)
     parser.add_argument("--force_all", "-fa", action="store_true")
+    parser.add_argument("--only")
     return parser.parse_args()
 
 
@@ -42,6 +43,9 @@ def main() -> None:
         )
         pbar = ECounter(total=len(weights_paths))
         for weights_path in pbar(weights_paths):
+            if args.only != None and args.only != str(weights_path):
+                continue
+
             # Ignore other files that we know are not models
             if weights_path.name == "rng_state.pth":
                 continue

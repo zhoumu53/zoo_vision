@@ -133,6 +133,17 @@ def main():
         args,
     )
 
+    process_classification_dataset(
+        "zoo-elephants-identity-id3",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "identity/dataset/id3",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
     # Behaviour dataset
     process_classification_dataset(
         "zoo-elephants-sleep-train",
@@ -150,6 +161,28 @@ def main():
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.ImageClassificationDirectoryTree,
             dataset_dir=elephant_ds_root / "behaviour/val",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
+    process_classification_dataset(
+        "zoo-elephants-sleep-val2",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "behaviour/sleep_v2",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
+    process_classification_dataset(
+        "zoo-elephants-sleep-mix",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "behaviour/mix",
             name=name,
             persistent=True,
         ),
