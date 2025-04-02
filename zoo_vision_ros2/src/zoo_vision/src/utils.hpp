@@ -32,6 +32,8 @@
 #define ASSERT_DEBUG(x) ((void)(x))
 #endif
 
+using float32_t = float;
+
 namespace zoo {
 
 std::filesystem::path getDataPath();

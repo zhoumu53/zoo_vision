@@ -68,6 +68,8 @@ add_executable(zoo_vision
   src/segmenter.cpp
   src/patch_cropper.hpp
   src/patch_cropper.cpp
+  src/vote_histogram.hpp
+  src/vote_histogram.cpp
   src/identifier.hpp
   src/identifier.cpp
   src/behaviourer.hpp

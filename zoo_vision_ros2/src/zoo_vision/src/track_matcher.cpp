@@ -49,17 +49,18 @@ namespace zoo {
 
 TrackMatcher::TrackMatcher() = default;
 
-TrackData *TrackMatcher::getTrackData(TrackId id) {
+TrackData &TrackMatcher::getTrackData(TrackId id) {
   auto it = tracks_.find(id);
   if (it == tracks_.end()) {
-    return nullptr;
+    throw std::runtime_error("Track id not found in track matcher");
   }
-  return &it->second;
+  return it->second;
 }
 
 void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
                           std::span<TrackId> outputTrackIds) {
   const size_t inputBoxCount = boxes.size();
+  assert(inputBoxCount <= MAX_TRACK_COUNT);
 
   // Build a mapping index->track iterator
   std::vector<decltype(tracks_)::iterator> trackIts;
@@ -77,11 +78,14 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
     }
   }
 
+  // std::cout << "ScoreMat:\n" << score << std::endl;
+
   // Init output to invalids
   std::array<bool, MAX_TRACK_COUNT> inputUsed{false};
   std::array<bool, MAX_TRACK_COUNT> trackUsed{false};
 
   // Greedy matching
+  [[maybe_unused]] int matchCount = 0;
   if (tracks_.size() > 0 && inputBoxCount > 0) {
     auto argmax = eigen_argmax(score);
     while (argmax.second > 0) {
@@ -97,10 +101,12 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
       trackUsed[r] = true;
       score.row(r).setConstant(0.0f);
       score.col(c).setConstant(0.0f);
+      matchCount += 1;
 
       argmax = eigen_argmax(score);
     }
   }
+  // std::cout << "matchCount=" << matchCount << std::endl;
 
   // Drop missed tracks
   for (const auto &[r, it] : std::views::enumerate(trackIts)) {
@@ -130,5 +136,11 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
                                     boxes[c],
                                 }});
   }
+
+  // std::cout << "Box count: " << boxes.size() << " centers=";
+  // for (auto [box, id] : std::views::zip(boxes, outputTrackIds)) {
+  //   std::cout << "T" << id << "=(" << box.center().transpose() << "), ";
+  // }
+  // std::cout << std::endl;
 }
 } // namespace zoo

@@ -146,15 +146,15 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
           std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
 
       for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
-        TrackData *track = trackMatcher_.getTrackData(trackId);
+        TrackData &track = trackMatcher_.getTrackData(trackId);
         const std::string imgName =
-            std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track->trackLength);
+            std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track.trackLength);
         const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
 
-        if (track->trackLength <= MIN_TRACK_LENGTH) {
+        if (track.trackLength <= MIN_TRACK_LENGTH) {
           continue;
         }
-        if ((track->trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
+        if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
           continue;
         }
 
@@ -164,7 +164,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
         const auto patchNorm = (patches[idx] * preprocessStd_ + preprocessMean_) / 255;
         // The first image makes sure we create the directory
         // and it is also stored at the root for quick preview
-        if (track->trackLength == MIN_TRACK_LENGTH + 1) {
+        if (track.trackLength == MIN_TRACK_LENGTH + 1) {
           std::filesystem::create_directories(trackDir);
           saveTensorImage(patchNorm, rootPath / imgName);
         }

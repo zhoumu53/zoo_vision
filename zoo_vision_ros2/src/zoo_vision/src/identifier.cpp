@@ -135,7 +135,7 @@ std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const 
   } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
 
   // TODO: fix this
-  bestIdentities.resize(trackCount, identityCount + 1);
+  bestIdentities.resize(trackCount, 0);
 
   constexpr float32_t CONFIDENCE_THRESHOLD = 0.4f;
 
@@ -164,10 +164,9 @@ void Identifier::callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &p
                                at::TensorOptions(at::kCUDA).dtype(at::kFloat));
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
     // Copy track state
-    TrackData *track = trackMatcher_.getTrackData(trackId);
-    assert(track != nullptr);
-    if (track->identityState.has_value()) {
-      trackState0.index({Slice(), i, Ellipsis}).copy_(track->identityState.value());
+    TrackData &track = trackMatcher_.getTrackData(trackId);
+    if (track.identityState.has_value()) {
+      trackState0.index({Slice(), i, Ellipsis}).copy_(track.identityState.value());
     }
   }
 
@@ -185,9 +184,8 @@ void Identifier::callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &p
 
   // Remember track state
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
-    TrackData *track = trackMatcher_.getTrackData(trackId);
-    assert(track != nullptr);
-    track->identityState.emplace(trackState.index({Slice(), i, Ellipsis}));
+    TrackData &track = trackMatcher_.getTrackData(trackId);
+    track.identityState.emplace(trackState.index({Slice(), i, Ellipsis}));
   }
 }
 
@@ -248,14 +246,43 @@ void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor 
   prior(kPanang, kIndi) = 0;
 
   // TODO: sort tracks based on score
-  const std::vector<int> identities = selectOptimalIdentities(identityProbs, prior);
+  std::vector<int> identities = selectOptimalIdentities(identityProbs, prior);
   assert(identities.size() == trackIds.size());
 
+  // Add to histogram
+  constexpr int INVALID_ID = 0;
+  constexpr uint64_t VOTE_COUNT_THRESHOLD = 10;
+  for (auto [trackId, identity] : std::views::zip(trackIds, identities)) {
+    auto &trackData = trackMatcher_.getTrackData(trackId);
+    trackData.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
+
+    if (identity == INVALID_ID) {
+      continue;
+    }
+
+    if (identity >= identityCount + 1) {
+      throw std::runtime_error(std::format("identity out of range, {} >= {}", identity, identityCount));
+    }
+
+    trackData.identityHistogram.addVote(identity - 1);
+
+    auto [bestIdentity, bestVoteCount] = trackData.identityHistogram.getHighest();
+    if (bestVoteCount < VOTE_COUNT_THRESHOLD) {
+      identity = INVALID_ID;
+    } else {
+      identity = bestIdentity + 1;
+    }
+  }
+
+  // Forward logits for display
   for (const auto i : std::views::iota(0u, trackIds.size())) {
+    auto &track = trackMatcher_.getTrackData(trackIds[i]);
+
     msg.identity_ids[i] = identities[i];
     for (const auto j : std::views::iota(0u, identityCount)) {
       // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
-      msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
+      // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
+      msg.identity_logits[i * identityCount + j] = track.identityHistogram.getVotes()[j];
     }
   }
 
