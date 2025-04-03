@@ -144,6 +144,19 @@ def main():
         args,
     )
 
+    process_classification_dataset(
+        "zoo-elephants-identity-tracks",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=Path(
+                "/media/dherrera/ElephantExternal/elephants/tracks/tracks_apr03/maybe"
+            ),
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
     # Behaviour dataset
     process_classification_dataset(
         "zoo-elephants-sleep-train",
