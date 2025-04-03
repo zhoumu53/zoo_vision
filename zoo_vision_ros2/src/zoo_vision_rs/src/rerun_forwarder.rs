@@ -6,6 +6,7 @@ use hex_color::HexColor;
 use image;
 use nalgebra::{Matrix3, Matrix4, Vector3};
 use ndarray::prelude::*;
+use re_ws_comms::RerunServerPort;
 use rerun::{demo_util::grid, external::glam, external::ndarray};
 use std::{collections::HashMap, io::Cursor, iter::zip, path::Path};
 
@@ -20,14 +21,18 @@ fn string_from_ros(ros_str: &RosString) -> String {
     view.to_string()
 }
 
+const LOW_RES_WIDTH: u32 = 320;
+
 pub struct RerunForwarder {
     recording: rerun::RecordingStream,
+    low_res_images: bool,
     first_ros_time_ns: Option<i64>,
     // camera_indices: HashMap<String, usize>,
     identity_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
     behaviour_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
 
     camera_short_from_name: HashMap<String, String>,
+    camera_ui_scale_name: HashMap<String, f32>,
 
     key_colors: HashMap<String, rerun::Color>,
 }
@@ -75,29 +80,36 @@ fn rerun_from_hex(color: &HexColor) -> rerun::Color {
 }
 
 impl RerunForwarder {
-    pub fn new(data_path: &Path) -> Result<Self, Error> {
-        let recording = rerun::RecordingStreamBuilder::new("zoo_vision").serve_web(
-            "0.0.0.0",
-            Default::default(),
-            Default::default(),
-            rerun::MemoryLimit::from_bytes(1024 * 1024 * 1024),
-            false,
-        )?;
+    pub fn new(data_path: &Path, config_json: &str) -> Result<Self, Error> {
+        // Load config
+        let config: ZooConfig = serde_json::from_str(config_json).expect("Config json not valid");
+
+        // Begin rerun stream
+        let stream_builder = rerun::RecordingStreamBuilder::new("zoo_vision");
+        let recording = if config.rerun_config.save_to_disk {
+            let path = "zoo_vision_recording.rrd";
+            println!("Saving rerun stream to {}", path);
+            stream_builder.save(path)?
+        } else {
+            let ws_port = 9877u16;
+            println!("Broadcasting rerun stream. Visualize with 'rerun ws://localhost:{} --memory-limit 1GB'", ws_port);
+            stream_builder.serve_web(
+                "0.0.0.0",
+                Default::default(),
+                RerunServerPort(ws_port),
+                rerun::MemoryLimit::from_bytes(1024 * 1024 * 1024),
+                false,
+            )?
+        };
 
         // Log the blueprint
         recording.log_file_from_path(data_path.join("zoo_vision.rbl"), None, true)?;
 
-        // Load config
-        let file =
-            std::fs::File::open(data_path.join("config.json")).expect("Config json file not found");
-        let reader = std::io::BufReader::new(file);
-        let config: ZooConfig = serde_json::from_reader(reader).expect("Config json not valid");
-
+        // Load floor plan
         let t_map_from_world2 =
             Matrix3::<f32>::from_row_slice(config.map.t_map_from_world2.as_flattened());
         let t_map_from_world = transform3d_from_2d(&t_map_from_world2);
 
-        // Load floor plan
         let map_path = data_path.join(config.map.image);
         println!("Map filename={}", map_path.to_str().unwrap());
         let world_image_rr = rerun::EncodedImage::from_file(map_path)?;
@@ -195,6 +207,7 @@ impl RerunForwarder {
         const ASCII_A: u8 = 'a' as u8;
         Ok(Self {
             recording,
+            low_res_images: config.rerun_config.low_res,
             first_ros_time_ns: None,
             // camera_indices: HashMap::new(),
             identity_from_id: HashMap::from_iter(
@@ -217,6 +230,12 @@ impl RerunForwarder {
                     )
                 },
             )),
+            camera_ui_scale_name: HashMap::from_iter(
+                config
+                    .cameras
+                    .iter()
+                    .map(|(name, _)| (name.to_owned(), 1f32)),
+            ),
             key_colors: HashMap::new(),
         })
     }
@@ -269,7 +288,24 @@ impl RerunForwarder {
 
         // Compress image
         let mut jpg_writer = Cursor::new(Vec::new());
-        image.write_to(&mut jpg_writer, image::ImageFormat::Jpeg)?;
+        if self.low_res_images {
+            // Resize before compressing
+            let aspect = image.width() as f32 / image.height() as f32;
+            let low_res_height = (LOW_RES_WIDTH as f32 / aspect) as u32;
+            let low_res_image = image::imageops::resize(
+                &image,
+                LOW_RES_WIDTH,
+                low_res_height,
+                image::imageops::Gaussian,
+            );
+            low_res_image.write_to(&mut jpg_writer, image::ImageFormat::Jpeg)?;
+            // Remember scale
+            let ui_scale = LOW_RES_WIDTH as f32 / image.width() as f32;
+            *self.camera_ui_scale_name.get_mut(camera).unwrap() = ui_scale;
+        } else {
+            image.write_to(&mut jpg_writer, image::ImageFormat::Jpeg)?;
+        }
+
         let image_jpg_data = jpg_writer.into_inner();
         let rr_image =
             rerun::EncodedImage::from_file_contents(image_jpg_data).with_media_type("image/jpeg");
@@ -327,11 +363,11 @@ impl RerunForwarder {
         self.recording.log(
             format!("/cameras/{}/fullres", camera),
             &rerun::Transform3D::from_mat3x3([
-                1.0 / msg.scalex_image_from_detection,
+                1.0 / msg.scalex_image_from_detection / self.camera_ui_scale_name[camera],
                 0.0,
                 0.0,
                 0.0,
-                1.0 / msg.scaley_image_from_detection,
+                1.0 / msg.scaley_image_from_detection / self.camera_ui_scale_name[camera],
                 0.0,
                 0.0,
                 0.0,
@@ -477,6 +513,8 @@ impl RerunForwarder {
                 &rerun::Scalar::new(value_time.as_secs_f64() * 1000.0),
             )?;
         }
+
+        self.recording.flush_async();
 
         Ok(())
     }

@@ -216,12 +216,15 @@ void VideoLoader::onTimer() {
       loadVideo(cameraName, cameraData, replayNow_);
       loadImage(cameraData, image);
       if (image.empty()) {
-        RCLCPP_ERROR(get_logger(), "%s: Loading image frailed from new video", cameraName.c_str());
+        RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
       }
     }
     if (image.empty()) {
       continue;
     }
+
+    RCLCPP_INFO(get_logger(), "%s: Loading image success at %s", cameraName.c_str(),
+                std::format("{}", replayNow_).c_str());
 
     if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {
       // Calculate replay time based on how much we've advanced in the video
@@ -252,6 +255,7 @@ void VideoLoader::onTimer() {
   }
 
   assert(newReplayTime.has_value());
+  RCLCPP_INFO(get_logger(), "newReplayTime=%s", std::format("{}", *newReplayTime).c_str());
   replayNow_ = *newReplayTime;
 
   static int64_t minutesLastLog = 0;

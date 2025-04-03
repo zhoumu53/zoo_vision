@@ -34,7 +34,7 @@ using CImage12m = zoo_msgs::msg::Image12m;
 using CImage4m = zoo_msgs::msg::Image4m;
 using CDetection = zoo_msgs::msg::Detection;
 extern "C" {
-extern uint32_t zoo_rs_init(void **zoo_rs_handle, char const *const data_path);
+extern uint32_t zoo_rs_init(void **zoo_rs_handle, char const *const data_path, char const *const config_json);
 extern uint32_t zoo_rs_test_me(void *zoo_rs_handle, char const *const frame_id);
 extern uint32_t zoo_rs_image_callback(void *zoo_rs_handle, char const *const cameraTopic, char const *const channel,
                                       const CImage12m *);
@@ -113,7 +113,7 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
     subscribeDetection(name, name + "/detections");
   }
 
-  zoo_rs_init(&rsHandle_, getDataPath().c_str());
+  zoo_rs_init(&rsHandle_, getDataPath().c_str(), getConfig().dump().c_str());
 }
 
 void RerunForwarder::onImage(const std::string &cameraName, const std::string & /*channel*/,

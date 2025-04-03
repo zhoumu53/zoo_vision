@@ -11,10 +11,15 @@ const ZOO_VISION_ERROR: u32 = 1;
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn zoo_rs_init(client: *mut *mut RerunForwarder, data_path_c: *const c_char) -> u32 {
+pub extern "C" fn zoo_rs_init(
+    client: *mut *mut RerunForwarder,
+    data_path_c: *const c_char,
+    config_json_c: *const c_char,
+) -> u32 {
     let data_path_s = (unsafe { CStr::from_ptr(data_path_c) }).to_str().unwrap();
+    let config_json_s = (unsafe { CStr::from_ptr(config_json_c) }).to_str().unwrap();
 
-    let result = RerunForwarder::new(Path::new(data_path_s));
+    let result = RerunForwarder::new(Path::new(data_path_s), &config_json_s);
     match result {
         Ok(c) => unsafe {
             *client = Box::into_raw(Box::new(c));

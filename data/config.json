@@ -70,6 +70,10 @@
     "identity": "../models/identity/vit/good_freeze_embeddings4/config.ptc",
     "behaviour": "../models/sleep/vit/mix/config.ptc"
   },
+  "rerun_config": {
+    "low_res": true,
+    "save_to_disk": false
+  },
   "record_tracks": false,
   "live_stream": false,
   "video_db": "/home/dherrera/data/elephants/videos/video_db.json",

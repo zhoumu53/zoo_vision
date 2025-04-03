@@ -7,6 +7,7 @@ pub struct ZooConfig {
     pub individuals: HashMap<String, ClassifierClassInfo>,
     pub behaviours: HashMap<String, ClassifierClassInfo>,
     pub map: Map,
+    pub rerun_config: RerunConfig,
     // pub models: Models,
     pub cameras: HashMap<String, CameraCalib>,
 }
@@ -30,6 +31,12 @@ pub struct Map {
 //     pub elephant_label_id: u32,
 //     pub segmentation: String,
 // }
+
+#[derive(Deserialize, Debug)]
+pub struct RerunConfig {
+    pub low_res: bool,
+    pub save_to_disk: bool,
+}
 
 #[derive(Deserialize, Debug)]
 pub struct CameraIntrinsics {

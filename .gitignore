@@ -179,7 +179,8 @@ log/**
 models
 
 data/**/*.mp4
-# Rerun Blueprint
+# Rerun things
 **/*.rbl
+**/*.rrd
 
 debug/**
