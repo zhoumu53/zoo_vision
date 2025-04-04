@@ -41,6 +41,8 @@ public:
 
   void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
+  void onTrackClosed(TrackId trackId);
+
 private:
   at::Tensor preprocessImage(const at::Tensor &image);
   std::string cameraName_;

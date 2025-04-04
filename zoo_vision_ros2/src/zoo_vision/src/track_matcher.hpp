@@ -66,6 +66,8 @@ public:
   std::unordered_map<TrackId, TrackData>::const_iterator begin() const { return tracks_.begin(); }
   std::unordered_map<TrackId, TrackData>::const_iterator end() const { return tracks_.end(); }
 
+  std::function<void(TrackId)> onTrackCloseEvent = [](TrackId) {};
+
 private:
   TrackId nextTrackId_ = 1;
   std::unordered_map<TrackId, TrackData> tracks_;

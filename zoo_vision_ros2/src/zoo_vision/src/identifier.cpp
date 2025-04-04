@@ -260,7 +260,7 @@ void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor 
       continue;
     }
 
-    if (identity >= identityCount + 1) {
+    if (uint32_t(identity) >= identityCount + 1) {
       throw std::runtime_error(std::format("identity out of range, {} >= {}", identity, identityCount));
     }
 

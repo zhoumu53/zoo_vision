@@ -115,6 +115,10 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
       auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - data.lastObservation);
       data.skippedObservationCount += 1;
       if (ellapsedTime > MAX_INACTIVE_DURATION) {
+        // Raise event that a track has been closed
+        onTrackCloseEvent(it->second.id);
+
+        // Mark as invalid to delete in one go after this loop
         it->second.id = INVALID_TRACK_ID;
       }
     }
