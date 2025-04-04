@@ -61,6 +61,7 @@ private:
   std::string cameraName_;
 
   float32_t scoreThreshold_;
+  Eigen::Vector2i calibratedCameraSize_;
   Eigen::Matrix3f H_world2FromCamera_;
   Eigen::Matrix3f H_mapFromWorld2_;
 

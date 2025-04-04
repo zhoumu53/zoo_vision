@@ -49,6 +49,8 @@ Segmenter::Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackM
 
 void Segmenter::readConfig(const nlohmann::json &config) {
   // Camera calibration
+  calibratedCameraSize_ = Eigen::Vector2i{config["cameras"][cameraName_]["intrinsics"]["width"].get<int>(),
+                                          config["cameras"][cameraName_]["intrinsics"]["height"].get<int>()};
   H_mapFromWorld2_ = config["map"]["T_map_from_world2"];
   H_world2FromCamera_ = config["cameras"][cameraName_]["H_world2_from_camera"];
 
@@ -217,8 +219,10 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
 
   const int64_t maskHeight = segmentationResult.masks_u8.sizes()[1];
   const int64_t maskWidth = segmentationResult.masks_u8.sizes()[2];
-  detectionMsg.scalex_image_from_detection = static_cast<float>(imageTensor.size(2)) / maskWidth;
-  detectionMsg.scaley_image_from_detection = static_cast<float>(imageTensor.size(1)) / maskHeight;
+  const int32_t imageWidth = imageTensor.size(2);
+  const int32_t imageHeight = imageTensor.size(1);
+  detectionMsg.scalex_image_from_detection = static_cast<float>(imageWidth) / maskWidth;
+  detectionMsg.scaley_image_from_detection = static_cast<float>(imageHeight) / maskHeight;
 
   const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
   detectionMsg.masks.sizes[0] = MAX_DETECTION_COUNT;
@@ -297,8 +301,11 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
     copyBboxToRos(detectionMsg.bboxes[outputIndex], bbox);
 
     // Project to world
+    const float32_t scale_calibratedFromImage = static_cast<float32_t>(calibratedCameraSize_[0]) / imageWidth;
+
     const Eigen::Vector2f imagePosition = Eigen::Vector2f{bbox.center()[0] * detectionMsg.scalex_image_from_detection,
-                                                          bbox.max()[1] * detectionMsg.scaley_image_from_detection};
+                                                          bbox.max()[1] * detectionMsg.scaley_image_from_detection} *
+                                          scale_calibratedFromImage;
     const Eigen::Vector3f worldPosition =
         world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
     worldPositionsMap.col(outputIndex) = worldPosition;
