@@ -67,7 +67,7 @@
     "elephant_label_id": 0,
     "score_threshold": 0.9,
     "segmentation": "../models/segmentation/mask2former/freeze_encoder_q100/config.ptc",
-    "identity": "../models/identity/vit/good_freeze_embeddings4/config.ptc",
+    "identity": "../models/identity/vit/all/config.ptc",
     "behaviour": "../models/sleep/vit/mix/config.ptc"
   },
   "rerun_config": {

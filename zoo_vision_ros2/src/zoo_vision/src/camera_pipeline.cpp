@@ -183,25 +183,31 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 }
 
 void CameraPipeline::onTrackClosed(TrackId trackId) {
-  const TrackData &data = trackMatcher_.getTrackData(trackId);
-  static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
-  const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
-  if (!std::filesystem::exists(trackDir)) {
-    return;
+  try {
+    const TrackData &data = trackMatcher_.getTrackData(trackId);
+    static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
+    const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
+    if (!std::filesystem::exists(trackDir)) {
+      return;
+    }
+
+    const auto [identityId, voteCount] = data.identityHistogram.getHighest();
+    const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
+                                                    "03_Fahra",   "04_Panang",  "05_Thai"};
+
+    const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId];
+    const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, trackId);
+    std::filesystem::create_directories(newTrackDir);
+
+    for (const auto &file : std::filesystem::directory_iterator(trackDir)) {
+      const std::filesystem::path newImg = newTrackDir / file.path().filename();
+      std::filesystem::rename(file.path(), newImg);
+    }
+    std::filesystem::remove(trackDir);
+  } catch (const std::exception &ex) {
+    RCLCPP_ERROR(get_logger(), "Error moving track: %s", ex.what());
+  } catch (...) {
+    RCLCPP_ERROR(get_logger(), "Error moving track: ???");
   }
-
-  const auto [identityId, voteCount] = data.identityHistogram.getHighest();
-  const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
-                                                  "03_Fahra",   "04_Panang",  "05_Thai"};
-
-  const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId];
-  const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, trackId);
-  std::filesystem::create_directories(newTrackDir);
-
-  for (const auto &file : std::filesystem::directory_iterator(trackDir)) {
-    const std::filesystem::path newImg = newTrackDir / file.path().filename();
-    std::filesystem::rename(file.path(), newImg);
-  }
-  std::filesystem::remove(trackDir);
 }
 } // namespace zoo

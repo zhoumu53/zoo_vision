@@ -1,7 +1,12 @@
 python training/classification_vit/train_classification.py \
-    --model_name_or_path /home/dherrera/git/zoo_vision/models/identity/vit/good_freeze_vit \
+    --model_name_or_path /home/dherrera/git/zoo_vision/models/identity/vit/all_freeze_vit \
     --train_dir /home/dherrera/data/elephants/identity/dataset/certainty/train/good \
-    --validation_dir /home/dherrera/data/elephants/identity/dataset/id3 \
+                /home/dherrera/data/elephants/identity/dataset/d2/train \
+                /home/dherrera/data/elephants/identity/dataset/v1/train_curated \
+                /home/dherrera/data/elephants/identity/dataset/id3 \
+    --validation_dir /media/dherrera/ElephantExternal/elephants/tracks/tracks_apr03/maybe \
+                     /home/dherrera/data/elephants/identity/dataset/id3 \
+    --freeze_layers embeddings \
     --remove_unused_columns False \
     --dataloader_num_workers 12 \
     --dataloader_prefetch_factor 2 \

@@ -19,6 +19,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
+import PIL.Image
 import evaluate
 import numpy as np
 import torch
@@ -26,6 +27,7 @@ import datasets
 from datasets import load_dataset
 from PIL import Image
 import torchvision.transforms as tvt
+import albumentations as A
 
 import transformers
 from transformers import (
@@ -66,6 +68,36 @@ def pil_loader(path: str):
         return im.convert("RGB")
 
 
+def get_certainty_good_bad_dict(dir: str):
+    from pathlib import Path
+    import PIL.Image
+
+    path = Path(dir)
+    class_names = [str(f.relative_to(path)) for f in path.glob("*") if f.is_dir()]
+    valid_suffixes = [".jpg", ".png"]
+
+    samples = {"image": [], "label": []}
+    for class_idx, class_name in enumerate(class_names):
+        images = [
+            str(f)
+            for f in (path / class_name).glob("**/*")
+            if f.suffix in valid_suffixes
+        ]
+        samples["image"].extend(images)
+        samples["label"].extend([class_idx] * len(images))
+
+    ds = datasets.Dataset.from_dict(
+        samples,
+        features=datasets.Features(
+            {
+                "image": datasets.Image(decode=True),
+                "label": datasets.ClassLabel(names=class_names),
+            }
+        ),
+    )
+    return ds
+
+
 @dataclass
 class DataTrainingArguments:
     """
@@ -86,11 +118,13 @@ class DataTrainingArguments:
             "help": "The configuration name of the dataset to use (via the datasets library)."
         },
     )
-    train_dir: Optional[str] = field(
-        default=None, metadata={"help": "A folder containing the training data."}
+    train_dir: Optional[list[str]] = field(
+        default=None,
+        metadata={"help": "A folder containing the training data.", "nargs": "*"},
     )
-    validation_dir: Optional[str] = field(
-        default=None, metadata={"help": "A folder containing the validation data."}
+    validation_dir: Optional[list[str]] = field(
+        default=None,
+        metadata={"help": "A folder containing the validation data.", "nargs": "*"},
     )
     train_val_split: Optional[float] = field(
         default=0.15, metadata={"help": "Percent to split off of train for validation."}
@@ -128,6 +162,9 @@ class DataTrainingArguments:
     no_flip: bool = field(
         default=False,
         metadata={"help": "Disables flipping during augmentation."},
+    )
+    freeze_layers: str = field(
+        default="vit", metadata={"help": "Which layers to freeze during training"}
     )
 
     def __post_init__(self):
@@ -277,13 +314,24 @@ def main():
 
     # Initialize our dataset and prepare it for the 'image-classification' task.
     if data_args.dataset_name is not None:
-        dataset = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            cache_dir=model_args.cache_dir,
-            token=model_args.token,
-            trust_remote_code=model_args.trust_remote_code,
-        )
+        if data_args.dataset_name == "certainty_good_bad":
+            ds_dict = {}
+            ds_dict["train"] = datasets.concatenate_datasets(
+                [
+                    get_certainty_good_bad_dict(train_dir)
+                    for train_dir in data_args.train_dir
+                ]
+            )
+
+            dataset = datasets.dataset_dict.DatasetDict(ds_dict)
+        else:
+            dataset = load_dataset(
+                data_args.dataset_name,
+                data_args.dataset_config_name,
+                cache_dir=model_args.cache_dir,
+                token=model_args.token,
+                trust_remote_code=model_args.trust_remote_code,
+            )
     else:
         # data_files = {}
         # if data_args.train_dir is not None:
@@ -295,38 +343,34 @@ def main():
         #     data_files=data_files,
         #     cache_dir=model_args.cache_dir,
         # )
-        ds_train: datasets.Dataset = load_dataset(
-            "imagefolder",
-            data_dir=data_args.train_dir,
-            split=datasets.Split.TRAIN,
-        )
-        if data_args.validation_dir is None:
-            # Randomly split dataset into train/val
-            test_size = 0.2
-            print(
-                f"No validation dataset, splitting train dataset randomly. Validation size: {test_size}"
-            )
-            ds_dict = ds_train.train_test_split(
-                test_size=test_size, shuffle=True, seed=training_args.seed
-            )
-            ds_train = ds_dict["train"]
-            ds_val = ds_dict["test"]
-        else:
-            ds_val = load_dataset(
+        ds_dict = {}
+        ds_list = [
+            load_dataset(
                 "imagefolder",
-                data_dir=data_args.validation_dir,
+                data_dir=train_dir,
                 split=datasets.Split.TRAIN,
             )
+            for train_dir in data_args.train_dir
+        ]
+        for dir, ds in zip(data_args.train_dir, ds_list):
+            print(f"Training dataset {dir}: {len(ds)} samples")
+        ds_dict["train"] = datasets.concatenate_datasets(ds_list)
+        if data_args.validation_dir is not None and len(data_args.validation_dir) > 0:
+            ds_list = [
+                load_dataset(
+                    "imagefolder",
+                    data_dir=validation_dir,
+                    split=datasets.Split.TRAIN,  # Train vsplit because we are loading from a directory so there is only one split
+                )
+                for validation_dir in data_args.validation_dir
+            ]
 
-        dataset = datasets.dataset_dict.DatasetDict(
-            {
-                "train": ds_train,
-                "validation": ds_val,
-            }
-        )
-        print(
-            f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
-        )
+            for dir, ds in zip(data_args.train_dir, ds_list):
+                print(f"Validation dataset {dir}: {len(ds)} samples")
+
+            ds_dict["validation"] = datasets.concatenate_datasets(ds_list)
+
+        dataset = datasets.dataset_dict.DatasetDict(ds_dict)
 
     dataset_column_names = (
         dataset["train"].column_names
@@ -361,6 +405,9 @@ def main():
         split = dataset["train"].train_test_split(data_args.train_val_split)
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
+    print(
+        f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
+    )
 
     # Prepare label mappings.
     # We'll include these in the model's config to get human readable labels in the Inference API.
@@ -402,12 +449,23 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
-    for p in model.vit.embeddings.parameters():
-        p.requires_grad = False
-    # for p in model.vit.encoder.parameters():
-    #     p.requires_grad = False
-    # for p in model.vit.parameters():
-    #     p.requires_grad = False
+    model.loss_fct = torch.nn.CrossEntropyLoss(label_smoothing=0.3)
+
+    layers_to_freeze = []
+    layers_to_freeze_str = data_args.freeze_layers.split("+")
+    for layer_str in layers_to_freeze_str:
+        if layer_str == "vit":
+            layer = model.vit
+        elif layer_str == "encoder":
+            layer = model.vit.encoder
+        elif layer_str == "embeddings":
+            layer = model.vit.embeddings
+        else:
+            raise RuntimeError(f"Unknonw layer to freeze: {layer_str}")
+        layers_to_freeze.append(layer)
+    for layer in layers_to_freeze:
+        for p in layer.parameters():
+            p.requires_grad = False
 
     image_processor = AutoImageProcessor.from_pretrained(
         model_args.image_processor_name or model_args.model_name_or_path,
@@ -429,6 +487,13 @@ def main():
         0.22499999403953552,
     ]
 
+    def pil_to_numpy(pil_img, **kw_args):
+        return np.asarray(pil_img.convert("RGB"))
+
+    def apply_image_processor(image, **kw_args):
+        image = image_processor.preprocess(image)["pixel_values"][0]
+        return torch.from_numpy(image)
+
     # Define torchvision transforms to be applied to each image.
     if isinstance(image_processor, TimmWrapperImageProcessor):
         _train_transforms = image_processor.train_transforms
@@ -436,48 +501,32 @@ def main():
     else:
         if "shortest_edge" in image_processor.size:
             size = image_processor.size["shortest_edge"]
+            raise RuntimeError("Cannot handle shortest_edge sizing")
         else:
             size = (image_processor.size["height"], image_processor.size["width"])
 
-        dummy_transform = tvt.Lambda(lambda x: x)
-
-        # Create normalization transform
-        if hasattr(image_processor, "image_mean") and hasattr(
-            image_processor, "image_std"
-        ):
-            normalize = tvt.Normalize(
-                mean=image_processor.image_mean, std=image_processor.image_std
-            )
-        else:
-            normalize = dummy_transform
-        _train_transforms = tvt.Compose(
+        _train_transforms = A.Compose(
             [
-                tvt.ToTensor(),
-                tvt.RandomResizedCrop(size),
-                (
-                    tvt.RandomHorizontalFlip()
-                    if not data_args.no_flip
-                    else dummy_transform
-                ),
-                tvt.RandomRotation(3),
-                tvt.RandomAutocontrast(),
-                tvt.RandomErasing(),
-                normalize,
+                A.RandomResizedCrop(size),
+                A.HorizontalFlip(p=0.5 if not data_args.no_flip else 0),
+                A.Rotate(3),
+                A.ColorJitter(),
+                A.GaussNoise(mean_range=[0, 0], std_range=[0.1, 0.2]),
+                A.Erasing(),
+                A.Lambda(image=apply_image_processor),
             ]
         )
-        _val_transforms = tvt.Compose(
+        _val_transforms = A.Compose(
             [
-                tvt.ToTensor(),
-                tvt.Resize(size),
-                tvt.CenterCrop(size),
-                normalize,
+                A.Resize(size[0], size[1]),
+                A.Lambda(image=apply_image_processor),
             ]
         )
 
     def train_transforms(example_batch):
         """Apply _train_transforms across a batch."""
         example_batch["pixel_values"] = [
-            _train_transforms(pil_img.convert("RGB"))
+            _train_transforms(image=pil_to_numpy(pil_img))["image"]
             for pil_img in example_batch[data_args.image_column_name]
         ]
         return example_batch
@@ -485,7 +534,7 @@ def main():
     def val_transforms(example_batch):
         """Apply _val_transforms across a batch."""
         example_batch["pixel_values"] = [
-            _val_transforms(pil_img.convert("RGB"))
+            _val_transforms(image=pil_to_numpy(pil_img))["image"]
             for pil_img in example_batch[data_args.image_column_name]
         ]
         return example_batch

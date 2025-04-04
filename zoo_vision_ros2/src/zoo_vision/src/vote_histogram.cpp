@@ -29,9 +29,9 @@ void VoteHistogram::addVote(int classId) {
   // if (classId >= votes_.size()) {
   //   throw std::runtime_error("Class outside of histogram range");
   // }
-  for (auto &count : votes_) {
-    count *= dampeningFactor_;
-  }
+  // for (auto &count : votes_) {
+  //   count *= dampeningFactor_;
+  // }
   votes_[classId] += 1;
 }
 
