@@ -22,6 +22,7 @@ nalgebra = "*"
 hex_color = {version = "3", features = ["rand", "std", "serde"]}
 rerun = {version = "0.22.1", features = ["web_viewer"]}
 re_ws_comms = {version = "0.22.1"}
+time = "*"
 
 
 [dependencies.rclrs]

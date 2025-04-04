@@ -36,6 +36,8 @@ pub struct Map {
 pub struct RerunConfig {
     pub low_res: bool,
     pub save_to_disk: bool,
+    pub recording_prefix: String,
+    pub max_seconds_per_recording: u32,
 }
 
 #[derive(Deserialize, Debug)]

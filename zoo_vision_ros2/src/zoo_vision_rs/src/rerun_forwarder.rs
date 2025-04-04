@@ -1,4 +1,5 @@
 use crate::zoo_config::ClassifierClassInfo;
+use time;
 
 use super::zoo_config::ZooConfig;
 use anyhow::{Error, Result};
@@ -7,8 +8,18 @@ use image;
 use nalgebra::{Matrix3, Matrix4, Vector3};
 use ndarray::prelude::*;
 use re_ws_comms::RerunServerPort;
-use rerun::{demo_util::grid, external::glam, external::ndarray};
-use std::{collections::HashMap, io::Cursor, iter::zip, path::Path};
+use rerun::{
+    demo_util::grid,
+    external::{glam, ndarray, re_log_types},
+    RecordingStream,
+};
+use std::{
+    collections::HashMap,
+    io::Cursor,
+    iter::zip,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 type RosString = zoo_msgs::msg::rmw::String;
 
@@ -22,20 +33,7 @@ fn string_from_ros(ros_str: &RosString) -> String {
 }
 
 const LOW_RES_WIDTH: u32 = 320;
-
-pub struct RerunForwarder {
-    recording: rerun::RecordingStream,
-    low_res_images: bool,
-    first_ros_time_ns: Option<i64>,
-    // camera_indices: HashMap<String, usize>,
-    identity_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
-    behaviour_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
-
-    camera_short_from_name: HashMap<String, String>,
-    camera_ui_scale_name: HashMap<String, f32>,
-
-    key_colors: HashMap<String, rerun::Color>,
-}
+const RERUN_APP_ID: &str = "zoo_vision";
 
 fn transform3d_from_2d(t2d: &Matrix3<f32>) -> Matrix4<f32> {
     let mut t3d: Matrix4<f32> = nalgebra::zero();
@@ -79,18 +77,162 @@ fn rerun_from_hex(color: &HexColor) -> rerun::Color {
     rerun::Color::from_unmultiplied_rgba(color.r, color.g, color.b, color.a)
 }
 
+fn start_rerun_file_recording(recording_prefix: &str) -> Result<RecordingStream, Error> {
+    const DATE_FORMAT_STR: &'static str = "[year]-[month]-[day]-[hour]:[minute]:[second]";
+    let dt_fmt = time::format_description::parse(DATE_FORMAT_STR)?;
+    let now: time::OffsetDateTime = std::time::SystemTime::now().into();
+    let path = format!("{}{}.rrd", recording_prefix, now.format(&dt_fmt)?);
+    println!("Saving rerun stream to {}", path);
+
+    let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
+    return Ok(stream_builder.save(path)?);
+}
+
+fn log_static_components(
+    recording: &RecordingStream,
+    data_path: &Path,
+    config: &ZooConfig,
+    key_colors: Option<&HashMap<String, rerun::Color>>,
+) -> Result<(), Error> {
+    // Log the blueprint
+    recording.log_file_from_path(data_path.join("zoo_vision.rbl"), None, true)?;
+
+    // Load floor plan
+    let t_map_from_world2 =
+        Matrix3::<f32>::from_row_slice(config.map.t_map_from_world2.as_flattened());
+    let t_map_from_world = transform3d_from_2d(&t_map_from_world2);
+
+    let map_path = data_path.join(&config.map.image);
+    println!("Map filename={}", map_path.to_str().unwrap());
+    let world_image_rr = rerun::EncodedImage::from_file(map_path)?;
+    recording.log_static("world/map", &world_image_rr)?;
+
+    // Map projection
+    // {
+    //     // let f = [t_map_from_world[(0, 0)], t_map_from_world[(1, 1)]];
+    //     // let p = [t_map_from_world[(0, 2)], t_map_from_world[(1, 2)]];
+    //     let resolution = [4904.0, 7663.0];
+    //     let f = [-1.0, -1.0];
+    //     recording.log_static(
+    //         "/world/map",
+    //         &rerun::Pinhole::from_focal_length_and_resolution(f, resolution)
+    //             .with_image_plane_distance(1.0),
+    //     )?;
+    // }
+    let t_world_from_map = t_map_from_world.qr().try_inverse().unwrap();
+    let r = t_world_from_map.fixed_view::<3, 3>(0, 0).clone_owned();
+    let t = t_world_from_map.fixed_view::<3, 1>(0, 3).clone_owned();
+    // t[2] = -1.0;
+
+    recording.log_static(
+        "world/map",
+        &rerun::Transform3D::from_mat3x3(r.data.0).with_translation(t.data.0[0]),
+    )?;
+
+    // Go through config cameras
+    for (_, (camera_name, camera_config)) in config.cameras.iter().enumerate() {
+        // Log pinhole in map view
+        let resolution = [
+            camera_config.intrinsics.width as f32,
+            camera_config.intrinsics.height as f32,
+        ];
+        let f = [
+            camera_config.intrinsics.k[0][0],
+            camera_config.intrinsics.k[1][1],
+        ];
+        let p = [
+            camera_config.intrinsics.k[0][2],
+            camera_config.intrinsics.k[1][2],
+        ];
+        recording.log_static(
+            format!("/world/{}", camera_name),
+            &rerun::Pinhole::from_focal_length_and_resolution(f, resolution)
+                .with_principal_point(p)
+                .with_image_plane_distance(3.0),
+        )?;
+
+        let r_world_from_camera = Matrix3::<f32>::from_row_slice(
+            camera_config.t_world_from_camera.rotation.as_flattened(),
+        );
+        let t_camera_in_world = Vector3::<f32>::from(camera_config.t_world_from_camera.translation);
+        recording.log_static(
+            format!("/world/{}", camera_name),
+            &rerun::Transform3D::from_mat3x3(r_world_from_camera.data.0)
+                .with_translation(t_camera_in_world.data.0[0]),
+        )?;
+    }
+
+    // Log an annotation context to assign a label and color to each class
+    let mut identity_ctx = vec![(
+        0u16,
+        "Background",
+        rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
+    )];
+    for (name, individual) in config.individuals.iter() {
+        let color = individual.color;
+        identity_ctx.push((
+            individual.id as u16,
+            name,
+            rerun::Rgba32::from_unmultiplied_rgba(color.r, color.g, color.b, 128),
+        ));
+    }
+    for (camera_name, _) in config.cameras.iter() {
+        recording.log_static(
+            format!("/cameras/{}/detections", camera_name),
+            &rerun::AnnotationContext::new([(
+                0,
+                "Background",
+                rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
+            )]),
+        )?;
+        recording.log_static(
+            format!("/cameras/{}/identities", camera_name),
+            &rerun::AnnotationContext::new(identity_ctx.clone()),
+        )?;
+    }
+    recording.log_static(
+        format!("/world/detections"),
+        &rerun::AnnotationContext::new(identity_ctx),
+    )?;
+
+    if key_colors.is_some() {
+        for (rr_path, rr_color) in key_colors.unwrap() {
+            recording.log_static(
+                rr_path.as_str(),
+                &rerun::SeriesPoint::new().with_color(rr_color.clone()),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub struct RerunForwarder {
+    config: ZooConfig,
+    data_path: PathBuf,
+
+    recording_mutex: std::sync::Mutex<Rc<rerun::RecordingStream>>,
+
+    first_ros_time_ns: Option<i64>,
+    // camera_indices: HashMap<String, usize>,
+    identity_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
+    behaviour_from_id: HashMap<u32, (String, ClassifierClassInfo)>,
+
+    camera_short_from_name: HashMap<String, String>,
+    camera_ui_scale_name: HashMap<String, f32>,
+
+    key_colors: HashMap<String, rerun::Color>,
+}
+
 impl RerunForwarder {
     pub fn new(data_path: &Path, config_json: &str) -> Result<Self, Error> {
         // Load config
         let config: ZooConfig = serde_json::from_str(config_json).expect("Config json not valid");
 
         // Begin rerun stream
-        let stream_builder = rerun::RecordingStreamBuilder::new("zoo_vision");
         let recording = if config.rerun_config.save_to_disk {
-            let path = "zoo_vision_recording.rrd";
-            println!("Saving rerun stream to {}", path);
-            stream_builder.save(path)?
+            start_rerun_file_recording(&config.rerun_config.recording_prefix)?
         } else {
+            let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
             let ws_port = 9877u16;
             println!("Broadcasting rerun stream. Visualize with 'rerun ws://localhost:{} --memory-limit 1GB'", ws_port);
             stream_builder.serve_web(
@@ -102,149 +244,62 @@ impl RerunForwarder {
             )?
         };
 
-        // Log the blueprint
-        recording.log_file_from_path(data_path.join("zoo_vision.rbl"), None, true)?;
-
-        // Load floor plan
-        let t_map_from_world2 =
-            Matrix3::<f32>::from_row_slice(config.map.t_map_from_world2.as_flattened());
-        let t_map_from_world = transform3d_from_2d(&t_map_from_world2);
-
-        let map_path = data_path.join(config.map.image);
-        println!("Map filename={}", map_path.to_str().unwrap());
-        let world_image_rr = rerun::EncodedImage::from_file(map_path)?;
-        recording.log_static("world/map", &world_image_rr)?;
-
-        // Map projection
-        // {
-        //     // let f = [t_map_from_world[(0, 0)], t_map_from_world[(1, 1)]];
-        //     // let p = [t_map_from_world[(0, 2)], t_map_from_world[(1, 2)]];
-        //     let resolution = [4904.0, 7663.0];
-        //     let f = [-1.0, -1.0];
-        //     recording.log_static(
-        //         "/world/map",
-        //         &rerun::Pinhole::from_focal_length_and_resolution(f, resolution)
-        //             .with_image_plane_distance(1.0),
-        //     )?;
-        // }
-        let t_world_from_map = t_map_from_world.qr().try_inverse().unwrap();
-        let r = t_world_from_map.fixed_view::<3, 3>(0, 0).clone_owned();
-        let t = t_world_from_map.fixed_view::<3, 1>(0, 3).clone_owned();
-        // t[2] = -1.0;
-
-        recording.log_static(
-            "world/map",
-            &rerun::Transform3D::from_mat3x3(r.data.0).with_translation(t.data.0[0]),
-        )?;
-
-        // Go through config cameras
-        for (_, (camera_name, camera_config)) in config.cameras.iter().enumerate() {
-            // Log pinhole in map view
-            let resolution = [
-                camera_config.intrinsics.width as f32,
-                camera_config.intrinsics.height as f32,
-            ];
-            let f = [
-                camera_config.intrinsics.k[0][0],
-                camera_config.intrinsics.k[1][1],
-            ];
-            let p = [
-                camera_config.intrinsics.k[0][2],
-                camera_config.intrinsics.k[1][2],
-            ];
-            recording.log_static(
-                format!("/world/{}", camera_name),
-                &rerun::Pinhole::from_focal_length_and_resolution(f, resolution)
-                    .with_principal_point(p)
-                    .with_image_plane_distance(3.0),
-            )?;
-
-            let r_world_from_camera = Matrix3::<f32>::from_row_slice(
-                camera_config.t_world_from_camera.rotation.as_flattened(),
-            );
-            let t_camera_in_world =
-                Vector3::<f32>::from(camera_config.t_world_from_camera.translation);
-            recording.log_static(
-                format!("/world/{}", camera_name),
-                &rerun::Transform3D::from_mat3x3(r_world_from_camera.data.0)
-                    .with_translation(t_camera_in_world.data.0[0]),
-            )?;
-        }
-
-        // Log an annotation context to assign a label and color to each class
-        let mut identity_ctx = vec![(
-            0u16,
-            "Background",
-            rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
-        )];
-        for (name, individual) in config.individuals.iter() {
-            let color = individual.color;
-            identity_ctx.push((
-                individual.id as u16,
-                name,
-                rerun::Rgba32::from_unmultiplied_rgba(color.r, color.g, color.b, 128),
-            ));
-        }
-        for (camera_name, _) in config.cameras.iter() {
-            recording.log_static(
-                format!("/cameras/{}/detections", camera_name),
-                &rerun::AnnotationContext::new([(
-                    0,
-                    "Background",
-                    rerun::Rgba32::from_unmultiplied_rgba(0, 0, 0, 0),
-                )]),
-            )?;
-            recording.log_static(
-                format!("/cameras/{}/identities", camera_name),
-                &rerun::AnnotationContext::new(identity_ctx.clone()),
-            )?;
-        }
-        recording.log_static(
-            format!("/world/detections"),
-            &rerun::AnnotationContext::new(identity_ctx),
-        )?;
+        log_static_components(&recording, data_path, &config, None)?;
 
         const ASCII_A: u8 = 'a' as u8;
+        let identity_from_id = HashMap::from_iter(
+            config
+                .individuals
+                .iter()
+                .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
+        );
+        let behaviour_from_id = HashMap::from_iter(
+            config
+                .behaviours
+                .iter()
+                .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
+        );
+        let camera_short_from_name =
+            HashMap::from_iter(config.cameras.iter().enumerate().map(|(i, (name, _))| {
+                (
+                    name.to_owned(),
+                    format!("{}", (ASCII_A + (i as u8)) as char),
+                )
+            }));
+        let camera_ui_scale_name = HashMap::from_iter(
+            config
+                .cameras
+                .iter()
+                .map(|(name, _)| (name.to_owned(), 1f32)),
+        );
+
         Ok(Self {
-            recording,
-            low_res_images: config.rerun_config.low_res,
+            config,
+            data_path: data_path.to_path_buf(),
+            recording_mutex: std::sync::Mutex::new(Rc::new(recording)),
             first_ros_time_ns: None,
             // camera_indices: HashMap::new(),
-            identity_from_id: HashMap::from_iter(
-                config
-                    .individuals
-                    .iter()
-                    .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
-            ),
-            behaviour_from_id: HashMap::from_iter(
-                config
-                    .behaviours
-                    .iter()
-                    .map(|(name, class_info)| (class_info.id, (name.clone(), class_info.clone()))),
-            ),
-            camera_short_from_name: HashMap::from_iter(config.cameras.iter().enumerate().map(
-                |(i, (name, _))| {
-                    (
-                        name.to_owned(),
-                        format!("{}", (ASCII_A + (i as u8)) as char),
-                    )
-                },
-            )),
-            camera_ui_scale_name: HashMap::from_iter(
-                config
-                    .cameras
-                    .iter()
-                    .map(|(name, _)| (name.to_owned(), 1f32)),
-            ),
+            identity_from_id,
+            behaviour_from_id,
+            camera_short_from_name,
+            camera_ui_scale_name,
             key_colors: HashMap::new(),
         })
+    }
+
+    pub fn get_recording(&mut self) -> Rc<RecordingStream> {
+        // Lock the mutex to clone the Rc, this protects from creation of a new recording stream while we are logging
+        // but allows multithreaded log() calls.
+        let lock_guard = self.recording_mutex.lock().unwrap();
+        Rc::clone(&lock_guard)
     }
 
     pub fn test_me(&mut self, frame_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         let points = grid(glam::Vec3::splat(-10.0), glam::Vec3::splat(10.0), 10);
         let colors = grid(glam::Vec3::ZERO, glam::Vec3::splat(255.0), 10)
             .map(|v| rerun::Color::from_rgb(v.x as u8, v.y as u8, v.z as u8));
-        self.recording.log(
+        let recording = self.get_recording();
+        recording.log(
             "my_points",
             &rerun::Points3D::new(points)
                 .with_colors(colors)
@@ -252,6 +307,33 @@ impl RerunForwarder {
         )?;
         println!("Test from forwarder, frame_id={}", frame_id);
         Ok(())
+    }
+
+    pub fn reset_recording_if_necessary(&mut self) -> () {
+        if !self.config.rerun_config.save_to_disk {
+            return ();
+        }
+
+        // Recording is multi-threaded but creation must be guarded with a mutex so two threads
+        // don't attempt to start a new recording simultaneously
+        let mut lock_guard = self.recording_mutex.lock().unwrap();
+
+        let recording_time = lock_guard.store_info().unwrap().started;
+        let recording_duration = re_log_types::Time::now() - recording_time;
+        let max_duration = self.config.rerun_config.max_seconds_per_recording as f32;
+        if recording_duration.as_secs_f32() > max_duration {
+            *lock_guard = Rc::new(
+                start_rerun_file_recording(&self.config.rerun_config.recording_prefix)
+                    .expect("Could not start new recording"),
+            );
+            log_static_components(
+                &lock_guard,
+                &self.data_path,
+                &self.config,
+                Some(&self.key_colors),
+            )
+            .expect("Error logging static components to new recording");
+        }
     }
 
     pub fn register_points_key(&mut self, rr_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -265,7 +347,7 @@ impl RerunForwarder {
 
         self.key_colors.insert(rr_path.to_string(), rr_color);
 
-        self.recording
+        self.get_recording()
             .log_static(rr_path, &rerun::SeriesPoint::new().with_color(rr_color))?;
         Ok(())
     }
@@ -276,6 +358,9 @@ impl RerunForwarder {
         _channel: &str,
         msg: &zoo_msgs::msg::rmw::Image12m,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: it is a bit excessive to check for a new recording on every frame, but the check is light
+        self.reset_recording_if_necessary();
+
         let msg_data_slice = unsafe {
             std::slice::from_raw_parts(msg.data.as_ptr(), (msg.height * msg.width * 3) as usize)
         };
@@ -288,7 +373,7 @@ impl RerunForwarder {
 
         // Compress image
         let mut jpg_writer = Cursor::new(Vec::new());
-        if self.low_res_images {
+        if self.config.rerun_config.low_res {
             // Resize before compressing
             let aspect = image.width() as f32 / image.height() as f32;
             let low_res_height = (LOW_RES_WIDTH as f32 / aspect) as u32;
@@ -311,9 +396,10 @@ impl RerunForwarder {
             rerun::EncodedImage::from_file_contents(image_jpg_data).with_media_type("image/jpeg");
 
         let time_ns = nanosec_from_ros(&msg.header.stamp);
-        self.recording.set_time_nanos("ros_time", time_ns);
+        let recording = self.get_recording();
+        recording.set_time_nanos("ros_time", time_ns);
 
-        self.recording.log(
+        recording.log(
             format!("/cameras/{}/fullres", camera),
             &rr_image.with_draw_order(-1.0),
         )?;
@@ -356,11 +442,12 @@ impl RerunForwarder {
             }
         }
 
-        // Set rerun time
-        self.recording
-            .set_time_nanos("ros_time", ros_time_ns as i64);
+        let recording = self.get_recording();
 
-        self.recording.log(
+        // Set rerun time
+        recording.set_time_nanos("ros_time", ros_time_ns as i64);
+
+        recording.log(
             format!("/cameras/{}/fullres", camera),
             &rerun::Transform3D::from_mat3x3([
                 1.0 / msg.scalex_image_from_detection / self.camera_ui_scale_name[camera],
@@ -426,7 +513,7 @@ impl RerunForwarder {
         //     &rerun_boxes.clone().with_class_ids(track_ids.clone()),
         // )?;
 
-        self.recording.log(
+        recording.log(
             format!("/cameras/{}/identities/boxes", camera),
             &rerun_boxes
                 .with_class_ids(identity_ids.clone())
@@ -437,7 +524,7 @@ impl RerunForwarder {
         // Log position in world
         let world_points_rr =
             rerun::Points2D::new(world_positions.axis_iter(Axis(0)).map(|x| (x[0], x[1])));
-        self.recording.log(
+        recording.log(
             format!("/world/detections/{}/positions", camera),
             &world_points_rr
                 .with_class_ids(identity_ids)
@@ -458,9 +545,9 @@ impl RerunForwarder {
             }
         }
         let rr_image = rerun::SegmentationImage::try_from(image_classes)?;
-        self.recording.log(
+        recording.log(
             format!("/cameras/{}/detections/masks", camera),
-            &rr_image.with_draw_order(1.0).with_opacity(0.4),
+            &rr_image.with_draw_order(1.0).with_opacity(0.15),
         )?;
 
         // Log identity logits
@@ -485,13 +572,12 @@ impl RerunForwarder {
                         self.identity_from_id[&id].0
                     );
 
-                    self.recording.log(
+                    recording.log(
                         rr_path.as_str(),
                         &rerun::SeriesLine::new()
                             .with_color(rerun_from_hex(&self.identity_from_id[&id].1.color)),
                     )?;
-                    self.recording
-                        .log(rr_path, &rerun::Scalar::new(all_logits[[idx, id0]] as f64))?;
+                    recording.log(rr_path, &rerun::Scalar::new(all_logits[[idx, id0]] as f64))?;
                 }
             }
         }
@@ -500,21 +586,20 @@ impl RerunForwarder {
         for (key, value_hz) in cast_ros_key_value_arrayf(&msg.timings.items_hz) {
             let rr_path = format!("/processing_times/hz/{}", key);
             self.register_points_key(rr_path.as_str())?;
-            self.recording
-                .log(rr_path, &rerun::Scalar::new(value_hz as f64))?;
+            recording.log(rr_path, &rerun::Scalar::new(value_hz as f64))?;
         }
         for (key, value_ns) in cast_ros_key_value_arrayi64(&msg.timings.items_ns) {
             let rr_path = format!("/processing_times/msec/{}", key);
             self.register_points_key(rr_path.as_str())?;
 
             let value_time = std::time::Duration::from_nanos(value_ns as u64);
-            self.recording.log(
+            recording.log(
                 rr_path,
                 &rerun::Scalar::new(value_time.as_secs_f64() * 1000.0),
             )?;
         }
 
-        self.recording.flush_async();
+        recording.flush_async();
 
         Ok(())
     }
