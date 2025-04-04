@@ -117,7 +117,9 @@
 			"__tree": "cpp",
 			"queue": "cpp",
 			"stack": "cpp",
-			"filesystem": "cpp"
+			"filesystem": "cpp",
+			"*.ipp": "cpp",
+			"slist": "cpp"
 		},
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"
