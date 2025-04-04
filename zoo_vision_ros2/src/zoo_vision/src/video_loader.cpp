@@ -105,6 +105,30 @@ void VideoLoader::loadVideoDatabase(const std::filesystem::path &database,
   }
 }
 
+void VideoLoader::openVideo(const std::string & /*cameraName*/, CameraData &cameraData, const VideoInfo &info) {
+  cv::VideoCapture cvVideo;
+  const bool ok = cvVideo.open(info.videoFile);
+  if (ok) {
+    cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
+                                      static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
+    cameraData.videoStartTime_ = info.startTime;
+    cameraData.videoStream_ = std::move(cvVideo);
+    RCLCPP_INFO(get_logger(), "Loaded video %s", info.videoFile.c_str());
+    RCLCPP_INFO(get_logger(), "Resolution=%dx%d, now=%s, start time=%s", cameraData.frameSize.width,
+                cameraData.frameSize.height, std::format("{:%Y-%m-%d %T}", replayNow_).c_str(),
+                std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
+
+    // Adjust time
+    const int64_t offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - info.startTime).count();
+    if (offsetMs > 0) {
+      RCLCPP_INFO(get_logger(), "Advancing video by %ldms", offsetMs);
+      cameraData.videoStream_->set(cv::CAP_PROP_POS_MSEC, offsetMs);
+    }
+
+  } else {
+    RCLCPP_ERROR(get_logger(), "Failed to open video %s", info.videoFile.c_str());
+  }
+}
 void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time) {
   if (cameraData.videoList_.empty()) {
     RCLCPP_WARN(get_logger(), "Video list for %s is empty.", cameraName.c_str());
@@ -117,58 +141,32 @@ void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraDat
     videoIt = cameraData.videoList_.begin();
   } else {
     for (auto it = cameraData.videoList_.begin(); it != cameraData.videoList_.end(); ++it) {
-      if (it->startTime <= time && time < it->endTime) {
+      if (time < it->endTime) {
         videoIt = it;
         break;
       }
     }
   }
   if (videoIt != cameraData.videoList_.end()) {
-    const auto &videoFile = videoIt->videoFile;
-    const auto &startTime = videoIt->startTime;
-
-    cv::VideoCapture cvVideo;
-    const bool ok = cvVideo.open(videoFile);
-    if (ok) {
-      cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
-                                        static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
-      cameraData.videoStartTime_ = startTime;
-      cameraData.videoStream_ = std::move(cvVideo);
-      RCLCPP_INFO(get_logger(), "Loaded video %s", videoFile.c_str());
-      RCLCPP_INFO(get_logger(), "Resolution=%dx%d, now=%s, start time=%s", cameraData.frameSize.width,
-                  cameraData.frameSize.height, std::format("{:%Y-%m-%d %T}", time).c_str(),
-                  std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
-
-      // Adjust time
-      const int64_t offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(time - startTime).count();
-      if (offsetMs > 0) {
-        RCLCPP_INFO(get_logger(), "Advancing video by %ldms", offsetMs);
-        cameraData.videoStream_->set(cv::CAP_PROP_POS_MSEC, offsetMs);
-      }
-
-    } else {
-      RCLCPP_ERROR(get_logger(), "Failed to open video %s", videoFile.c_str());
-    }
+    cameraData.currentVideo_ = videoIt;
+    openVideo(cameraName, cameraData, *videoIt);
   } else {
     RCLCPP_ERROR(get_logger(), "No video found for camera %s at time %s", cameraName.c_str(),
                  std::format("{}", time).c_str());
   }
 }
-
-auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
-  std::optional<Clock::time_point> bestTime;
-
-  for (const auto &[_, cameraData] : cameras_) {
-    for (const auto &videoInfo : cameraData.videoList_) {
-      if (videoInfo.startTime > replayNow_) {
-        if (!bestTime.has_value() || *bestTime > videoInfo.startTime) {
-          bestTime = videoInfo.startTime;
-        }
-        break;
-      }
-    }
+void VideoLoader::loadNextVideo(const std::string &cameraName, CameraData &cameraData) {
+  if (cameraData.currentVideo_ != cameraData.videoList_.end()) {
+    cameraData.currentVideo_++;
   }
-  return bestTime;
+  if (cameraData.currentVideo_ == cameraData.videoList_.end()) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "No more videos for camera %s.", cameraName.c_str());
+    cameraData.videoStartTime_.reset();
+    cameraData.videoStream_.reset();
+    return;
+  }
+
+  openVideo(cameraName, cameraData, *cameraData.currentVideo_);
 }
 
 void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
@@ -182,18 +180,25 @@ void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   cvVideo >> image;
 }
 
+auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
+  std::optional<Clock::time_point> minTime;
+  for (const auto &[_, cameraData] : cameras_) {
+    if (cameraData.videoStartTime_.has_value()) {
+      if (!minTime.has_value() || *minTime > *cameraData.videoStartTime_) {
+        minTime.emplace(*cameraData.videoStartTime_);
+      }
+    }
+  }
+  return minTime;
+}
+
 void VideoLoader::onTimer() {
   std::optional<Clock::time_point> newReplayTime;
   bool framePublished = false;
 
   for (auto &[cameraName, cameraData] : cameras_) {
     if (!cameraData.videoStream_.has_value()) {
-      // Load video before we start
-      loadVideo(cameraName, cameraData, replayNow_);
-      if (!cameraData.videoStream_.has_value()) {
-        // No video can be loaded for this camera
-        continue;
-      }
+      continue;
     }
 
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
@@ -211,9 +216,7 @@ void VideoLoader::onTimer() {
     if (image.empty()) {
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF", cameraName.c_str());
 
-      cameraData.videoStartTime_.reset();
-      cameraData.videoStream_.reset();
-      loadVideo(cameraName, cameraData, replayNow_);
+      loadNextVideo(cameraName, cameraData);
       loadImage(cameraData, image);
       if (image.empty()) {
         RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
@@ -222,9 +225,6 @@ void VideoLoader::onTimer() {
     if (image.empty()) {
       continue;
     }
-
-    RCLCPP_INFO(get_logger(), "%s: Loading image success at %s", cameraName.c_str(),
-                std::format("{}", replayNow_).c_str());
 
     if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {
       // Calculate replay time based on how much we've advanced in the video
@@ -255,7 +255,6 @@ void VideoLoader::onTimer() {
   }
 
   assert(newReplayTime.has_value());
-  RCLCPP_INFO(get_logger(), "newReplayTime=%s", std::format("{}", *newReplayTime).c_str());
   replayNow_ = *newReplayTime;
 
   static int64_t minutesLastLog = 0;

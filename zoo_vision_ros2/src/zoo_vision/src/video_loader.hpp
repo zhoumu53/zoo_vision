@@ -41,6 +41,7 @@ private:
     std::vector<VideoInfo> videoList_;
 
     cv::Size2i frameSize;
+    std::vector<VideoInfo>::const_iterator currentVideo_;
     std::optional<Clock::time_point> videoStartTime_;
     std::optional<cv::VideoCapture> videoStream_;
     std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
@@ -48,6 +49,9 @@ private:
 
   void loadVideoDatabase(const std::filesystem::path &database, std::span<const std::string> enabledCameras);
   void loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time);
+  void loadNextVideo(const std::string &cameraName, CameraData &cameraData);
+
+  void openVideo(const std::string &cameraName, CameraData &cameraData, const VideoInfo &info);
 
   std::optional<Clock::time_point> findNextValidReplayTime() const;
 
