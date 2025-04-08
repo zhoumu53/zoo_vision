@@ -1,0 +1,58 @@
+// This file is part of zoo_vision.
+//
+// zoo_vision is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+//
+// zoo_vision is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+// A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with
+// zoo_vision. If not, see <https://www.gnu.org/licenses/>.
+#pragma once
+
+#include "zoo_vision/types.hpp"
+
+#include <ATen/Tensor.h>
+#include <Eigen/Dense>
+
+#include <span>
+
+namespace zoo {
+
+using TKeyframeIndex = uint32_t;
+
+class KeyframeStore {
+public:
+  constexpr static uint32_t MAX_KEYFRAME_COUNT = 40;
+  constexpr static uint32_t EMBEDDING_FLAT_COUNT =
+      197 * 768; // ViT Embedding shape from huggingface google/vit-base-patch16-224
+
+  explicit KeyframeStore();
+
+  std::optional<TKeyframeIndex> maybeAddKeyframe(const at::Tensor &image_u8, const at::Tensor &embedding);
+
+private:
+  constexpr static uint32_t MOSAIC_ROW_COUNT = 5;
+  constexpr static uint32_t MOSAIC_COL_COUNT = 8;
+  constexpr static int IMAGE_SIZE = 224;
+  using TSimilaritiesVector = Eigen::Vector<float32_t, MAX_KEYFRAME_COUNT>;
+
+  void replaceKeyframe(TKeyframeIndex replaceIdx, const at::Tensor &image_u8, const at::Tensor &embedding,
+                       const at::Tensor &embeddingsNorm, const TSimilaritiesVector &newSimilarities);
+  void findMostSimilarKeyframe();
+
+  at::Tensor mosaicImage_;
+
+  uint32_t keyframeCount_ = 0;
+  at::Tensor keyframeEmbeddings_;     // [MAX_KEYFRAME_COUNT, EMBEDDING_FLAT_COUNT]
+  at::Tensor keyframeEmbeddingNorms_; // [MAX_KEYFRAME_COUNT]
+
+  Eigen::MatrixXf similarities_;
+  float32_t mostSimilarScore_ = 1;            // Start with maximum similarity case we don't have keyframes
+  TKeyframeIndex mostSimilarKeyframeIdx_ = 0; // Start by replacing the first (non-existent) keyframe
+};
+
+} // namespace zoo

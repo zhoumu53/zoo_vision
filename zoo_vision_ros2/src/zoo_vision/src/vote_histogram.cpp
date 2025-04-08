@@ -25,7 +25,7 @@ void VoteHistogram::clear() {
     count = 0;
   }
 }
-void VoteHistogram::addVote(int classId) {
+void VoteHistogram::addVote(TClassId classId) {
   // if (classId >= votes_.size()) {
   //   throw std::runtime_error("Class outside of histogram range");
   // }
@@ -34,6 +34,7 @@ void VoteHistogram::addVote(int classId) {
   // }
   votes_[classId] += 1;
 }
+void VoteHistogram::removeVote(TClassId classId) { votes_[classId] -= 1; }
 
 std::span<const float32_t> VoteHistogram::getVotes() const { return votes_; }
 

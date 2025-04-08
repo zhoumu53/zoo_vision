@@ -90,69 +90,21 @@ float calculateWeight(const std::span<const int> identities, const Eigen::Matrix
   }
 }
 
-std::vector<int> selectOptimalIdentities(const at::Tensor &probabilities, const Eigen::MatrixXf &prior) {
-  const size_t trackCount = probabilities.size(0);
-  const size_t identityCount = probabilities.size(1);
-
-  // Iterate over all permutations
-  const size_t optimTrackCount = std::min(trackCount, identityCount);
-  std::vector<uint8_t> bitmask(optimTrackCount, 1);
-  bitmask.resize(identityCount, 0);
-
-  float bestProb = -std::numeric_limits<float>::infinity();
-  std::vector<int> bestIdentities(optimTrackCount);
-
-  std::vector<int> permIdentities(optimTrackCount);
-  // print integers and permute bitmask
-  do {
-    int j = 0;
-    for (size_t i = 0; i < bitmask.size(); ++i) // [0..N-1] integers
-    {
-      if (bitmask[i]) {
-        permIdentities[j] = static_cast<int>(i);
-        j += 1;
-      }
-    }
-
-    // Iterate over all permutations of the selected identities
-    do {
-      const float weight = calculateWeight(permIdentities, prior);
-      if (weight == 0.0f) {
-        continue;
-      }
-      float prob = 0;
-      for (size_t k = 0; k < optimTrackCount; ++k) {
-        prob += probabilities[k][permIdentities[k]].item<float>();
-      }
-
-      // Remember best
-      if (prob > bestProb) {
-        bestProb = prob;
-        bestIdentities = permIdentities;
-      }
-    } while (std::next_permutation(permIdentities.begin(), permIdentities.end()));
-
-  } while (std::prev_permutation(bitmask.begin(), bitmask.end()));
-
-  // TODO: fix this
-  bestIdentities.resize(trackCount, 0);
+TIdentity selectOptimalIdentities(const at::Tensor &probabilities) {
+  assert(probabilities.dim() == 1);
 
   constexpr float32_t CONFIDENCE_THRESHOLD = 0.4f;
 
   // Force to max probability
-  const auto &[maxProbs, maxIndices] = probabilities.topk(/*k*/ 2, /*dim*/ 1);
-  for (int i = 0; i < static_cast<int>(trackCount); ++i) {
-    const float32_t top1 = maxProbs.index({i, 0}).item<float32_t>();
-    const float32_t top2 = maxProbs.index({i, 1}).item<float32_t>();
-    if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
-      const int maxIdx = maxIndices.index({i, 0}).item<int>();
-      bestIdentities[i] = maxIdx + 1; // Add one because class 0 is invalid
-    } else {
-      bestIdentities[i] = 0;
-    }
+  const auto &[maxProbs, maxIndices] = probabilities.topk(/*k*/ 2, /*dim*/ 0);
+  const float32_t top1 = maxProbs[0].item<float32_t>();
+  const float32_t top2 = maxProbs[1].item<float32_t>();
+  if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
+    const int maxIdx = maxIndices[0].item<int>();
+    return maxIdx + 1; // Add one because class 0 is invalid
+  } else {
+    return INVALID_IDENTITY;
   }
-
-  return bestIdentities;
 }
 
 void Identifier::callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &patches,
@@ -200,12 +152,11 @@ void Identifier::callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &
   }
 }
 
-void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches,
-                             const std::span<const TrackId> trackIds) {
+void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &trackData) {
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
-  assert(patches.device().is_cuda());
+  assert(patch_f32.device().is_cuda());
 
   // Send to model
   at::Tensor identityLogitsGpu;
@@ -213,82 +164,67 @@ void Identifier::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor 
   at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
   eventBeforeNetwork.record();
   if (isStatefulModel_) {
-    callStatefulModel(identityLogitsGpu, patches, trackIds);
+    // callStatefulModel(identityLogitsGpu, patches, trackIds);
+    throw std::runtime_error("Stateful doesn't make sense any more");
   } else {
-    callStatelessModel(identityLogitsGpu, patches);
+    callStatelessModel(identityLogitsGpu, patch_f32.unsqueeze(0));
+    identityLogitsGpu = identityLogitsGpu.squeeze(0); // Remove dummy batch dimension
   }
   eventAfterNetwork.record();
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
-  at::Tensor identityLogits = identityLogitsGpu.to(at::kCPU); // Dims: [track, identity]
+  at::Tensor identityLogits = identityLogitsGpu.to(at::kCPU); // Dims: [identity]
   at::Tensor identityProbs =
-      torch::nn::functional::softmax(identityLogits, torch::nn::functional::SoftmaxFuncOptions(1));
-
-  const size_t identityCount = identityLogits.size(1);
-  Eigen::MatrixXf prior;
-  prior.resize(identityCount, identityCount);
-  prior.setConstant(1.0f);
-  for (size_t i = 0; i < identityCount; ++i) {
-    prior(i, i) = 0; // Same identity cannot happen twice
-  }
-  constexpr int kChandra = 0;
-  constexpr int kIndi = 1;
-  constexpr int kFahra = 2;
-  constexpr int kPanang = 3;
-
-  prior(kChandra, kFahra) = 0;
-  prior(kChandra, kPanang) = 0;
-  prior(kIndi, kFahra) = 0;
-  prior(kIndi, kPanang) = 0;
-  prior(kFahra, kChandra) = 0;
-  prior(kFahra, kIndi) = 0;
-  prior(kPanang, kChandra) = 0;
-  prior(kPanang, kIndi) = 0;
+      torch::nn::functional::softmax(identityLogits, torch::nn::functional::SoftmaxFuncOptions(/*dim*/ 0));
+  const size_t identityCount = identityLogits.size(0);
 
   // TODO: sort tracks based on score
-  std::vector<int> identities = selectOptimalIdentities(identityProbs, prior);
-  assert(identities.size() == trackIds.size());
+  const TIdentity identity = selectOptimalIdentities(identityProbs);
 
+  trackData.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
+
+  // Did we have a keyframe at this index before?
+  if (keyframeIndex < trackData.identityByKeyframe.size()) {
+    // Remove vote from old keyframe
+    const TIdentity oldIdentity = trackData.identityByKeyframe[keyframeIndex];
+    if (oldIdentity != INVALID_IDENTITY) {
+      trackData.identityHistogram.removeVote(oldIdentity - 1);
+    }
+    trackData.identityByKeyframe[keyframeIndex] = identity;
+  } else {
+    // No, resize so we can remember from now on
+    assert(keyframeIndex == trackData.identityByKeyframe.size());
+    trackData.identityByKeyframe.push_back(identity);
+  }
   // Add to histogram
-  constexpr int INVALID_ID = 0;
-  constexpr uint64_t VOTE_COUNT_THRESHOLD = 10;
-  for (auto [trackId, identity] : std::views::zip(trackIds, identities)) {
-    auto &trackData = trackMatcher_.getTrackData(trackId);
-    trackData.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
-
-    if (identity == INVALID_ID) {
-      continue;
-    }
-
-    if (uint32_t(identity) >= identityCount + 1) {
-      throw std::runtime_error(std::format("identity out of range, {} >= {}", identity, identityCount));
-    }
-
+  if (identity != INVALID_IDENTITY) {
     trackData.identityHistogram.addVote(identity - 1);
+  }
 
-    auto [bestIdentity, bestVoteCount] = trackData.identityHistogram.getHighest();
-    if (bestVoteCount < VOTE_COUNT_THRESHOLD) {
-      identity = INVALID_ID;
-    } else {
-      identity = bestIdentity + 1;
+  // constexpr auto MS_TO_NS = 1e6f;
+  // cudaStreamSynchronize(cudaStream_);
+  // addRosKeyValue(msg.timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
+}
+
+void Identifier::addDetectionInfo(zoo_msgs::msg::Detection &msg, int detectionIndex, const TrackData &track) const {
+  const size_t identityCount = track.identityHistogram.getVotes().size();
+
+  TIdentity histogramIdentity = INVALID_IDENTITY;
+  {
+    auto [bestIdentity, bestVoteCount] = track.identityHistogram.getHighest();
+    constexpr uint64_t VOTE_COUNT_THRESHOLD = 10;
+    if (bestVoteCount >= VOTE_COUNT_THRESHOLD) {
+      histogramIdentity = bestIdentity + 1;
     }
   }
 
   // Forward logits for display
-  for (const auto i : std::views::iota(0u, trackIds.size())) {
-    auto &track = trackMatcher_.getTrackData(trackIds[i]);
-
-    msg.identity_ids[i] = identities[i];
-    for (const auto j : std::views::iota(0u, identityCount)) {
-      // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
-      // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
-      msg.identity_logits[i * identityCount + j] = track.identityHistogram.getVotes()[j];
-    }
+  msg.identity_ids[detectionIndex] = histogramIdentity;
+  for (const auto j : std::views::iota(0u, identityCount)) {
+    // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
+    // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
+    msg.identity_logits[detectionIndex * identityCount + j] = track.identityHistogram.getVotes()[j];
   }
-
-  constexpr auto MS_TO_NS = 1e6f;
-  cudaStreamSynchronize(cudaStream_);
-  addRosKeyValue(msg.timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 
 } // namespace zoo

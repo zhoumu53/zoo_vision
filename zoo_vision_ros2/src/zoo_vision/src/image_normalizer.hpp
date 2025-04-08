@@ -1,3 +1,4 @@
+
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -13,31 +14,29 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/utils.hpp"
+#include "zoo_vision/types.hpp"
 
-#include <cstdint>
-#include <span>
-#include <vector>
+#include <ATen/Tensor.h>
+#include <ATen/TensorOperators.h>
 
 namespace zoo {
 
-class VoteHistogram {
+class ImageNormalizer {
 public:
-  using TClassId = uint32_t;
+  explicit ImageNormalizer();
 
-  VoteHistogram();
+  at::Tensor normalize(const at::Tensor &image_u8) const {
+    at::Tensor image_f32 = image_u8.to(at::kFloat);
+    at::Tensor imageNorm = (image_f32 - preprocessMean_) / preprocessStd_;
+    return imageNorm;
+  }
 
-  void resize(size_t classCount) { votes_.resize(classCount, 0); }
-
-  void clear();
-  void addVote(TClassId classId);
-  void removeVote(TClassId classId);
-  std::span<const float32_t> getVotes() const;
-
-  std::pair<TClassId, float32_t> getHighest() const;
+  at::Tensor denormalize(const at::Tensor &image_f32) const {
+    return (image_f32 * preprocessStd_ + preprocessMean_).to(at::kByte);
+  }
 
 private:
-  float32_t dampeningFactor_;
-  std::vector<float32_t> votes_;
+  at::Tensor preprocessMean_;
+  at::Tensor preprocessStd_;
 };
 } // namespace zoo

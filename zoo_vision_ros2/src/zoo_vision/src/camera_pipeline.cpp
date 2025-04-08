@@ -46,19 +46,6 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   readConfig(getConfig());
 
-  {
-    auto preprocessMeanData =
-        std::array<float32_t, 3>({0.48500001430511475f, 0.4560000002384186f, 0.4059999883174896f});
-    auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672f, 0.2239999920129776f, 0.22499999403953552f});
-
-    preprocessMean_ =
-        (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-            .to(torch::kCUDA);
-    preprocessStd_ =
-        (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-            .to(torch::kCUDA);
-  }
-
   trackMatcher_.onTrackCloseEvent = [this](TrackId id) { this->onTrackClosed(id); };
 
   // Subscribe to receive images from camera
@@ -82,13 +69,6 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 void CameraPipeline::readConfig(const nlohmann::json &config) {
   // Settings
   recordTracks_ = config["record_tracks"].get<bool>();
-}
-
-at::Tensor CameraPipeline::preprocessImage(const at::Tensor &image) {
-  // Convert to float
-  at::Tensor image_f32 = image.to(at::kFloat);
-  at::Tensor imageNorm = (image_f32 - preprocessMean_) / preprocessStd_;
-  return imageNorm;
 }
 
 // std::mutex globalMutex;
@@ -118,7 +98,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
           .permute({2, 0, 1});
 
   const at::Tensor rawImageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat);
-  const at::Tensor imageTensor = preprocessImage(rawImageTensor);
+  const at::Tensor imageTensor = normalizer_.normalize(rawImageTensor);
 
   // Segmentation
   segmenter_.onImage(detectionMsg, imageTensor);
@@ -128,58 +108,73 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
     auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
-    at::Tensor rawPatches;
-    cropper_.extractCrops(rawPatches, rawImageTensor,
+    at::Tensor patches_u8;
+    cropper_.extractCrops(patches_u8, rawImageTensor,
                           {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
-    at::Tensor patches = preprocessImage(rawPatches);
+    at::Tensor patches_f32 = normalizer_.normalize(patches_u8);
 
     // Save track images
     if (recordTracks_) {
-      constexpr int MIN_TRACK_LENGTH = 20;
-      constexpr int SKIP_COUNT = 20;
-      static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
-
-      using Clock = std::chrono::system_clock;
-      using nanoseconds = std::chrono::nanoseconds;
-      using seconds = std::chrono::seconds;
-
-      const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
-      const auto frameTime =
-          std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
-
-      for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
-        TrackData &track = trackMatcher_.getTrackData(trackId);
-        const std::string imgName =
-            std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track.trackLength);
-        const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
-
-        if (track.trackLength <= MIN_TRACK_LENGTH) {
-          continue;
-        }
-        if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
-          continue;
-        }
-
-        if (trackId > 3000) {
-          std::terminate();
-        }
-        const auto patchNorm = (patches[idx] * preprocessStd_ + preprocessMean_) / 255;
-        // The first image makes sure we create the directory
-        // and it is also stored at the root for quick preview
-        if (track.trackLength == MIN_TRACK_LENGTH + 1) {
-          std::filesystem::create_directories(trackDir);
-          saveTensorImage(patchNorm, rootPath / imgName);
-        }
-        saveTensorImage(patchNorm, trackDir / imgName);
-      }
+      recordTracks(imageMsg, trackIds, patches_u8);
     }
 
-    identifier_.onDetection(detectionMsg, patches, trackIds);
-    behaviourer_.onDetection(detectionMsg, patches);
+    const at::Tensor embeddings = embedder_.embed(patches_u8);
+    for (const auto [i, trackId] : std::views::enumerate(trackIds)) {
+      const at::Tensor patch_u8 = patches_u8[i];
+      TrackData &track = trackMatcher_.getTrackData(trackId);
+      const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_u8, embeddings[i]);
+      if (newKeyframeIdx.has_value()) {
+        // New keyframe has been added
+        identifier_.onKeyframe(*newKeyframeIdx, patches_f32[i], track);
+      }
+      identifier_.addDetectionInfo(detectionMsg, i, track);
+    }
+    behaviourer_.onDetection(detectionMsg, patches_f32);
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsgPtr));
+}
+
+void CameraPipeline::recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
+                                  const at::Tensor &patches) {
+  constexpr int MIN_TRACK_LENGTH = 20;
+  constexpr int SKIP_COUNT = 20;
+  static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
+
+  using Clock = std::chrono::system_clock;
+  using nanoseconds = std::chrono::nanoseconds;
+  using seconds = std::chrono::seconds;
+
+  const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
+  const auto frameTime =
+      std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
+
+  for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
+    TrackData &track = trackMatcher_.getTrackData(trackId);
+    const std::string imgName =
+        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track.trackLength);
+    const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
+
+    if (track.trackLength <= MIN_TRACK_LENGTH) {
+      continue;
+    }
+    if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
+      continue;
+    }
+
+    if (trackId > 3000) {
+      std::terminate();
+    }
+
+    // The first image makes sure we create the directory
+    // and it is also stored at the root for quick preview
+    if (track.trackLength == MIN_TRACK_LENGTH + 1) {
+      std::filesystem::create_directories(trackDir);
+      saveTensorImage(patches[idx], rootPath / imgName);
+    }
+    saveTensorImage(patches[idx], trackDir / imgName);
+  }
 }
 
 void CameraPipeline::onTrackClosed(TrackId trackId) {

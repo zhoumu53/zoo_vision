@@ -39,8 +39,8 @@ public:
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
 
-  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches,
-                   const std::span<const TrackId> trackIds);
+  void onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &track);
+  void addDetectionInfo(zoo_msgs::msg::Detection &msg, int detectionIndex, const TrackData &track) const;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }

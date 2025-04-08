@@ -53,6 +53,7 @@ set_target_properties(zoo_vision_rs PROPERTIES
 ####################################
 # zoo_vision package
 add_executable(zoo_vision 
+  src/types.hpp
   src/utils.hpp
   src/utils.cpp
   src/stats.hpp
@@ -62,6 +63,10 @@ add_executable(zoo_vision
   src/json_eigen.cpp
   src/zoo_camera.hpp
   src/zoo_camera.cpp
+  src/image_normalizer.hpp
+  src/image_normalizer.cpp
+  src/image_embedder.hpp
+  src/image_embedder.cpp
   src/video_loader.hpp
   src/video_loader.cpp
   src/segmenter.hpp
@@ -74,6 +79,8 @@ add_executable(zoo_vision
   src/identifier.cpp
   src/behaviourer.hpp
   src/behaviourer.cpp
+  src/keyframe_store.hpp
+  src/keyframe_store.cpp
   src/image_queue.hpp
   src/image_queue.cpp
   src/rerun_forwarder.hpp

@@ -33,6 +33,14 @@ def compile_model(weights_path: Path, output_path: Path) -> None:
     traced_module.save(output_path)
     print(f"Saved to {output_path}")
 
+    if hasattr(model, "vit"):
+        embeddings_output = str(output_path).replace(".ptc", "_embeddings.ptc")
+        traced_embeddings = torch.jit.trace(
+            model.vit.embeddings, [sample_inputs], strict=False
+        )
+        traced_embeddings.save(embeddings_output)
+        print(f"Saved embeddings sub-module to {embeddings_output}")
+
 
 def main() -> None:
     args = parse_args()

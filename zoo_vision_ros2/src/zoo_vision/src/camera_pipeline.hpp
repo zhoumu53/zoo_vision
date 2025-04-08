@@ -18,6 +18,8 @@
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_vision/behaviourer.hpp"
 #include "zoo_vision/identifier.hpp"
+#include "zoo_vision/image_embedder.hpp"
+#include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter.hpp"
 #include "zoo_vision/timings.hpp"
@@ -45,19 +47,22 @@ public:
 
 private:
   at::Tensor preprocessImage(const at::Tensor &image);
+  void recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
+                    const at::Tensor &patches);
+
   std::string cameraName_;
 
   RateSampler rateSampler_;
 
   bool recordTracks_;
 
-  at::Tensor preprocessMean_;
-  at::Tensor preprocessStd_;
+  ImageNormalizer normalizer_;
 
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;
   Segmenter segmenter_;
+  ImageEmbedder embedder_;
   Identifier identifier_;
   Behaviourer behaviourer_;
 

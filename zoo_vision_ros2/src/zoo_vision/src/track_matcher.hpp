@@ -13,7 +13,9 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "vote_histogram.hpp"
+#include "zoo_vision/keyframe_store.hpp"
+#include "zoo_vision/types.hpp"
+#include "zoo_vision/vote_histogram.hpp"
 
 #include <ATen/Tensor.h>
 #include <Eigen/Dense>
@@ -22,12 +24,9 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <vector>
 
 namespace zoo {
-
-using float32_t = float;
-
-using TrackId = uint32_t;
 
 struct TrackData {
   using time_point = std::chrono::system_clock::time_point;
@@ -42,6 +41,8 @@ struct TrackData {
   Eigen::AlignedBox2f box;
   std::optional<at::Tensor> identityState;
 
+  KeyframeStore keyframeStore;
+  std::vector<TIdentity> identityByKeyframe;
   VoteHistogram identityHistogram;
 
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)

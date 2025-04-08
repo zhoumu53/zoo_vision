@@ -1,3 +1,5 @@
+
+
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -13,31 +15,27 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/utils.hpp"
+#include "zoo_vision/types.hpp"
 
-#include <cstdint>
-#include <span>
-#include <vector>
+#include <ATen/Tensor.h>
+#include <ATen/TensorOperators.h>
+#include <torch/script.h>
+
+#include <filesystem>
+#include <nlohmann/json.hpp>
 
 namespace zoo {
 
-class VoteHistogram {
+class ImageEmbedder {
 public:
-  using TClassId = uint32_t;
+  explicit ImageEmbedder();
 
-  VoteHistogram();
+  void readConfig(const nlohmann::json &config);
+  void loadModel(const std::filesystem::path &modelPath);
 
-  void resize(size_t classCount) { votes_.resize(classCount, 0); }
-
-  void clear();
-  void addVote(TClassId classId);
-  void removeVote(TClassId classId);
-  std::span<const float32_t> getVotes() const;
-
-  std::pair<TClassId, float32_t> getHighest() const;
+  at::Tensor embed(const at::Tensor &image_f32);
 
 private:
-  float32_t dampeningFactor_;
-  std::vector<float32_t> votes_;
+  torch::jit::script::Module module_;
 };
 } // namespace zoo

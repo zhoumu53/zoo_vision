@@ -119,7 +119,20 @@
 			"stack": "cpp",
 			"filesystem": "cpp",
 			"*.ipp": "cpp",
-			"slist": "cpp"
+			"slist": "cpp",
+			"*.inc": "cpp",
+			"barrier": "cpp",
+			"coroutine": "cpp",
+			"cuchar": "cpp",
+			"netfwd": "cpp",
+			"rope": "cpp",
+			"latch": "cpp",
+			"scoped_allocator": "cpp",
+			"stacktrace": "cpp",
+			"syncstream": "cpp",
+			"core": "cpp",
+			"numericaldiff": "cpp",
+			"specialfunctions": "cpp"
 		},
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"

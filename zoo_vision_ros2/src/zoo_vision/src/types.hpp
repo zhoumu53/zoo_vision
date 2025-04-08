@@ -13,31 +13,21 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/utils.hpp"
-
 #include <cstdint>
-#include <span>
-#include <vector>
+
+#ifndef NDEBUG
+#define ASSERT_DEBUG(x) assert(x)
+#else
+#define ASSERT_DEBUG(x) ((void)(x))
+#endif
+
+using float32_t = float;
 
 namespace zoo {
 
-class VoteHistogram {
-public:
-  using TClassId = uint32_t;
+using TrackId = uint32_t;
 
-  VoteHistogram();
+using TIdentity = uint32_t;
+constexpr TIdentity INVALID_IDENTITY = TIdentity(0);
 
-  void resize(size_t classCount) { votes_.resize(classCount, 0); }
-
-  void clear();
-  void addVote(TClassId classId);
-  void removeVote(TClassId classId);
-  std::span<const float32_t> getVotes() const;
-
-  std::pair<TClassId, float32_t> getHighest() const;
-
-private:
-  float32_t dampeningFactor_;
-  std::vector<float32_t> votes_;
-};
 } // namespace zoo

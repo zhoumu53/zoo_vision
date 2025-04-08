@@ -13,6 +13,8 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_vision/types.hpp"
+
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/key_value_arrayf.hpp"
@@ -25,14 +27,6 @@
 #include <opencv2/core/mat.hpp>
 
 #include <filesystem>
-
-#ifndef NDEBUG
-#define ASSERT_DEBUG(x) assert(x)
-#else
-#define ASSERT_DEBUG(x) ((void)(x))
-#endif
-
-using float32_t = float;
 
 namespace zoo {
 
