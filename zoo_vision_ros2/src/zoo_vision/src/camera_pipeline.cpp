@@ -195,7 +195,7 @@ void CameraPipeline::onTrackClosed(TrackId trackId) {
     const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
                                                     "03_Fahra",   "04_Panang",  "05_Thai"};
 
-    const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId];
+    const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId + 1];
     const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, trackId);
     std::filesystem::create_directories(newTrackDir);
 
