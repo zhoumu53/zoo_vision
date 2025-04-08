@@ -1,3 +1,5 @@
+
+
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -13,22 +15,27 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include <cstdint>
+#include "zoo_vision/types.hpp"
 
-#ifndef NDEBUG
-#define ASSERT_DEBUG(x) assert(x)
-#else
-#define ASSERT_DEBUG(x) ((void)(x))
-#endif
+#include <ATen/Tensor.h>
+#include <ATen/TensorOperators.h>
+#include <torch/script.h>
 
-using float32_t = float;
+#include <filesystem>
+#include <nlohmann/json.hpp>
 
 namespace zoo {
 
-using TrackId = uint32_t;
+class ImageQualityNet {
+public:
+  explicit ImageQualityNet();
 
-using TClassId = uint32_t;
-using TIdentity = uint32_t;
-constexpr TIdentity INVALID_IDENTITY = TIdentity(0);
+  void readConfig(const nlohmann::json &config);
+  void loadModel(const std::filesystem::path &modelPath);
 
+  std::vector<bool> check(const at::Tensor &images_f32);
+
+private:
+  torch::jit::script::Module module_;
+};
 } // namespace zoo

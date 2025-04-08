@@ -13,7 +13,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/utils.hpp"
+#include "zoo_vision/types.hpp"
 
 #include <cstdint>
 #include <span>
@@ -21,10 +21,14 @@
 
 namespace zoo {
 
+struct VoteHistogramBest {
+  TClassId best;
+  float32_t count;
+  float32_t firstToSecondRatio;
+};
+
 class VoteHistogram {
 public:
-  using TClassId = uint32_t;
-
   VoteHistogram();
 
   void resize(size_t classCount) { votes_.resize(classCount, 0); }
@@ -34,7 +38,7 @@ public:
   void removeVote(TClassId classId);
   std::span<const float32_t> getVotes() const;
 
-  std::pair<TClassId, float32_t> getHighest() const;
+  VoteHistogramBest getHighest() const;
 
 private:
   float32_t dampeningFactor_;

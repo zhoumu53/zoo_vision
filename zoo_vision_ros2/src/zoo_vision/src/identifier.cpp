@@ -211,9 +211,10 @@ void Identifier::addDetectionInfo(zoo_msgs::msg::Detection &msg, int detectionIn
 
   TIdentity histogramIdentity = INVALID_IDENTITY;
   {
-    auto [bestIdentity, bestVoteCount] = track.identityHistogram.getHighest();
-    constexpr uint64_t VOTE_COUNT_THRESHOLD = 10;
-    if (bestVoteCount >= VOTE_COUNT_THRESHOLD) {
+    auto [bestIdentity, bestVoteCount, firstToSecondRatio] = track.identityHistogram.getHighest();
+    constexpr uint64_t VOTE_COUNT_THRESHOLD = 3;
+    constexpr float32_t RATIO_THRESHOLD = 0.65f;
+    if (bestVoteCount >= VOTE_COUNT_THRESHOLD && firstToSecondRatio > RATIO_THRESHOLD) {
       histogramIdentity = bestIdentity + 1;
     }
   }

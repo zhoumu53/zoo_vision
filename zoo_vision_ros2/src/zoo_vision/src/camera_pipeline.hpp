@@ -20,6 +20,7 @@
 #include "zoo_vision/identifier.hpp"
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
+#include "zoo_vision/image_quality.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter.hpp"
 #include "zoo_vision/timings.hpp"
@@ -63,6 +64,7 @@ private:
   PatchCropper cropper_;
   Segmenter segmenter_;
   ImageEmbedder embedder_;
+  ImageQualityNet quality_;
   Identifier identifier_;
   Behaviourer behaviourer_;
 

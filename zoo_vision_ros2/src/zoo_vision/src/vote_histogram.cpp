@@ -14,11 +14,28 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/vote_histogram.hpp"
+#include <algorithm>
+#include <numeric> // std::iota
 #include <ranges>
 
 namespace zoo {
+namespace {
 
-VoteHistogram::VoteHistogram() : dampeningFactor_{0.99f} {}
+template <typename T> std::vector<size_t> sort_indexes(const std::vector<T> &v) {
+
+  // initialize original index locations
+  std::vector<size_t> idx(v.size());
+  std::iota(idx.begin(), idx.end(), 0);
+
+  std::stable_sort(idx.begin(), idx.end(), [&v](size_t i1, size_t i2) { return v[i1] > v[i2]; });
+
+  return idx;
+}
+
+} // namespace
+VoteHistogram::VoteHistogram() : dampeningFactor_{0.99f} {
+  resize(5); // TODO: get this from somewhere meaningful
+}
 
 void VoteHistogram::clear() {
   for (auto &count : votes_) {
@@ -38,16 +55,17 @@ void VoteHistogram::removeVote(TClassId classId) { votes_[classId] -= 1; }
 
 std::span<const float32_t> VoteHistogram::getVotes() const { return votes_; }
 
-auto VoteHistogram::getHighest() const -> std::pair<TClassId, float32_t> {
-  float32_t bestCount = 0;
-  TClassId bestClass = 0;
-  for (auto [classId, count] : std::views::enumerate(votes_)) {
-    if (count > bestCount) {
-      bestCount = count;
-      bestClass = classId;
-    }
+VoteHistogramBest VoteHistogram::getHighest() const {
+  if (votes_.size() < 2) {
+    return {0, 0.0f, 0.0f};
   }
-  return {bestClass, bestCount};
+  const auto sortedIndices = sort_indexes(votes_);
+  const TClassId bestClass = sortedIndices[0];
+  const TClassId secondClass = sortedIndices[1];
+  const float32_t bestScore = votes_[bestClass];
+  const float32_t secondScore = votes_[secondClass];
+
+  return {bestClass, bestScore, bestScore / (bestScore + secondScore)};
 }
 
 } // namespace zoo

@@ -118,15 +118,23 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
       recordTracks(imageMsg, trackIds, patches_u8);
     }
 
+    std::vector<bool> patchQualities = quality_.check(patches_f32);
+
     const at::Tensor embeddings = embedder_.embed(patches_u8);
     for (const auto [i, trackId] : std::views::enumerate(trackIds)) {
-      const at::Tensor patch_u8 = patches_u8[i];
       TrackData &track = trackMatcher_.getTrackData(trackId);
-      const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_u8, embeddings[i]);
-      if (newKeyframeIdx.has_value()) {
-        // New keyframe has been added
-        identifier_.onKeyframe(*newKeyframeIdx, patches_f32[i], track);
+
+      // Is the patch good enough to check for id?
+      if (patchQualities[i]) {
+        // Yes, try to add a new keyframe
+        const at::Tensor patch_u8 = patches_u8[i];
+        const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_u8, embeddings[i]);
+        if (newKeyframeIdx.has_value()) {
+          // New keyframe has been added, execute id net
+          identifier_.onKeyframe(*newKeyframeIdx, patches_f32[i], track);
+        }
       }
+      // Add id info in any case so it shows up in the ui
       identifier_.addDetectionInfo(detectionMsg, i, track);
     }
     behaviourer_.onDetection(detectionMsg, patches_f32);
@@ -186,7 +194,7 @@ void CameraPipeline::onTrackClosed(TrackId trackId) {
       return;
     }
 
-    const auto [identityId, voteCount] = data.identityHistogram.getHighest();
+    const auto [identityId, voteCount, ratio] = data.identityHistogram.getHighest();
     const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
                                                     "03_Fahra",   "04_Panang",  "05_Thai"};
 

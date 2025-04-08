@@ -67,6 +67,8 @@ add_executable(zoo_vision
   src/image_normalizer.cpp
   src/image_embedder.hpp
   src/image_embedder.cpp
+  src/image_quality.hpp
+  src/image_quality.cpp
   src/video_loader.hpp
   src/video_loader.cpp
   src/segmenter.hpp
