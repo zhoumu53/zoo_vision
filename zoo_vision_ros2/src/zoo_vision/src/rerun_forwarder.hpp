@@ -16,6 +16,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
+#include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/image_queue.hpp"
 
 #include <image_transport/image_transport.hpp>
@@ -31,11 +32,13 @@ public:
   void onImage(const std::string &cameraTopic, const std::string &channel,
                std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
   void onDetection(const std::string &cameraTopic, const std::string &channel, const zoo_msgs::msg::Detection &msg);
+  void onTrackState(const std::string &cameraTopic, const std::string &channel, const zoo_msgs::msg::TrackState &msg);
 
   std::unordered_map<std::string, std::unique_ptr<ImageQueue>> imageCaches_;
 
   void *rsHandle_;
   std::vector<std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>>> imageSubscribers_;
   std::vector<std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Detection>>> detectionSubscribers_;
+  std::vector<std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::TrackState>>> trackStateSubscribers_;
 };
 } // namespace zoo

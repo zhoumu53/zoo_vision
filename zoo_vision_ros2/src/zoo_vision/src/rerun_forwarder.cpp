@@ -14,6 +14,7 @@
 
 #include "zoo_vision/rerun_forwarder.hpp"
 
+#include "zoo_msgs/msg/track_state.h"
 #include "zoo_vision/utils.hpp"
 
 #include <cv_bridge/cv_bridge.hpp>
@@ -33,6 +34,8 @@ using json = nlohmann::json;
 using CImage12m = zoo_msgs::msg::Image12m;
 using CImage4m = zoo_msgs::msg::Image4m;
 using CDetection = zoo_msgs::msg::Detection;
+using CTrackState = zoo_msgs::msg::TrackState;
+
 extern "C" {
 extern uint32_t zoo_rs_init(void **zoo_rs_handle, char const *const data_path, char const *const config_json);
 extern uint32_t zoo_rs_test_me(void *zoo_rs_handle, char const *const frame_id);
@@ -40,6 +43,8 @@ extern uint32_t zoo_rs_image_callback(void *zoo_rs_handle, char const *const cam
                                       const CImage12m *);
 extern uint32_t zoo_rs_detection_callback(void *zoo_rs_handle, char const *const cameraTopic, char const *const channel,
                                           const CDetection *);
+extern uint32_t zoo_rs_track_state_callback(void *zoo_rs_handle, char const *const cameraTopic,
+                                            char const *const channel, const CTrackState *);
 }
 namespace zoo {
 
@@ -104,6 +109,18 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
     detectionSubscribers_.push_back(std::move(subscription));
   };
 
+  auto subscribeTrackState = [&](std::string cameraName, std::string channel) {
+    auto subscription = rclcpp::create_subscription<zoo_msgs::msg::TrackState>(
+        *this, channel, qos,
+        [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::TrackState> msg) {
+          this->onTrackState(cameraName, channel, *msg);
+        },
+        subOptions);
+    RCLCPP_INFO(get_logger(), "Subscribed to track state results %s (loans=%d)", channel.c_str(),
+                subscription->can_loan_messages());
+    trackStateSubscribers_.push_back(std::move(subscription));
+  };
+
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
     imageCaches_.emplace(name, std::make_unique<ImageQueue>());
@@ -111,6 +128,7 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
     // subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
     subscribeImage(name, name + "/image"); // Full-res image from camera
     subscribeDetection(name, name + "/detections");
+    subscribeTrackState(name, name + "/track_state");
   }
 
   zoo_rs_init(&rsHandle_, getDataPath().c_str(), getConfig().dump().c_str());
@@ -146,6 +164,14 @@ void RerunForwarder::onDetection(const std::string &cameraName, const std::strin
 
   // Forward to rerun
   zoo_rs_detection_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
+}
+
+void RerunForwarder::onTrackState(const std::string &cameraName, const std::string &channel,
+                                  const zoo_msgs::msg::TrackState &msg) {
+  nvtx3::scoped_range nvtxLabel{"rerun_track_state"};
+
+  // Forward to rerun
+  zoo_rs_track_state_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
 }
 
 } // namespace zoo

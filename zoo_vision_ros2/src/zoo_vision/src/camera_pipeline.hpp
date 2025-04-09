@@ -16,6 +16,7 @@
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
+#include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/behaviourer.hpp"
 #include "zoo_vision/identifier.hpp"
 #include "zoo_vision/image_embedder.hpp"
@@ -50,7 +51,7 @@ private:
   at::Tensor preprocessImage(const at::Tensor &image);
   void recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
                     const at::Tensor &patches);
-
+  void publishTrackState(const zoo_msgs::msg::Header& imageHeader, const TrackData &track);
   std::string cameraName_;
 
   RateSampler rateSampler_;
@@ -70,5 +71,6 @@ private:
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
+  std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;
 };
 } // namespace zoo

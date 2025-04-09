@@ -550,38 +550,6 @@ impl RerunForwarder {
             &rr_image.with_draw_order(1.0).with_opacity(0.15),
         )?;
 
-        // Log identity logits
-        {
-            // Map logits buffer
-            let identity_count = 5;
-            let all_logits: ArrayBase<ndarray::ViewRepr<&f32>, Ix2> = unsafe {
-                ArrayView::from_shape_ptr(
-                    (detection_count, identity_count),
-                    msg.identity_logits.as_ptr(),
-                )
-            };
-            for idx in 0..detection_count {
-                for id0 in 0..identity_count {
-                    let id = id0 as u32 + 1;
-
-                    // let logits = all_logits.slice(s![idx, ..]);
-                    let rr_path = format!(
-                        "/identity_logits/T{}{}/id_{}",
-                        self.camera_short_from_name[camera],
-                        msg.track_ids[idx],
-                        self.identity_from_id[&id].0
-                    );
-
-                    recording.log(
-                        rr_path.as_str(),
-                        &rerun::SeriesLine::new()
-                            .with_color(rerun_from_hex(&self.identity_from_id[&id].1.color)),
-                    )?;
-                    recording.log(rr_path, &rerun::Scalar::new(all_logits[[idx, id0]] as f64))?;
-                }
-            }
-        }
-
         // Log processing times
         for (key, value_hz) in cast_ros_key_value_arrayf(&msg.timings.items_hz) {
             let rr_path = format!("/processing_times/hz/{}", key);
@@ -600,6 +568,72 @@ impl RerunForwarder {
         }
 
         recording.flush_async();
+
+        Ok(())
+    }
+
+    pub fn track_state_callback(
+        &mut self,
+        camera: &str,
+        _channel: &str,
+        msg: &zoo_msgs::msg::rmw::TrackState,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let ros_time_ns = nanosec_from_ros(&msg.header.stamp);
+        let recording = self.get_recording();
+
+        // Set rerun time
+        recording.set_time_nanos("ros_time", ros_time_ns as i64);
+
+        // Root path for the track
+        let track_name = format!("T{}{}", self.camera_short_from_name[camera], msg.track_id);
+        let root_path = format!("/tracks/{}", track_name);
+
+        // Log keyframe mosaic
+        {
+            let msg_data_slice = msg.keyframe_mosaic.data.as_slice();
+            let image = image::ImageBuffer::<image::Rgb<u8>, &[u8]>::from_raw(
+                msg.keyframe_mosaic.width,
+                msg.keyframe_mosaic.height,
+                msg_data_slice,
+            )
+            .unwrap();
+
+            assert!(
+                (msg.keyframe_mosaic.width * msg.keyframe_mosaic.height * 3) as usize
+                    <= msg_data_slice.len(),
+                "width={}, height={}, len={}",
+                msg.keyframe_mosaic.width,
+                msg.keyframe_mosaic.height,
+                msg_data_slice.len()
+            );
+            // Compress image
+            let mut jpg_data = Cursor::new(Vec::new());
+            image.write_to(&mut jpg_data, image::ImageFormat::Jpeg)?;
+
+            let rr_image = rerun::EncodedImage::from_file_contents(jpg_data.into_inner())
+                .with_media_type("image/jpeg");
+
+            recording.log(
+                format!("{}/keyframes", root_path),
+                &rr_image.with_draw_order(-1.0),
+            )?;
+        }
+
+        // Log votes
+        {
+            for (id_valid, votes) in msg.identity_votes.iter().enumerate() {
+                let id = id_valid as u32 + 1;
+                let (identity_name, identity_info) = &self.identity_from_id[&id];
+                // let logits = all_logits.slice(s![idx, ..]);
+                let rr_path = format!("{}/votes/id_{}", root_path, identity_name);
+
+                recording.log(
+                    rr_path.as_str(),
+                    &rerun::SeriesLine::new().with_color(rerun_from_hex(&identity_info.color)),
+                )?;
+                recording.log(rr_path, &rerun::Scalar::new(*votes as f64))?;
+            }
+        }
 
         Ok(())
     }

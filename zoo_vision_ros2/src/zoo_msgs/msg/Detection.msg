@@ -10,7 +10,6 @@ uint32 detection_count
 
 uint32[15] track_ids                    # size=MAX_DETECTION_COUNT
 uint32[15] identity_ids                 # size=MAX_DETECTION_COUNT
-float32[75] identity_logits             # size=MAX_DETECTION_COUNT*INDIVIDUAL_COUNT
 
 uint32[15] behaviour_ids                 # size=MAX_DETECTION_COUNT
 float32[75] behaviour_logits             # size=MAX_DETECTION_COUNT*INDIVIDUAL_COUNT

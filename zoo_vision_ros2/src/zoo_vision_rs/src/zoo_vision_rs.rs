@@ -109,3 +109,30 @@ pub extern "C" fn zoo_rs_detection_callback(
         }
     }
 }
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn zoo_rs_track_state_callback(
+    p_client: *mut RerunForwarder,
+    p_camera: *const c_char,
+    p_channel: *const c_char,
+    msg: *const zoo_msgs::msg::rmw::TrackState,
+) -> u32 {
+    if p_client.is_null() {
+        return ZOO_VISION_ERROR;
+    }
+
+    let client: &mut RerunForwarder = unsafe { &mut *p_client };
+    let camera = unsafe { CStr::from_ptr(p_camera) }.to_str().unwrap();
+    let channel = unsafe { CStr::from_ptr(p_channel) }.to_str().unwrap();
+    let msg = unsafe { &*msg };
+
+    let result = client.track_state_callback(camera, channel, msg);
+    match result {
+        Ok(_) => ZOO_VISION_OK,
+        Err(e) => {
+            println!("zoo_vision_rs: Error logging!\nError: {}", e);
+            ZOO_VISION_ERROR
+        }
+    }
+}

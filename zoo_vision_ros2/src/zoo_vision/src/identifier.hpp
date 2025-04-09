@@ -40,7 +40,6 @@ public:
   void loadModel(const std::filesystem::path &modelPath);
 
   void onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &track);
-  void addDetectionInfo(zoo_msgs::msg::Detection &msg, int detectionIndex, const TrackData &track) const;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }

@@ -26,18 +26,14 @@ using TKeyframeIndex = uint32_t;
 
 class KeyframeStore {
 public:
-  constexpr static uint32_t MAX_KEYFRAME_COUNT = 40;
-  constexpr static uint32_t EMBEDDING_FLAT_COUNT =
-      197 * 768; // ViT Embedding shape from huggingface google/vit-base-patch16-224
+constexpr static uint32_t MAX_KEYFRAME_COUNT = 40;
 
   explicit KeyframeStore();
 
+  at::Tensor getMosaicImage() const { return mosaicImage_; }
   std::optional<TKeyframeIndex> maybeAddKeyframe(const at::Tensor &image_u8, const at::Tensor &embedding);
 
 private:
-  constexpr static uint32_t MOSAIC_ROW_COUNT = 5;
-  constexpr static uint32_t MOSAIC_COL_COUNT = 8;
-  constexpr static int IMAGE_SIZE = 224;
   using TSimilaritiesVector = Eigen::Vector<float32_t, MAX_KEYFRAME_COUNT>;
 
   void replaceKeyframe(TKeyframeIndex replaceIdx, const at::Tensor &image_u8, const at::Tensor &embedding,

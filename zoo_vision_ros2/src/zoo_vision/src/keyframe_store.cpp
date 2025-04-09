@@ -19,11 +19,22 @@
 #include <ATen/ops/dot.h>
 #include <ATen/ops/linalg_norm.h>
 
+#include <cmath>
 #include <ranges>
 
 using namespace at::indexing;
 
 namespace zoo {
+
+namespace {
+constexpr static uint32_t EMBEDDING_FLAT_COUNT =
+    197 * 768; // ViT Embedding shape from huggingface google/vit-base-patch16-224
+constexpr static uint32_t MOSAIC_ROW_COUNT = 4;
+constexpr static uint32_t MOSAIC_COL_COUNT =
+    static_cast<uint32_t>(std::ceil(static_cast<float32_t>(KeyframeStore::MAX_KEYFRAME_COUNT) / MOSAIC_ROW_COUNT));
+constexpr static int IMAGE_SIZE = 224;
+} // namespace
+
 KeyframeStore::KeyframeStore()
     : mosaicImage_{at::zeros({3, IMAGE_SIZE * MOSAIC_ROW_COUNT, IMAGE_SIZE * MOSAIC_COL_COUNT},
                              at::TensorOptions(at::kCPU).dtype(at::kByte))},
@@ -111,8 +122,8 @@ void KeyframeStore::replaceKeyframe(TKeyframeIndex replaceIdx, const at::Tensor 
   findMostSimilarKeyframe();
 
   // Update mosaic
-  const uint32_t row = replaceIdx / MOSAIC_COL_COUNT;
-  const uint32_t col = replaceIdx % MOSAIC_COL_COUNT;
+  const uint32_t row = replaceIdx % MOSAIC_ROW_COUNT;
+  const uint32_t col = replaceIdx / MOSAIC_ROW_COUNT;
   at::Tensor mosaicCell = mosaicImage_.index({Slice(), Slice(row * IMAGE_SIZE, row * IMAGE_SIZE + IMAGE_SIZE),
                                               Slice(col * IMAGE_SIZE, col * IMAGE_SIZE + IMAGE_SIZE)});
   mosaicCell.copy_(image_u8);

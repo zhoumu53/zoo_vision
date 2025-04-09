@@ -44,6 +44,7 @@ struct TrackData {
   KeyframeStore keyframeStore;
   std::vector<TIdentity> identityByKeyframe;
   VoteHistogram identityHistogram;
+  TIdentity selectedIdentity = INVALID_IDENTITY;
 
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
       : id{id_}, startTime{startTime_}, lastObservation{startTime_}, skippedObservationCount{0}, trackLength{1},

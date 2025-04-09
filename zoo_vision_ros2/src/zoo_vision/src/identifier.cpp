@@ -152,7 +152,7 @@ void Identifier::callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &
   }
 }
 
-void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &trackData) {
+void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &track) {
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
@@ -181,51 +181,40 @@ void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &p
   // TODO: sort tracks based on score
   const TIdentity identity = selectOptimalIdentities(identityProbs);
 
-  trackData.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
+  track.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
 
   // Did we have a keyframe at this index before?
-  if (keyframeIndex < trackData.identityByKeyframe.size()) {
+  if (keyframeIndex < track.identityByKeyframe.size()) {
     // Remove vote from old keyframe
-    const TIdentity oldIdentity = trackData.identityByKeyframe[keyframeIndex];
+    const TIdentity oldIdentity = track.identityByKeyframe[keyframeIndex];
     if (oldIdentity != INVALID_IDENTITY) {
-      trackData.identityHistogram.removeVote(oldIdentity - 1);
+      track.identityHistogram.removeVote(oldIdentity - 1);
     }
-    trackData.identityByKeyframe[keyframeIndex] = identity;
+    track.identityByKeyframe[keyframeIndex] = identity;
   } else {
     // No, resize so we can remember from now on
-    assert(keyframeIndex == trackData.identityByKeyframe.size());
-    trackData.identityByKeyframe.push_back(identity);
+    assert(keyframeIndex == track.identityByKeyframe.size());
+    track.identityByKeyframe.push_back(identity);
   }
   // Add to histogram
   if (identity != INVALID_IDENTITY) {
-    trackData.identityHistogram.addVote(identity - 1);
+    track.identityHistogram.addVote(identity - 1);
   }
 
-  // constexpr auto MS_TO_NS = 1e6f;
-  // cudaStreamSynchronize(cudaStream_);
-  // addRosKeyValue(msg.timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
-}
-
-void Identifier::addDetectionInfo(zoo_msgs::msg::Detection &msg, int detectionIndex, const TrackData &track) const {
-  const size_t identityCount = track.identityHistogram.getVotes().size();
-
-  TIdentity histogramIdentity = INVALID_IDENTITY;
+  // Store selected identity in track data
+  track.selectedIdentity = INVALID_IDENTITY;
   {
     auto [bestIdentity, bestVoteCount, firstToSecondRatio] = track.identityHistogram.getHighest();
     constexpr uint64_t VOTE_COUNT_THRESHOLD = 3;
     constexpr float32_t RATIO_THRESHOLD = 0.65f;
     if (bestVoteCount >= VOTE_COUNT_THRESHOLD && firstToSecondRatio > RATIO_THRESHOLD) {
-      histogramIdentity = bestIdentity + 1;
+      track.selectedIdentity = bestIdentity + 1;
     }
   }
 
-  // Forward logits for display
-  msg.identity_ids[detectionIndex] = histogramIdentity;
-  for (const auto j : std::views::iota(0u, identityCount)) {
-    // msg.identity_logits[i * identityCount + j] = identityLogits[i][j].item<float>();
-    // msg.identity_logits[i * identityCount + j] = identityProbs[i][j].item<float>();
-    msg.identity_logits[detectionIndex * identityCount + j] = track.identityHistogram.getVotes()[j];
-  }
+  // constexpr auto MS_TO_NS = 1e6f;
+  // cudaStreamSynchronize(cudaStream_);
+  // addRosKeyValue(msg.timings.items_ns, "id_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 
 } // namespace zoo

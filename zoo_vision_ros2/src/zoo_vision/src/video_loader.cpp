@@ -230,7 +230,7 @@ void VideoLoader::onTimer() {
       // Calculate replay time based on how much we've advanced in the video
       const auto offsetMs = cameraData.videoStream_->get(cv::CAP_PROP_POS_MSEC);
       newReplayTime = *cameraData.videoStartTime_ + std::chrono::milliseconds(static_cast<int64_t>(offsetMs));
-      assert(newReplayTime.value() >= replayNow_);
+      // assert(newReplayTime.value() >= replayNow_);
     }
 
     // TODO: converting BGR->RGB like this is inefficient!

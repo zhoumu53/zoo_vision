@@ -64,6 +64,10 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   const auto detectionsTopic = cameraName_ + "/detections";
   detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
   RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
+
+  const auto trackStateTopic = cameraName_ + "/track_state";
+  trackStatePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::TrackState>(*this, trackStateTopic, 10);
+  RCLCPP_INFO(get_logger(), "Publishing track state at %s", trackStateTopic.c_str());
 }
 
 void CameraPipeline::readConfig(const nlohmann::json &config) {
@@ -132,16 +136,47 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
         if (newKeyframeIdx.has_value()) {
           // New keyframe has been added, execute id net
           identifier_.onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
+
+          publishTrackState(imageMsg.header, track);
         }
       }
-      // Add id info in any case so it shows up in the ui
-      identifier_.addDetectionInfo(detectionMsg, i, track);
+
+      // Show selected identity on the detection
+      detectionMsg.identity_ids[i] = track.selectedIdentity;
     }
     behaviourer_.onDetection(detectionMsg, patchesNorm);
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsgPtr));
+}
+
+void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TrackData &track) {
+  auto msgPtr = std::make_unique<zoo_msgs::msg::TrackState>();
+  auto &msg = *msgPtr;
+  msg.header = imageHeader;
+  msg.track_id = track.id;
+
+  const at::Tensor mosaicTensor = track.keyframeStore.getMosaicImage().permute({1, 2, 0});
+  const uint32_t height = mosaicTensor.size(0);
+  const uint32_t width = mosaicTensor.size(1);
+  const uint32_t channels = 3;
+  msg.keyframe_mosaic.height = height;
+  msg.keyframe_mosaic.width = width;
+  msg.keyframe_mosaic.step = width * channels;
+  // msg.keyframe_mosaic.encoding = sensor_msgs::image_encodings::RGB8;
+  // msg.keyframe_mosaic.data.resize(height * msg.keyframe_mosaic.step);
+
+  at::Tensor msgImage =
+      at::from_blob(msg.keyframe_mosaic.data.data(), {height, width, channels}, at::TensorOptions().dtype(at::kByte));
+  msgImage.copy_(mosaicTensor);
+
+  msg.selected_identity = track.selectedIdentity;
+  for (const auto [idx, votes] : std::views::enumerate(track.identityHistogram.getVotes())) {
+    msg.identity_votes[idx] = votes;
+  }
+
+  trackStatePublisher_->publish(std::move(msgPtr));
 }
 
 void CameraPipeline::recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,

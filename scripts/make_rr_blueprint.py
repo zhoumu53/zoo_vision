@@ -9,28 +9,29 @@ def make_blueprint():
         "zag_elp_cam_019",
     ]
 
-    camera_grid = rrb.Grid(
-        grid_columns=2,
-        contents=[
-            rrb.Spatial2DView(
-                origin=f"/cameras/{camera}",
-                visual_bounds=rrb.VisualBounds2D(
-                    # Hard-coded camera count
-                    # x_range=[0, 2],
-                    # y_range=[0, 1],
-                ),
-            )
-            for camera in cameras
-        ],
-    )
-
     my_blueprint = rrb.Blueprint(
         rrb.Vertical(
+            row_shares=[1, 1],
             contents=[
                 rrb.Horizontal(
                     column_shares=[2, 1],
                     contents=[
-                        camera_grid,
+                        # Camera grid
+                        rrb.Grid(
+                            grid_columns=2,
+                            contents=[
+                                rrb.Spatial2DView(
+                                    origin=f"/cameras/{camera}",
+                                    visual_bounds=rrb.VisualBounds2D(
+                                        # Hard-coded camera count
+                                        # x_range=[0, 2],
+                                        # y_range=[0, 1],
+                                    ),
+                                )
+                                for camera in cameras
+                            ],
+                        ),
+                        # Map view
                         rrb.Spatial2DView(
                             origin="/world",
                             visual_bounds=rrb.VisualBounds2D(
@@ -45,42 +46,35 @@ def make_blueprint():
                     ],
                 ),
                 rrb.Horizontal(
-                    column_shares=[1, 3, 3, 3, 3],
+                    column_shares=[1, 12],
                     contents=[
                         rrb.TimeSeriesView(
                             name="Frequency (Hz)",
                             origin="/processing_times/hz",
                             # axis_y=rrb.ScalarAxis(range=(0, 20), zoom_lock=False),
                         ),
-                        # rrb.TimeSeriesView(
-                        #     name="Processing times (msec)",
-                        #     origin="/processing_times/msec",
-                        #     # axis_y=rrb.ScalarAxis(range=(0, 200), zoom_lock=False),
-                        # ),
-                        rrb.TimeSeriesView(
-                            name="Logits Ta1",
-                            origin="/identity_logits",
-                            contents="/identity_logits/Ta1/**",
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Logits Tb1",
-                            origin="/identity_logits",
-                            contents="/identity_logits/Tb1/**",
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Logits Tc1",
-                            origin="/identity_logits",
-                            contents="/identity_logits/Tc1/**",
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Logits Td1",
-                            origin="/identity_logits",
-                            contents="/identity_logits/Td1/**",
+                        rrb.Grid(
+                            grid_columns=4,
+                            row_shares=[1, 2],
+                            contents=[
+                                rrb.TimeSeriesView(
+                                    name=f"Track T{c}",
+                                    origin="/tracks",
+                                    contents=f"/tracks/T{c}1/votes/**",
+                                )
+                                for c in "abcd"
+                            ]
+                            + [
+                                rrb.Spatial2DView(
+                                    name=f"Keyframes T{c}",
+                                    origin=f"/tracks/T{c}1/keyframes",
+                                )
+                                for c in "abcd"
+                            ],
                         ),
                     ],
                 ),
             ],
-            row_shares=[0.8, 0.2],
         ),
         collapse_panels=False,
     )
