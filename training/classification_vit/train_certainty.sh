@@ -1,7 +1,10 @@
 python training/classification_vit/train_classification.py \
     --model_name_or_path google/vit-base-patch16-224 \
     --dataset_name certainty_good_bad \
-    --train_dir /home/dherrera/data/elephants/certainty/v1 \
+    --train_dir /home/dherrera/data/elephants/identity/dataset/id3 \
+    --train_dir /home/dherrera/data/elephants/identity/dataset/v1/train_curated \
+    --train_dir_bad /home/dherrera/data/elephants/certainty/v1/00_bad/terrible \
+    --train_dir_bad /home/dherrera/data/elephants/certainty/v1/00_bad/TracksApr03 \
     --train_val_split 0.2 \
     --freeze_layers vit \
     --remove_unused_columns False \

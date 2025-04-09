@@ -68,23 +68,25 @@ def pil_loader(path: str):
         return im.convert("RGB")
 
 
-def get_certainty_good_bad_dict(dir: str):
+def get_certainty_good_bad_dict(dirs_good: list[str], dirs_bad: list[str]):
     from pathlib import Path
     import PIL.Image
 
-    path = Path(dir)
-    class_names = [str(f.relative_to(path)) for f in path.glob("*") if f.is_dir()]
+    class_names = ["00_bad", "01_good"]
     valid_suffixes = [".jpg", ".png"]
 
     samples = {"image": [], "label": []}
-    for class_idx, class_name in enumerate(class_names):
-        images = [
-            str(f)
-            for f in (path / class_name).glob("**/*")
-            if f.suffix in valid_suffixes
-        ]
-        samples["image"].extend(images)
-        samples["label"].extend([class_idx] * len(images))
+    for class_idx, dir_list in enumerate([dirs_bad, dirs_good]):
+        class_name = class_names[class_idx]
+        for dir in dir_list:
+            images = [
+                str(f) for f in Path(dir).glob("**/*") if f.suffix in valid_suffixes
+            ]
+            print(
+                f"Searching for images of class {class_name} in {dir}: {len(images)} found"
+            )
+            samples["image"].extend(images)
+            samples["label"].extend([class_idx] * len(images))
 
     ds = datasets.Dataset.from_dict(
         samples,
@@ -121,6 +123,13 @@ class DataTrainingArguments:
     train_dir: Optional[list[str]] = field(
         default=None,
         metadata={"help": "A folder containing the training data.", "nargs": "*"},
+    )
+    train_dir_bad: Optional[list[str]] = field(
+        default=None,
+        metadata={
+            "help": "A folder containing the training data for 'bad' quality. Only applies if dataset_name==certainty_good_bad.",
+            "nargs": "*",
+        },
     )
     validation_dir: Optional[list[str]] = field(
         default=None,
@@ -316,11 +325,8 @@ def main():
     if data_args.dataset_name is not None:
         if data_args.dataset_name == "certainty_good_bad":
             ds_dict = {}
-            ds_dict["train"] = datasets.concatenate_datasets(
-                [
-                    get_certainty_good_bad_dict(train_dir)
-                    for train_dir in data_args.train_dir
-                ]
+            ds_dict["train"] = get_certainty_good_bad_dict(
+                dirs_good=data_args.train_dir, dirs_bad=data_args.train_dir_bad
             )
 
             dataset = datasets.dataset_dict.DatasetDict(ds_dict)
@@ -405,6 +411,8 @@ def main():
         split = dataset["train"].train_test_split(data_args.train_val_split)
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
+    if len(dataset["train"]) == 0:
+        raise RuntimeError("Training dataset is empty")
     print(
         f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
     )

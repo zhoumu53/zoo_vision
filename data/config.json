@@ -68,7 +68,7 @@
     "score_threshold": 0.9,
     "segmentation": "../models/segmentation/mask2former/freeze_encoder_q100/config.ptc",
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
-    "quality": "../models/certainty/vit/freeze_vit_v1/config.ptc",
+    "quality": "../models/certainty/vit/freeze_vit_v2/config.ptc",
     "identity": "../models/identity/vit/all/config.ptc",
     "behaviour": "../models/sleep/vit/mix/config.ptc"
   },
