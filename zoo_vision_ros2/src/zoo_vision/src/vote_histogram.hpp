@@ -34,8 +34,8 @@ public:
   void resize(size_t classCount) { votes_.resize(classCount, 0); }
 
   void clear();
-  void addVote(TClassId classId);
-  void removeVote(TClassId classId);
+  void addVote(TClassId classId, float32_t weight);
+  void removeVote(TClassId classId, float32_t weight);
   std::span<const float32_t> getVotes() const;
 
   VoteHistogramBest getHighest() const;

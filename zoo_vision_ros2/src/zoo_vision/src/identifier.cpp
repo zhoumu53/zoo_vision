@@ -179,26 +179,26 @@ void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &p
   const size_t identityCount = identityLogits.size(0);
 
   // TODO: sort tracks based on score
-  const TIdentity identity = selectOptimalIdentities(identityProbs);
+  // const TIdentity identity = selectOptimalIdentities(identityProbs);
 
   track.identityHistogram.resize(identityCount); // TODO: initialize histogram with size
 
   // Did we have a keyframe at this index before?
-  if (keyframeIndex < track.identityByKeyframe.size()) {
+  if (keyframeIndex < track.identityProbsByKeyframe.size()) {
     // Remove vote from old keyframe
-    const TIdentity oldIdentity = track.identityByKeyframe[keyframeIndex];
-    if (oldIdentity != INVALID_IDENTITY) {
-      track.identityHistogram.removeVote(oldIdentity - 1);
+    at::Tensor &oldIdentityProbs = track.identityProbsByKeyframe[keyframeIndex];
+    for (const auto id : std::views::iota(0uz, identityCount)) {
+      track.identityHistogram.removeVote(id, oldIdentityProbs[id].item<float32_t>());
     }
-    track.identityByKeyframe[keyframeIndex] = identity;
+    oldIdentityProbs = identityProbs;
   } else {
     // No, resize so we can remember from now on
-    assert(keyframeIndex == track.identityByKeyframe.size());
-    track.identityByKeyframe.push_back(identity);
+    assert(keyframeIndex == track.identityProbsByKeyframe.size());
+    track.identityProbsByKeyframe.push_back(identityProbs);
   }
   // Add to histogram
-  if (identity != INVALID_IDENTITY) {
-    track.identityHistogram.addVote(identity - 1);
+  for (const auto id : std::views::iota(0uz, identityCount)) {
+    track.identityHistogram.addVote(id, identityProbs[id].item<float32_t>());
   }
 
   // Store selected identity in track data

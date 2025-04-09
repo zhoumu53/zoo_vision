@@ -42,16 +42,16 @@ void VoteHistogram::clear() {
     count = 0;
   }
 }
-void VoteHistogram::addVote(TClassId classId) {
+void VoteHistogram::addVote(TClassId classId, float32_t weight) {
   // if (classId >= votes_.size()) {
   //   throw std::runtime_error("Class outside of histogram range");
   // }
   // for (auto &count : votes_) {
   //   count *= dampeningFactor_;
   // }
-  votes_[classId] += 1;
+  votes_[classId] += weight;
 }
-void VoteHistogram::removeVote(TClassId classId) { votes_[classId] -= 1; }
+void VoteHistogram::removeVote(TClassId classId, float32_t weight) { votes_[classId] -= weight; }
 
 std::span<const float32_t> VoteHistogram::getVotes() const { return votes_; }
 

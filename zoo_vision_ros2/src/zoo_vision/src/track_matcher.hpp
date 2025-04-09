@@ -42,7 +42,7 @@ struct TrackData {
   std::optional<at::Tensor> identityState;
 
   KeyframeStore keyframeStore;
-  std::vector<TIdentity> identityByKeyframe;
+  std::vector<at::Tensor> identityProbsByKeyframe;
   VoteHistogram identityHistogram;
   TIdentity selectedIdentity = INVALID_IDENTITY;
 
