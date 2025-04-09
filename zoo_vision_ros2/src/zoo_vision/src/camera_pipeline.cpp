@@ -97,47 +97,47 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  const at::Tensor rawImageTensor = imageTensorCPU.to(at::kCUDA).to(at::kFloat);
-  const at::Tensor imageTensor = normalizer_.normalize(rawImageTensor);
+  const at::Tensor imageTensor_f32 = imageTensorCPU.to(at::kCUDA, /*non_blocking*/ true).to(at::kFloat);
+  const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
   // Segmentation
-  segmenter_.onImage(detectionMsg, imageTensor);
+  segmenter_.onImage(detectionMsg, imageNorm);
 
   // Identification
   if (detectionMsg.detection_count > 0) {
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
     auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
-    at::Tensor patches_u8;
-    cropper_.extractCrops(patches_u8, rawImageTensor,
+    at::Tensor patches_f32;
+    cropper_.extractCrops(patches_f32, imageTensor_f32,
                           {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
-    at::Tensor patches_f32 = normalizer_.normalize(patches_u8);
+    at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
 
     // Save track images
     if (recordTracks_) {
-      recordTracks(imageMsg, trackIds, patches_u8);
+      recordTracks(imageMsg, trackIds, patches_f32.to(at::kByte));
     }
 
-    std::vector<bool> patchQualities = quality_.check(patches_f32);
+    std::vector<bool> patchQualities = quality_.check(patchesNorm);
 
-    const at::Tensor embeddings = embedder_.embed(patches_u8);
+    const at::Tensor embeddings = embedder_.embed(patchesNorm);
     for (const auto [i, trackId] : std::views::enumerate(trackIds)) {
       TrackData &track = trackMatcher_.getTrackData(trackId);
 
       // Is the patch good enough to check for id?
       if (patchQualities[i]) {
         // Yes, try to add a new keyframe
-        const at::Tensor patch_u8 = patches_u8[i];
-        const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_u8, embeddings[i]);
+        const at::Tensor patch_f32 = patches_f32[i];
+        const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_f32, embeddings[i]);
         if (newKeyframeIdx.has_value()) {
           // New keyframe has been added, execute id net
-          identifier_.onKeyframe(*newKeyframeIdx, patches_f32[i], track);
+          identifier_.onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
         }
       }
       // Add id info in any case so it shows up in the ui
       identifier_.addDetectionInfo(detectionMsg, i, track);
     }
-    behaviourer_.onDetection(detectionMsg, patches_f32);
+    behaviourer_.onDetection(detectionMsg, patchesNorm);
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");

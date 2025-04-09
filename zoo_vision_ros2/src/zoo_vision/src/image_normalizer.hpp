@@ -25,8 +25,8 @@ class ImageNormalizer {
 public:
   explicit ImageNormalizer();
 
-  at::Tensor normalize(const at::Tensor &image_u8) const {
-    at::Tensor image_f32 = image_u8.to(at::kFloat);
+  at::Tensor normalize(const at::Tensor &image) const {
+    at::Tensor image_f32 = (image.dtype() == at::kFloat) ? image : image.to(at::kFloat);
     at::Tensor imageNorm = (image_f32 - preprocessMean_) / preprocessStd_;
     return imageNorm;
   }

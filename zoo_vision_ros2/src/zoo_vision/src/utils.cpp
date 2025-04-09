@@ -124,13 +124,15 @@ nlohmann::json &getConfig() {
 
 void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
   // std::cout << "Recording at " << name << std::endl;
-  const auto region0 = (imgTensor.permute({1, 2, 0}).to(at::kCPU) * 255).toType(at::kByte).contiguous();
-  assert(region0.stride(1) == 3);
-  assert(region0.stride(2) == 1);
-  auto img = cv::Mat(region0.size(0), region0.size(1), CV_8UC3, region0.data_ptr(), region0.stride(0));
-  cv::Mat imgRgb;
-  cv::cvtColor(img, imgRgb, cv::COLOR_RGB2BGR);
-  cv::imwrite(name.c_str(), imgRgb);
+  assert(imgTensor.dtype() == at::kByte);
+  assert(imgTensor.size(0) == 3);
+  const auto img = imgTensor.permute({1, 2, 0}).cpu().contiguous();
+  assert(img.stride(1) == 3);
+  assert(img.stride(2) == 1);
+  auto cvImg = cv::Mat(img.size(0), img.size(1), CV_8UC3, img.data_ptr(), img.stride(0));
+  cv::Mat cvImgBgr;
+  cv::cvtColor(cvImg, cvImgBgr, cv::COLOR_RGB2BGR);
+  cv::imwrite(name.c_str(), cvImgBgr);
 }
 
 cv::Mat1b wrapCvFromTensor1b(const at::Tensor img) {
