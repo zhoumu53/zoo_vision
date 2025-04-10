@@ -26,11 +26,12 @@ using TKeyframeIndex = uint32_t;
 
 class KeyframeStore {
 public:
-constexpr static uint32_t MAX_KEYFRAME_COUNT = 40;
+  constexpr static uint32_t MAX_KEYFRAME_COUNT = 40;
 
   explicit KeyframeStore();
 
-  at::Tensor getMosaicImage() const { return mosaicImage_; }
+  uint32_t getCount() const { return keyframeCount_; }
+  at::Tensor getKeyframeImage(TKeyframeIndex i) const { return keyframeImages_[i]; }
   std::optional<TKeyframeIndex> maybeAddKeyframe(const at::Tensor &image_u8, const at::Tensor &embedding);
 
 private:
@@ -40,7 +41,7 @@ private:
                        const at::Tensor &embeddingsNorm, const TSimilaritiesVector &newSimilarities);
   void findMostSimilarKeyframe();
 
-  at::Tensor mosaicImage_;
+  std::array<at::Tensor, MAX_KEYFRAME_COUNT> keyframeImages_;
 
   uint32_t keyframeCount_ = 0;
   at::Tensor keyframeEmbeddings_;     // [MAX_KEYFRAME_COUNT, EMBEDDING_FLAT_COUNT]

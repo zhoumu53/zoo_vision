@@ -107,6 +107,7 @@ ament_target_dependencies(zoo_vision
   zoo_msgs
 )
 target_link_libraries(zoo_vision 
+  stdc++exp
   Eigen3::Eigen torch
   -Wl,--no-as-needed TorchVision::TorchVision -Wl,--as-needed 
   nlohmann_json::nlohmann_json

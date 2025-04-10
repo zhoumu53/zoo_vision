@@ -588,22 +588,39 @@ impl RerunForwarder {
         let track_name = format!("T{}{}", self.camera_short_from_name[camera], msg.track_id);
         let root_path = format!("/tracks/{}", track_name);
 
-        // Log keyframe mosaic
+        // Log keyframe image
         {
-            let msg_data_slice = msg.keyframe_mosaic.data.as_slice();
+            let keyframe_path = format!("{}/keyframes/k{}", root_path, msg.new_keyframe_index);
+
+            // Log mosaic transform
+            const MOSAIC_ROW_COUNT: u32 = 4;
+            const IMAGE_SIZE: u32 = 224;
+            let row = msg.new_keyframe_index % MOSAIC_ROW_COUNT;
+            let col = msg.new_keyframe_index / MOSAIC_ROW_COUNT;
+            recording.log(
+                keyframe_path.as_str(),
+                &rerun::Transform3D::from_translation([
+                    (col * IMAGE_SIZE) as f32,
+                    (row * IMAGE_SIZE) as f32,
+                    0.0 as f32,
+                ]),
+            )?;
+
+            // Log keyframe image
+            let msg_data_slice = msg.new_keyframe.data.as_slice();
             let image = image::ImageBuffer::<image::Rgb<u8>, &[u8]>::from_raw(
-                msg.keyframe_mosaic.width,
-                msg.keyframe_mosaic.height,
+                msg.new_keyframe.width,
+                msg.new_keyframe.height,
                 msg_data_slice,
             )
             .unwrap();
 
             assert!(
-                (msg.keyframe_mosaic.width * msg.keyframe_mosaic.height * 3) as usize
+                (msg.new_keyframe.width * msg.new_keyframe.height * 3) as usize
                     <= msg_data_slice.len(),
                 "width={}, height={}, len={}",
-                msg.keyframe_mosaic.width,
-                msg.keyframe_mosaic.height,
+                msg.new_keyframe.width,
+                msg.new_keyframe.height,
                 msg_data_slice.len()
             );
             // Compress image
@@ -613,10 +630,7 @@ impl RerunForwarder {
             let rr_image = rerun::EncodedImage::from_file_contents(jpg_data.into_inner())
                 .with_media_type("image/jpeg");
 
-            recording.log(
-                format!("{}/keyframes", root_path),
-                &rr_image.with_draw_order(-1.0),
-            )?;
+            recording.log(keyframe_path, &rr_image.with_draw_order(-1.0))?;
         }
 
         // Log votes

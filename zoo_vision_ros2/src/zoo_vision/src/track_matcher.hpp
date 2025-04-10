@@ -35,11 +35,11 @@ struct TrackData {
   time_point startTime;
 
   time_point lastObservation;
-  int skippedObservationCount;
+  int skippedObservationCount = 0;
 
-  size_t trackLength;
+  size_t trackLength = 1;
   Eigen::AlignedBox2f box;
-  std::optional<at::Tensor> identityState;
+  std::optional<at::Tensor> identityState = std::nullopt;
 
   KeyframeStore keyframeStore;
   std::vector<at::Tensor> identityProbsByKeyframe;
@@ -48,8 +48,7 @@ struct TrackData {
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
-      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, skippedObservationCount{0}, trackLength{1},
-        box{box_}, identityState{std::nullopt} {}
+      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {}
 };
 
 struct TrackUpdateStats {

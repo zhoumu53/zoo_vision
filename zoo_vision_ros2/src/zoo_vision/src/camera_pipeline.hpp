@@ -46,14 +46,16 @@ public:
 
   void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
-  void onTrackClosed(const TrackData &track);
-  void saveImageToImproveDetection(SysTime time, const cv::Mat3b &cvImg);
-  void saveImageToImproveBehaviour(SysTime time, TBehaviour behaviourId, const at::Tensor &img);
+  void saveImageToImproveDetection(const SysTime time, const cv::Mat3b &cvImg);
+  void saveImageToImproveBehaviour(const SysTime time, TBehaviour behaviourId, const at::Tensor &img);
+  void moveTrackImagesToIdentityPath(const TrackData &track);
+  void saveKeyframes(const TrackData &track);
 
 private:
   at::Tensor preprocessImage(const at::Tensor &image);
   void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
-  void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
+  void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
+                         const TrackData &track);
   std::string cameraName_;
 
   RateSampler rateSampler_;

@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <stacktrace>
 #include <string.h>
 
 using namespace std::chrono_literals;
@@ -56,6 +57,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
         try {
           this->onImage(std::move(msg));
         } catch (const std::exception &e) {
+          auto trace = std::stacktrace::current();
+          std::cerr << trace << std::endl;
           RCLCPP_ERROR(this->get_logger(), "Exception:\n%s\nTerminating\n", e.what());
           std::terminate();
         }
@@ -114,13 +117,14 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  {
-    auto trackUpdateStats = trackMatcher_.update(sysTime, boxes, trackIds);
-    if (recordTracks_ && !trackUpdateStats.justMissedTracks.empty()) {
+  auto trackUpdateStats = trackMatcher_.update(sysTime, boxes, trackIds);
+  if (recordTracks_) {
+    if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
     }
     for (const auto &ptrack : trackUpdateStats.closedTracks) {
-      onTrackClosed(*ptrack);
+      saveKeyframes(*ptrack);
+      moveTrackImagesToIdentityPath(*ptrack);
     }
   }
 
@@ -154,7 +158,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
           // New keyframe has been added, execute id net
           identifier_.onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
 
-          publishTrackState(imageMsg.header, track);
+          publishTrackState(imageMsg.header, *newKeyframeIdx, track);
         }
       }
 
@@ -183,25 +187,28 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   detectionPublisher_->publish(std::move(detectionMsgPtr));
 }
 
-void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TrackData &track) {
+void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, TKeyframeIndex newKeyframeIndex,
+                                       const TrackData &track) {
   auto msgPtr = std::make_unique<zoo_msgs::msg::TrackState>();
   auto &msg = *msgPtr;
   msg.header = imageHeader;
   msg.track_id = track.id;
+  msg.new_keyframe_index = newKeyframeIndex;
 
-  const at::Tensor mosaicTensor = track.keyframeStore.getMosaicImage().permute({1, 2, 0});
-  const uint32_t height = mosaicTensor.size(0);
-  const uint32_t width = mosaicTensor.size(1);
+  // Copy image
+  const at::Tensor keyframeImage = track.keyframeStore.getKeyframeImage(newKeyframeIndex).permute({1, 2, 0});
+  const uint32_t height = keyframeImage.size(0);
+  const uint32_t width = keyframeImage.size(1);
   const uint32_t channels = 3;
-  msg.keyframe_mosaic.height = height;
-  msg.keyframe_mosaic.width = width;
-  msg.keyframe_mosaic.step = width * channels;
+  msg.new_keyframe.height = height;
+  msg.new_keyframe.width = width;
+  msg.new_keyframe.step = width * channels;
   // msg.keyframe_mosaic.encoding = sensor_msgs::image_encodings::RGB8;
   // msg.keyframe_mosaic.data.resize(height * msg.keyframe_mosaic.step);
 
   at::Tensor msgImage =
-      at::from_blob(msg.keyframe_mosaic.data.data(), {height, width, channels}, at::TensorOptions().dtype(at::kByte));
-  msgImage.copy_(mosaicTensor);
+      at::from_blob(msg.new_keyframe.data.data(), {height, width, channels}, at::TensorOptions().dtype(at::kByte));
+  msgImage.copy_(keyframeImage);
 
   msg.selected_identity = track.selectedIdentity;
   for (const auto [idx, votes] : std::views::enumerate(track.identityHistogram.getVotes())) {
@@ -217,7 +224,7 @@ void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &
 
   // Make name based on time
   const auto timeSeconds = secondsTimePointFromTimePoint(time);
-  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.png", cameraName_, timeSeconds);
+  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.jpg", cameraName_, timeSeconds);
 
   // Save
   cv::Mat cvImgBgr;
@@ -238,7 +245,7 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
 
   // Make name based on time
   const auto timeSeconds = secondsTimePointFromTimePoint(time);
-  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.png", cameraName_, timeSeconds);
+  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.jpg", cameraName_, timeSeconds);
 
   // Save
   const auto res = saveTensorImage(img, imgName);
@@ -271,7 +278,7 @@ void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint
         rootPath / cameraName_ / std::format("{:%Y-%m-%d}", track.startTime) / std::format("{:06d}", track.id);
 
     const std::string imgName =
-        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, secondsTime, trackId, track.trackLength);
+        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.jpg", cameraName_, secondsTime, trackId, track.trackLength);
 
     // The first image makes sure we create the directory
     if (track.trackLength == MIN_TRACK_LENGTH + 1) {
@@ -280,7 +287,29 @@ void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint
     saveTensorImage(patches[idx], trackDir / imgName);
   }
 }
-void CameraPipeline::onTrackClosed(const TrackData &track) {
+
+void CameraPipeline::saveKeyframes(const TrackData &track) {
+  const auto count = track.keyframeStore.getCount();
+  if (count == 0) {
+    // No need to create directories for dummy tracks
+    return;
+  }
+
+  const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
+                                                  "03_Fahra",   "04_Panang",  "05_Thai"};
+
+  const std::filesystem::path rootPath = rootPathImprove_ / "keyframes" / identityNames[track.selectedIdentity] /
+                                         std::format("{:%Y-%m-%d}", track.startTime);
+  const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
+  std::filesystem::create_directories(trackDir);
+  for (const auto i : std::views::iota(0u, count)) {
+    const auto name = trackDir / std::format("k{}.jpg", i);
+    saveTensorImage(track.keyframeStore.getKeyframeImage(i), name.c_str());
+  }
+}
+
+void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
+
   try {
     const std::filesystem::path rootPath = rootPathImprove_ / "tracks" / std::format("{:%Y-%m-%d}", track.startTime);
     const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
@@ -288,11 +317,10 @@ void CameraPipeline::onTrackClosed(const TrackData &track) {
       return;
     }
 
-    const auto [identityId, voteCount, ratio] = track.identityHistogram.getHighest();
     const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
                                                     "03_Fahra",   "04_Panang",  "05_Thai"};
 
-    const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId + 1];
+    const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[track.selectedIdentity];
     const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, track.id);
     std::filesystem::create_directories(newTrackDir);
 

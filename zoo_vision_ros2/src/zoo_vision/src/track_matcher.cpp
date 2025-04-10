@@ -98,6 +98,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
       outputTrackIds[c] = track.id;
       track.trackLength += 1;
       track.lastObservation = now;
+      track.skippedObservationCount = 0;
       track.box = boxes[c];
 
       inputUsed[c] = true;
@@ -113,13 +114,13 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
   // Drop missed tracks
   for (const auto &[r, it] : std::views::enumerate(trackIts)) {
     if (!trackUsed[r]) {
-      TrackData &data = *it->second;
-      auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - data.lastObservation);
-      if (data.skippedObservationCount == 0) {
+      TrackData &track = *it->second;
+      auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - track.lastObservation);
+      if (track.skippedObservationCount == 0) {
         // Record tracks on the first frame they were missed
-        result.justMissedTracks.push_back(&data);
+        result.justMissedTracks.push_back(&track);
       }
-      data.skippedObservationCount += 1;
+      track.skippedObservationCount += 1;
       if (ellapsedTime > MAX_INACTIVE_DURATION) {
         // Record tracks that are closed
         result.closedTracks.push_back(std::move(it->second));
