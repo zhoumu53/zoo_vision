@@ -46,8 +46,6 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   readConfig(getConfig());
 
-  trackMatcher_.onTrackCloseEvent = [this](TrackId id) { this->onTrackClosed(id); };
-
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
@@ -104,13 +102,30 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   const at::Tensor imageTensor_f32 = imageTensorCPU.to(at::kCUDA, /*non_blocking*/ true).to(at::kFloat);
   const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
+  ///////////////////////////////////////////////////////////////////////////////////////////////
   // Segmentation
-  segmenter_.onImage(detectionMsg, imageNorm);
+  std::vector<Eigen::AlignedBox2f> boxes;
+  segmenter_.onImage(detectionMsg, boxes, imageNorm);
 
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  // Assign track ids
+  auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
+  {
+    rclcpp::Time msgTime(detectionMsg.header.stamp);
+    std::chrono::system_clock::time_point sysTime{std::chrono::nanoseconds{msgTime.nanoseconds()}};
+    auto trackUpdateStats = trackMatcher_.update(sysTime, boxes, trackIds);
+    if (recordTracks_ && !trackUpdateStats.justMissedTracks.empty()) {
+      saveImageToImproveDetection(imageMsg);
+    }
+    for (const auto &ptrack : trackUpdateStats.closedTracks) {
+      onTrackClosed(*ptrack);
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////////////////////////
   // Identification
   if (detectionMsg.detection_count > 0) {
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
-    auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
 
     at::Tensor patches_f32;
     cropper_.extractCrops(patches_f32, imageTensor_f32,
@@ -144,6 +159,8 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
       // Show selected identity on the detection
       detectionMsg.identity_ids[i] = track.selectedIdentity;
     }
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Behaviour
     behaviourer_.onDetection(detectionMsg, patchesNorm);
   }
 
@@ -220,21 +237,46 @@ void CameraPipeline::recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const
   }
 }
 
-void CameraPipeline::onTrackClosed(TrackId trackId) {
+void CameraPipeline::saveImageToImproveDetection(const zoo_msgs::msg::Image12m &imageMsg) {
+  static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/improve_detection";
+  std::filesystem::create_directories(rootPath);
+
+  // Make name based on time
+  using Clock = std::chrono::system_clock;
+  using nanoseconds = std::chrono::nanoseconds;
+  using seconds = std::chrono::seconds;
+
+  const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
+  const auto frameTime =
+      std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
+  const std::filesystem::path imgName = rootPath / std::format("{}_{:%Y%m%d_%H%M%S}.png", cameraName_, frameTime);
+
+  // Save
+  auto cvImg = wrapMat3bFromMsg(imageMsg);
+  cv::Mat cvImgBgr;
+  cv::cvtColor(cvImg, cvImgBgr, cv::COLOR_RGB2BGR);
+  const auto res = cv::imwrite(imgName.c_str(), cvImgBgr);
+  if (res) {
+    RCLCPP_INFO(get_logger(), "Saved image from just missed track: %s", imgName.c_str());
+  } else {
+    RCLCPP_ERROR(get_logger(), "Error saving image from just missed track: %s", imgName.c_str());
+  }
+}
+
+void CameraPipeline::onTrackClosed(const TrackData &track) {
   try {
-    const TrackData &data = trackMatcher_.getTrackData(trackId);
     static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
-    const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
+    const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
     if (!std::filesystem::exists(trackDir)) {
       return;
     }
 
-    const auto [identityId, voteCount, ratio] = data.identityHistogram.getHighest();
+    const auto [identityId, voteCount, ratio] = track.identityHistogram.getHighest();
     const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
                                                     "03_Fahra",   "04_Panang",  "05_Thai"};
 
     const std::filesystem::path idRootDir = rootPath / "identity" / identityNames[identityId + 1];
-    const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, trackId);
+    const std::filesystem::path newTrackDir = idRootDir / std::format("{}_{:06d}", cameraName_, track.id);
     std::filesystem::create_directories(newTrackDir);
 
     for (const auto &file : std::filesystem::directory_iterator(trackDir)) {

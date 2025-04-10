@@ -39,7 +39,8 @@ public:
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor);
+  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
+               const at::Tensor &imageTensor);
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
@@ -68,6 +69,6 @@ private:
   int elephant_label_id_;
   torch::jit::script::Module model_;
 
-  TrackMatcher &trackMatcher_;
+  TrackMatcher &trackMatcher_; // TODO: we're not using this for anything, remove?
 };
 } // namespace zoo

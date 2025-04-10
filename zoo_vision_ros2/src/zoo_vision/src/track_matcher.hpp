@@ -51,27 +51,32 @@ struct TrackData {
         box{box_}, identityState{std::nullopt} {}
 };
 
+struct TrackUpdateStats {
+  std::vector<std::unique_ptr<TrackData>> closedTracks;
+  std::vector<TrackData *> newTracks;
+  std::vector<TrackData *> justMissedTracks;
+};
+
 class TrackMatcher {
 public:
   using Clock = std::chrono::system_clock;
 
   static constexpr TrackId INVALID_TRACK_ID = 0;
-  static constexpr size_t MAX_TRACK_COUNT = 15;
+  static constexpr size_t MAX_TRACK_COUNT = 25;
   static constexpr auto MAX_INACTIVE_DURATION = std::chrono::milliseconds{3000};
 
   TrackMatcher();
 
-  void update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes, std::span<TrackId> outputTrackIds);
+  TrackUpdateStats update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
+                          std::span<TrackId> outputTrackIds);
 
   TrackData &getTrackData(TrackId id);
 
-  std::unordered_map<TrackId, TrackData>::const_iterator begin() const { return tracks_.begin(); }
-  std::unordered_map<TrackId, TrackData>::const_iterator end() const { return tracks_.end(); }
-
-  std::function<void(TrackId)> onTrackCloseEvent = [](TrackId) {};
+  std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator begin() const { return tracks_.begin(); }
+  std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator end() const { return tracks_.end(); }
 
 private:
   TrackId nextTrackId_ = 1;
-  std::unordered_map<TrackId, TrackData> tracks_;
+  std::unordered_map<TrackId, std::unique_ptr<TrackData>> tracks_;
 };
 } // namespace zoo

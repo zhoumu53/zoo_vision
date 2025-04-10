@@ -29,6 +29,7 @@
 
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
+#include <opencv2/core/mat.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
@@ -45,13 +46,14 @@ public:
 
   void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
-  void onTrackClosed(TrackId trackId);
+  void onTrackClosed(const TrackData &track);
+  void saveImageToImproveDetection(const zoo_msgs::msg::Image12m &img);
 
 private:
   at::Tensor preprocessImage(const at::Tensor &image);
   void recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
                     const at::Tensor &patches);
-  void publishTrackState(const zoo_msgs::msg::Header& imageHeader, const TrackData &track);
+  void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
   std::string cameraName_;
 
   RateSampler rateSampler_;

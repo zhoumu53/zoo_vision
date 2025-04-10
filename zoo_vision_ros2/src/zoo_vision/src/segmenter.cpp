@@ -164,7 +164,8 @@ MaskComponentResult getBestMaskComponent(const at::Tensor rawMask) {
   return {bestMask, bestArea, bbox};
 }
 
-void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor &imageTensor) {
+void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
+                        const at::Tensor &imageTensor) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
   // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
@@ -249,7 +250,7 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
   detectionMsg.detection_count = 0;
 
   const auto world_from_world2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
-  std::vector<Eigen::AlignedBox2f> boxes;
+  boxes.clear();
   for (int i = 0; i < modelDetectionCount && detectionMsg.detection_count < MAX_DETECTION_COUNT; ++i) {
     const auto inputIndex = sortedIndices[i].item<int>();
 
@@ -311,14 +312,6 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, const at::Tensor
     worldPositionsMap.col(outputIndex) = worldPosition;
   }
   detectionMsg.masks.sizes[0] = detectionMsg.detection_count;
-
-  auto msgBboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
-  auto msgTrackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-
-  // Assign track ids
-  rclcpp::Time msgTime(detectionMsg.header.stamp);
-  std::chrono::system_clock::time_point sysTime{std::chrono::nanoseconds{msgTime.nanoseconds()}};
-  trackMatcher_.update(sysTime, boxes, msgTrackIds);
 }
 
 } // namespace zoo

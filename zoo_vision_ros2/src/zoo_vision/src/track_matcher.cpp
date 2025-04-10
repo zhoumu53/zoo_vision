@@ -54,13 +54,17 @@ TrackData &TrackMatcher::getTrackData(TrackId id) {
   if (it == tracks_.end()) {
     throw std::runtime_error("Track id not found in track matcher");
   }
-  return it->second;
+  return *it->second;
 }
 
-void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
-                          std::span<TrackId> outputTrackIds) {
-  const size_t inputBoxCount = boxes.size();
-  assert(inputBoxCount <= MAX_TRACK_COUNT);
+TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
+                                      std::span<TrackId> outputTrackIds) {
+  TrackUpdateStats result;
+
+  const size_t inputBoxCount = std::min(boxes.size(), MAX_TRACK_COUNT);
+  if (boxes.size() > MAX_TRACK_COUNT) {
+    std::cerr << "Warning: too many tracks, dropping " << (boxes.size() - MAX_TRACK_COUNT) << " of them." << std::endl;
+  }
 
   // Build a mapping index->track iterator
   std::vector<decltype(tracks_)::iterator> trackIts;
@@ -74,11 +78,10 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
 
   for (const auto &[r, trackIt] : std::views::enumerate(trackIts)) {
     for (const int c : std::views::iota(0uz, inputBoxCount)) {
-      score(r, c) = iou(trackIt->second.box, boxes[c]);
+      const TrackData &track = *trackIt->second;
+      score(r, c) = iou(track.box, boxes[c]);
     }
   }
-
-  // std::cout << "ScoreMat:\n" << score << std::endl;
 
   // Init output to invalids
   std::array<bool, MAX_TRACK_COUNT> inputUsed{false};
@@ -91,7 +94,7 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
     while (argmax.second > 0) {
       const auto [r, c] = argmax.first;
 
-      TrackData &track = trackIts[r]->second;
+      TrackData &track = *trackIts[r]->second;
       outputTrackIds[c] = track.id;
       track.trackLength += 1;
       track.lastObservation = now;
@@ -106,24 +109,24 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
       argmax = eigen_argmax(score);
     }
   }
-  // std::cout << "matchCount=" << matchCount << std::endl;
 
   // Drop missed tracks
   for (const auto &[r, it] : std::views::enumerate(trackIts)) {
     if (!trackUsed[r]) {
-      TrackData &data = it->second;
+      TrackData &data = *it->second;
       auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - data.lastObservation);
+      if (data.skippedObservationCount == 0) {
+        // Record tracks on the first frame they were missed
+        result.justMissedTracks.push_back(&data);
+      }
       data.skippedObservationCount += 1;
       if (ellapsedTime > MAX_INACTIVE_DURATION) {
-        // Raise event that a track has been closed
-        onTrackCloseEvent(it->second.id);
-
-        // Mark as invalid to delete in one go after this loop
-        it->second.id = INVALID_TRACK_ID;
+        // Record tracks that are closed
+        result.closedTracks.push_back(std::move(it->second));
       }
     }
   }
-  std::erase_if(tracks_, [](const std::pair<TrackId, TrackData> &item) { return item.second.id == INVALID_TRACK_ID; });
+  std::erase_if(tracks_, [](const auto &item) { return item.second == nullptr; });
 
   // Create new tracks
   for (const int c : std::views::iota(0uz, inputBoxCount)) {
@@ -134,17 +137,11 @@ void TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedB
     nextTrackId_ += 1;
 
     outputTrackIds[c] = newTrackId;
-    tracks_.insert({newTrackId, TrackData{
-                                    newTrackId,
-                                    now,
-                                    boxes[c],
-                                }});
+    auto it = tracks_.insert({newTrackId, std::make_unique<TrackData>(newTrackId, now, boxes[c])});
+    // Record new tracks
+    result.newTracks.push_back(it.first->second.get());
   }
 
-  // std::cout << "Box count: " << boxes.size() << " centers=";
-  // for (auto [box, id] : std::views::zip(boxes, outputTrackIds)) {
-  //   std::cout << "T" << id << "=(" << box.center().transpose() << "), ";
-  // }
-  // std::cout << std::endl;
+  return result;
 }
 } // namespace zoo
