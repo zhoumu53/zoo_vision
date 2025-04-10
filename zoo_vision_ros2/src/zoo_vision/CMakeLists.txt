@@ -56,6 +56,7 @@ add_executable(zoo_vision
   src/types.hpp
   src/utils.hpp
   src/utils.cpp
+  src/timings.hpp
   src/stats.hpp
   src/stats.cpp
   src/replay_clock.hpp

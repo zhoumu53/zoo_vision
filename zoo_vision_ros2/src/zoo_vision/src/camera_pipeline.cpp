@@ -15,6 +15,7 @@
 #include "zoo_vision/camera_pipeline.hpp"
 
 #include "zoo_vision/json_eigen.hpp"
+#include "zoo_vision/timings.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
@@ -24,7 +25,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
-#include <rclcpp/time.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <torch/torch.h>
 
@@ -43,8 +43,11 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       trackMatcher_{}, segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
-
   readConfig(getConfig());
+
+  // Set up paths to store improvement images
+  rootPathImprove_ = "/media/dherrera/ElephantExternal/elephants/improve";
+  std::filesystem::create_directories(rootPathImprove_);
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
@@ -83,6 +86,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   // }
   // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
   rateSampler_.tick();
+  const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
 
   // Allocate detection message so we can already start putting things here
@@ -111,11 +115,9 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
   {
-    rclcpp::Time msgTime(detectionMsg.header.stamp);
-    std::chrono::system_clock::time_point sysTime{std::chrono::nanoseconds{msgTime.nanoseconds()}};
     auto trackUpdateStats = trackMatcher_.update(sysTime, boxes, trackIds);
     if (recordTracks_ && !trackUpdateStats.justMissedTracks.empty()) {
-      saveImageToImproveDetection(imageMsg);
+      saveImageToImproveDetection(sysTime, img);
     }
     for (const auto &ptrack : trackUpdateStats.closedTracks) {
       onTrackClosed(*ptrack);
@@ -134,7 +136,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 
     // Save track images
     if (recordTracks_) {
-      recordTracks(imageMsg, trackIds, patches_f32.to(at::kByte));
+      recordTracks(sysTime, trackIds, patches_f32.to(at::kByte));
     }
 
     std::vector<bool> patchQualities = quality_.check(patchesNorm);
@@ -162,6 +164,19 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Behaviour
     behaviourer_.onDetection(detectionMsg, patchesNorm);
+    for (const auto [i, trackId, behaviourId] :
+         std::views::zip(std::views::iota(0), trackIds, detectionMsg.behaviour_ids)) {
+      TrackData &track = trackMatcher_.getTrackData(trackId);
+      if (track.selectedBehaviour != INVALID_BEHAVIOUR && track.selectedBehaviour != behaviourId) {
+        // Behaviour changed, save image for network improvement
+        if (recordTracks_) {
+          const at::Tensor patch = patches_f32[i].to(at::kByte);
+          saveImageToImproveBehaviour(sysTime, behaviourId, patch);
+        }
+      }
+      // Remember for the next frame
+      track.selectedBehaviour = behaviourId;
+    }
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
@@ -196,63 +211,15 @@ void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader,
   trackStatePublisher_->publish(std::move(msgPtr));
 }
 
-void CameraPipeline::recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
-                                  const at::Tensor &patches) {
-  constexpr int MIN_TRACK_LENGTH = 20;
-  constexpr int SKIP_COUNT = 20;
-  static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
-
-  using Clock = std::chrono::system_clock;
-  using nanoseconds = std::chrono::nanoseconds;
-  using seconds = std::chrono::seconds;
-
-  const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
-  const auto frameTime =
-      std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
-
-  for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
-    TrackData &track = trackMatcher_.getTrackData(trackId);
-    const std::string imgName =
-        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, frameTime, trackId, track.trackLength);
-    const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", trackId);
-
-    if (track.trackLength <= MIN_TRACK_LENGTH) {
-      continue;
-    }
-    if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
-      continue;
-    }
-
-    if (trackId > 3000) {
-      std::terminate();
-    }
-
-    // The first image makes sure we create the directory
-    // and it is also stored at the root for quick preview
-    if (track.trackLength == MIN_TRACK_LENGTH + 1) {
-      std::filesystem::create_directories(trackDir);
-      saveTensorImage(patches[idx], rootPath / imgName);
-    }
-    saveTensorImage(patches[idx], trackDir / imgName);
-  }
-}
-
-void CameraPipeline::saveImageToImproveDetection(const zoo_msgs::msg::Image12m &imageMsg) {
-  static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/improve_detection";
+void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &cvImg) {
+  const std::filesystem::path rootPath = rootPathImprove_ / "detection" / std::format("{:%Y-%m-%d}", time);
   std::filesystem::create_directories(rootPath);
 
   // Make name based on time
-  using Clock = std::chrono::system_clock;
-  using nanoseconds = std::chrono::nanoseconds;
-  using seconds = std::chrono::seconds;
-
-  const Clock::time_point frameTimeNs{nanoseconds{rclcpp::Time(imageMsg.header.stamp).nanoseconds()}};
-  const auto frameTime =
-      std::chrono::time_point<Clock, seconds>{std::chrono::duration_cast<seconds>(frameTimeNs.time_since_epoch())};
-  const std::filesystem::path imgName = rootPath / std::format("{}_{:%Y%m%d_%H%M%S}.png", cameraName_, frameTime);
+  const auto timeSeconds = secondsTimePointFromTimePoint(time);
+  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.png", cameraName_, timeSeconds);
 
   // Save
-  auto cvImg = wrapMat3bFromMsg(imageMsg);
   cv::Mat cvImgBgr;
   cv::cvtColor(cvImg, cvImgBgr, cv::COLOR_RGB2BGR);
   const auto res = cv::imwrite(imgName.c_str(), cvImgBgr);
@@ -263,9 +230,59 @@ void CameraPipeline::saveImageToImproveDetection(const zoo_msgs::msg::Image12m &
   }
 }
 
+void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behaviourId, const at::Tensor &img) {
+  static std::array<std::string, 4> BEHAVIOUR_NAMES = {"XX_Invalid", "00_Standing", "01_SleepL", "02_SleepR"};
+  std::filesystem::path rootPath =
+      rootPathImprove_ / "behaviour" / BEHAVIOUR_NAMES[behaviourId] / std::format("{:%Y-%m-%d}", time);
+  std::filesystem::create_directories(rootPath);
+
+  // Make name based on time
+  const auto timeSeconds = secondsTimePointFromTimePoint(time);
+  const std::filesystem::path imgName = rootPath / std::format("{}_{:%H%M%S}.png", cameraName_, timeSeconds);
+
+  // Save
+  const auto res = saveTensorImage(img, imgName);
+  if (res) {
+    RCLCPP_INFO(get_logger(), "Saved image from behaviour change: %s", imgName.c_str());
+  } else {
+    RCLCPP_ERROR(get_logger(), "Error saving image from behaviour change: %s", imgName.c_str());
+  }
+}
+
+void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint32_t> trackIds,
+                                  const at::Tensor &patches) {
+  const std::filesystem::path rootPath = rootPathImprove_ / "tracks";
+  constexpr int MIN_TRACK_LENGTH = 20;
+  constexpr int SKIP_COUNT = 20;
+
+  const SecondsTimePoint secondsTime = secondsTimePointFromTimePoint(time);
+
+  for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
+    TrackData &track = trackMatcher_.getTrackData(trackId);
+
+    if (track.trackLength <= MIN_TRACK_LENGTH) {
+      continue;
+    }
+    if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
+      continue;
+    }
+
+    const std::filesystem::path trackDir =
+        rootPath / cameraName_ / std::format("{:%Y-%m-%d}", track.startTime) / std::format("{:06d}", track.id);
+
+    const std::string imgName =
+        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, secondsTime, trackId, track.trackLength);
+
+    // The first image makes sure we create the directory
+    if (track.trackLength == MIN_TRACK_LENGTH + 1) {
+      std::filesystem::create_directories(trackDir);
+    }
+    saveTensorImage(patches[idx], trackDir / imgName);
+  }
+}
 void CameraPipeline::onTrackClosed(const TrackData &track) {
   try {
-    static std::filesystem::path rootPath = "/media/dherrera/ElephantExternal/elephants/tracks/new";
+    const std::filesystem::path rootPath = rootPathImprove_ / "tracks" / std::format("{:%Y-%m-%d}", track.startTime);
     const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
     if (!std::filesystem::exists(trackDir)) {
       return;

@@ -52,7 +52,7 @@ at::Tensor mapRosTensor(zoo_msgs::msg::Tensor3b32m &rosTensor);
 void loadConfig();
 nlohmann::json &getConfig();
 
-void saveTensorImage(const at::Tensor &imgTensor, const std::string &name);
+bool saveTensorImage(const at::Tensor &imgTensor, const std::string &name);
 
 } // namespace zoo
 

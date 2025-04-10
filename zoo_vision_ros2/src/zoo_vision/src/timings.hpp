@@ -15,10 +15,29 @@
 
 #include "zoo_vision/stats.hpp"
 
+#include <builtin_interfaces/msg/detail/time__struct.hpp>
+#include <rclcpp/time.hpp>
+
 #include <chrono>
 #include <numeric>
 
 namespace zoo {
+
+using SysClock = std::chrono::system_clock;
+using SysTime = SysClock::time_point;
+using nanoseconds = std::chrono::nanoseconds;
+using seconds = std::chrono::seconds;
+using SecondsTimePoint = std::chrono::time_point<SysClock, seconds>;
+
+inline SysTime sysTimeFromRos(const builtin_interfaces::msg::Time rosTime) {
+  const SysTime frameTimeNs{nanoseconds{rclcpp::Time(rosTime).nanoseconds()}};
+  return frameTimeNs;
+}
+
+inline SecondsTimePoint secondsTimePointFromTimePoint(const SysTime time) {
+  return std::chrono::time_point<SysClock, seconds>{std::chrono::duration_cast<seconds>(time.time_since_epoch())};
+}
+
 class RateSampler {
 public:
   using clock_t = std::chrono::high_resolution_clock;

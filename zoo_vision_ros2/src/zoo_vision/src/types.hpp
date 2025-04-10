@@ -31,4 +31,7 @@ using TClassId = uint32_t;
 using TIdentity = uint32_t;
 constexpr TIdentity INVALID_IDENTITY = TIdentity(0);
 
+using TBehaviour = uint32_t;
+constexpr TBehaviour INVALID_BEHAVIOUR = TBehaviour(0);
+
 } // namespace zoo

@@ -122,7 +122,7 @@ nlohmann::json &getConfig() {
   return *global_config;
 }
 
-void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
+bool saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
   // std::cout << "Recording at " << name << std::endl;
   assert(imgTensor.dtype() == at::kByte);
   assert(imgTensor.size(0) == 3);
@@ -132,7 +132,7 @@ void saveTensorImage(const at::Tensor &imgTensor, const std::string &name) {
   auto cvImg = cv::Mat(img.size(0), img.size(1), CV_8UC3, img.data_ptr(), img.stride(0));
   cv::Mat cvImgBgr;
   cv::cvtColor(cvImg, cvImgBgr, cv::COLOR_RGB2BGR);
-  cv::imwrite(name.c_str(), cvImgBgr);
+  return cv::imwrite(name.c_str(), cvImgBgr);
 }
 
 cv::Mat1b wrapCvFromTensor1b(const at::Tensor img) {

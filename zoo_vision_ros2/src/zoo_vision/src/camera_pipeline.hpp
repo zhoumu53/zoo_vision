@@ -47,12 +47,12 @@ public:
   void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
 
   void onTrackClosed(const TrackData &track);
-  void saveImageToImproveDetection(const zoo_msgs::msg::Image12m &img);
+  void saveImageToImproveDetection(SysTime time, const cv::Mat3b &cvImg);
+  void saveImageToImproveBehaviour(SysTime time, TBehaviour behaviourId, const at::Tensor &img);
 
 private:
   at::Tensor preprocessImage(const at::Tensor &image);
-  void recordTracks(const zoo_msgs::msg::Image12m &imageMsg, const std::span<const uint32_t> trackIds,
-                    const at::Tensor &patches);
+  void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
   std::string cameraName_;
 
@@ -74,5 +74,7 @@ private:
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;
+
+  std::filesystem::path rootPathImprove_;
 };
 } // namespace zoo
