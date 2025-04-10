@@ -55,3 +55,6 @@ ninja install
 cd ~/git/zoo_vision
 mkdir -p models/sam2
 wget -P models/sam2/ https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
+
+# OCR for video parsing
+sudo apt install of tesseract-ocr

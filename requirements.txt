@@ -45,3 +45,4 @@ pyside6 # UI components
 # Other
 enlighten # Progress bar
 git+https://github.com/XuehaiPan/nvitop.git#egg=nvitop # Check gpu usage in real-time
+pytesseract # To read video time, also requires apt install of tesseract-ocr
