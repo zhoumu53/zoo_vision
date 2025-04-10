@@ -56,20 +56,27 @@ ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
     RCLCPP_INFO(get_logger(), "Loading video from %s", videoUrl_.c_str());
   }
 
+  openCamera();
+
+  publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName_ + "/image", 10);
+  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); });
+}
+
+void ZooCamera::openCamera() {
+  if (cvStream_.isOpened()) {
+    cvStream_.release();
+  }
   bool ok = cvStream_.open(videoUrl_);
   if (ok) {
     frameWidth_ = cvStream_.get(cv::CAP_PROP_FRAME_WIDTH);
     frameHeight_ = cvStream_.get(cv::CAP_PROP_FRAME_HEIGHT);
     RCLCPP_INFO(get_logger(), "Opened video (%dx%d)", frameWidth_, frameHeight_);
   } else {
-    RCLCPP_ERROR(get_logger(), "Failed to open video");
+    RCLCPP_ERROR(get_logger(), "Failed to open camera %s", cameraName_.c_str());
     frameWidth_ = frameHeight_ = 500;
   }
   assert(frameHeight_ * frameWidth_ * 3 <= zoo_msgs::msg::Image12m::DATA_MAX_SIZE);
   frameIndex_ = 0;
-
-  publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName_ + "/image", 10);
-  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); });
 }
 
 void ZooCamera::onTimer() {
@@ -83,29 +90,27 @@ void ZooCamera::onTimer() {
 
   cv::Mat3b image(frameHeight_, frameWidth_, reinterpret_cast<cv::Vec3b *>(&msg->data));
 
-  if (cvStream_.isOpened()) {
-    // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Ptr before %ld", reinterpret_cast<intptr_t>(image.data));
-    cvStream_ >> image;
-    // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Ptr After  %ld", reinterpret_cast<intptr_t>(image.data));
-    if (image.empty()) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video EOF, restarting");
-      cvStream_.set(cv::CAP_PROP_POS_FRAMES, 0);
-      frameIndex_ = 0;
-      cvStream_ >> image;
+  if (!cvStream_.isOpened()) {
+    openCamera();
+    if (!cvStream_.isOpened()) {
+      return;
     }
-
-    // TODO: converting BGR->RGB like this is inefficient!
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
-    setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
-
-    frameIndex_++;
   }
+
+  cvStream_ >> image;
   if (image.empty()) {
-    setMsgString(msg->header.frame_id, "error");
-    image.setTo(cv::Vec3b(0, 0, 255));
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Failed to get image from camera %s", cameraName_.c_str());
+    // Maybe camera disconnected or maybe video ran out, reopen to try and fix it
+    openCamera();
+    return;
   }
 
+  // TODO: converting BGR->RGB like this is inefficient!
+  cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+
+  setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
+
+  frameIndex_++;
   publisher_->publish(std::move(msg));
 }
 
