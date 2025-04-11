@@ -36,8 +36,6 @@
 
 namespace zoo {
 
-using float32_t = float;
-
 class CameraPipeline : public rclcpp::Node {
 public:
   explicit CameraPipeline(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);

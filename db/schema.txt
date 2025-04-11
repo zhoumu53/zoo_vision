@@ -1,0 +1,71 @@
+--------------------------------------------------------------
+-- Config
+CREATE TABLE identities (
+    id              int PRIMARY KEY,
+    name            text NOT NULL
+);
+
+INSERT INTO identities(id, name)
+	VALUES 
+	(0, 'Invalid'),
+	(1, 'Chandra'),
+	(2, 'Indi'),
+	(3, 'Fahra'),
+	(4, 'Panang'),
+	(5, 'Thai');
+
+CREATE TABLE behaviours (
+    id              int PRIMARY KEY,
+    name            text NOT NULL
+);
+
+INSERT INTO behaviours(id, name)
+	VALUES 
+	(0, 'Invalid'),
+	(1, 'Standing'),
+	(2, 'Sleep-Left side'),
+	(3, 'Sleep-Right side');
+
+--------------------------------------------------------------
+-- Real-time inputs
+
+CREATE TABLE tracks (
+    id              int PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    start_time      timestamp NOT NULL,
+    end_time        timestamp NULL,  	-- Only valid after track is closed
+    frame_count     int NULL,			-- Only valid after track is closed
+    identity_id     int NULL REFERENCES identities, -- ...  track is closed
+    identity_probs  real[] NULL 		-- Only valid after track is closed
+);
+
+CREATE TABLE observations (
+    track_id        int NOT NULL REFERENCES tracks,
+    time            timestamp NOT NULL,
+    location        point NOT NULL,
+    behaviour_id	int NOT NULL REFERENCES behaviours,
+    PRIMARY KEY (track_id, time)
+);
+
+--------------------------------------------------------------
+-- Processed
+CREATE TABLE summary_per_behaviour (
+	identity_id     int NOT NULL REFERENCES identities,
+	time            timestamp NOT NULL, -- Aggregated to minutes
+	is_standing     bool NOT NULL,    
+	is_on_left_side bool NULL,
+	PRIMARY KEY (identity_id, time)
+);
+
+CREATE TABLE summary_per_visibility (
+	identity_id     int NOT NULL REFERENCES identities,
+	time            timestamp NOT NULL, -- Aggregated to seconds
+	location        point NULL,
+	PRIMARY KEY (identity_id, time)
+);
+
+--------------------------------------------------------------
+-- Permissions
+CREATE USER zoo_vision PASSWORD 'asdf';
+GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
+GRANT INSERT ON tracks,observations,summary_per_behaviour,summary_per_visibility TO zoo_vision;
+

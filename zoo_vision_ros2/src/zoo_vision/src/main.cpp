@@ -13,6 +13,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/camera_pipeline.hpp"
+#include "zoo_vision/db_forwarder.hpp"
 #include "zoo_vision/rerun_forwarder.hpp"
 #include "zoo_vision/utils.hpp"
 #include "zoo_vision/video_loader.hpp"
@@ -83,6 +84,7 @@ int main(int argc, char *argv[]) {
 
   // Start rerun first so we can connect right away
   nodes.push_back(std::make_shared<RerunForwarder>(options));
+  nodes.push_back(std::make_shared<DbForwarder>(options));
 
   const bool useLiveStream = config["live_stream"].get<bool>();
   if (!useLiveStream) {

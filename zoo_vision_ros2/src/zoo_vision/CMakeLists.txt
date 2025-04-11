@@ -31,7 +31,8 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_Declare(nvtx3 URL https://github.com/NVIDIA/NVTX/archive/refs/tags/v3.1.0.tar.gz)
 FetchContent_Declare(argparse GIT_REPOSITORY https://github.com/p-ranav/argparse.git)
 FetchContent_Declare(date GIT_REPOSITORY https://github.com/HowardHinnant/date.git)
-FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse date)
+FetchContent_Declare(otl URL https://otl.sourceforge.net/otlv4_h2.zip)
+FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse date otl)
 
 # torch
 list(APPEND CMAKE_PREFIX_PATH "${torchrelease_SOURCE_DIR}")
@@ -88,6 +89,8 @@ add_executable(zoo_vision
   src/image_queue.cpp
   src/rerun_forwarder.hpp
   src/rerun_forwarder.cpp
+  src/db_forwarder.hpp
+  src/db_forwarder.cpp
   src/track_matcher.hpp
   src/track_matcher.cpp
   src/camera_pipeline.hpp
@@ -95,7 +98,7 @@ add_executable(zoo_vision
   src/main.cpp
 )
 
-target_include_directories(zoo_vision PUBLIC include)
+target_include_directories(zoo_vision PUBLIC include PRIVATE SYSTEM ${otl_SOURCE_DIR})
 target_compile_features(zoo_vision PUBLIC cxx_std_23)
 
 ament_target_dependencies(zoo_vision
@@ -108,6 +111,7 @@ ament_target_dependencies(zoo_vision
 )
 target_link_libraries(zoo_vision 
   stdc++exp
+  /usr/lib/x86_64-linux-gnu/odbc/psqlodbcw.so
   Eigen3::Eigen torch
   -Wl,--no-as-needed TorchVision::TorchVision -Wl,--as-needed 
   nlohmann_json::nlohmann_json

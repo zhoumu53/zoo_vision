@@ -58,3 +58,6 @@ wget -P models/sam2/ https://dl.fbaipublicfiles.com/segment_anything_2/092824/sa
 
 # OCR for video parsing
 sudo apt install of tesseract-ocr
+
+# Database
+sudo apt install postgresql libpq-dev odbc-postgresql

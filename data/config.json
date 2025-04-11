@@ -63,6 +63,9 @@
       ]
     ]
   },
+  "db": {
+    "logon": "UID=dherrera;Database=zoo_vision;DSN=postgresql"
+  },
   "models": {
     "elephant_label_id": 0,
     "score_threshold": 0.9,
