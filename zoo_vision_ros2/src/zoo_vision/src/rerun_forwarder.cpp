@@ -57,14 +57,14 @@ auto timeFromRosTime(const builtin_interfaces::msg::Time &stamp) {
 RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun_forwarder", options) {
 
   // Load config
-  std::vector<std::string> cameraNames;
-  {
-    std::ifstream f(getDataPath() / "config.json");
-    json data = json::parse(f);
-    for (auto &item : data["cameras"].items()) {
-      cameraNames.push_back(item.key());
+  const std::vector<std::string> cameraNames = [&]() {
+    std::vector<std::string> names;
+    json config = getConfig();
+    for (auto &item : config["cameras"].items()) {
+      names.push_back(item.key());
     }
-  }
+    return names;
+  }();
   {
     std::string cameraNamesDescr;
     {
@@ -83,7 +83,7 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
   rclcpp::SubscriptionOptions subOptions;
   subOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
-  rclcpp::QoS qos{/*history_depth*/ 2};
+  const rclcpp::QoS qos{/*history_depth*/ 2};
 
   auto subscribeImage = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(

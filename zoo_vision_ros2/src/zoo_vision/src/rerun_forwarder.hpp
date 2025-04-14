@@ -13,13 +13,13 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/image_queue.hpp"
 
 #include <image_transport/image_transport.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 #include <deque>
 #include <unordered_map>

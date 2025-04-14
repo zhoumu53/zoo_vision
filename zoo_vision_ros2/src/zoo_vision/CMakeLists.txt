@@ -98,7 +98,8 @@ add_executable(zoo_vision
   src/main.cpp
 )
 
-target_include_directories(zoo_vision PUBLIC include PRIVATE SYSTEM ${otl_SOURCE_DIR})
+target_include_directories(zoo_vision PUBLIC include)
+target_include_directories(zoo_vision SYSTEM PRIVATE ${otl_SOURCE_DIR})
 target_compile_features(zoo_vision PUBLIC cxx_std_23)
 
 ament_target_dependencies(zoo_vision

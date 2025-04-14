@@ -34,8 +34,14 @@ CREATE TABLE tracks (
     start_time      timestamp NOT NULL,
     end_time        timestamp NULL,  	-- Only valid after track is closed
     frame_count     int NULL,			-- Only valid after track is closed
-    identity_id     int NULL REFERENCES identities, -- ...  track is closed
-    identity_probs  real[] NULL 		-- Only valid after track is closed
+    identity_id     int NULL REFERENCES identities  -- ...  track is closed
+);
+
+CREATE TABLE identity_probs (
+    track_id        int NOT NULL REFERENCES tracks,
+    identity_id     int NOT NULL REFERENCES identities,
+    prob            real NOT NULL,
+	PRIMARY KEY (track_id, identity_id)
 );
 
 CREATE TABLE observations (

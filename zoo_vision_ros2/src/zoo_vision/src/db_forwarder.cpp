@@ -27,17 +27,20 @@ void logOtlException(const rclcpp::Logger &logger, const otl_exception &ex) {
                ex.stm_text, ex.sqlstate, ex.var_info);
 }
 
-otl_datetime otlTimestampFromSys(const SysTime time) {
-
+otl_datetime otlTimestampFromSys(const SysTime sysTime) {
   otl_datetime otime{};
-  // otime.year = utc_tm.tm_year;
-  // otime.month = utc_tm.tm_mon;
-  // otime.day = utc_tm.tm_mday;
-  // otime.hour = utc_tm.tm_hour;
-  // otime.minute = utc_tm.tm_min;
-  // otime.second = utc_tm.tm_sec;
-  // otime.fraction = 10;
-  // otime.frac_precision = 3;
+  auto dp = std::chrono::floor<std::chrono::days>(sysTime); // dp is a sys_days, which is a
+  // type alias for a C::time_point
+  auto ymd = std::chrono::year_month_day{dp};
+  std::chrono::hh_mm_ss time{std::chrono::floor<std::chrono::milliseconds>(sysTime - dp)};
+  otime.year = static_cast<int>(ymd.year());
+  otime.month = static_cast<unsigned int>(ymd.month());
+  otime.day = static_cast<unsigned int>(ymd.day());
+  otime.hour = time.hours().count();
+  otime.minute = time.minutes().count();
+  otime.second = time.seconds().count();
+  otime.fraction = time.subseconds().count();
+  otime.frac_precision = 3;
   return otime;
 }
 } // namespace
@@ -53,49 +56,164 @@ DbForwarder::DbForwarder(const rclcpp::NodeOptions &options) : rclcpp::Node("DbF
     db_.rlogon(logonString.c_str(), /*auto_commit*/ 1);
 
     cmdCreateTrack_ = std::make_unique<otl_stream>(
-        /*buffer_size*/ 10, "INSERT INTO tracks(start_time) VALUES(:start_time<timestamp,in>) RETURNING id;", db_,
+        /*buffer_size*/ 1, "INSERT INTO tracks(start_time) VALUES(:start_time<timestamp,in>) RETURNING id;", db_,
         otl_implicit_select);
     cmdInsertObservation_ = std::make_unique<otl_stream>(
         /*buffer_size*/ 10,
         "INSERT INTO observations(track_id, time, location, behaviour_id) VALUES(:track_id<int>, :time<timestamp>, "
-        ":location<text>, :behaviour_id<int>);",
+        "point(:locationx<float>,:locationy<float>), :behaviour_id<int>);",
+        db_);
+    cmdCloseTrack_ = std::make_unique<otl_stream>(
+        /*buffer_size*/ 1,
+        "UPDATE tracks "
+        "  SET end_time=:end_time<timestamp>,"
+        "      frame_count=:frame_count<int>,"
+        "      identity_id=:identity_id<int> "
+        "  WHERE id=:id<int>;",
+        db_);
+    cmdInsertIdentityProb_ = std::make_unique<otl_stream>(
+        /*buffer_size*/ 10,
+        "INSERT INTO identity_probs(track_id, identity_id, prob) "
+        "VALUES (:track_id<int>, :identity_id<int>, :prob<float>)",
         db_);
 
-    insertObservation(4, SysClock::now(), {1.0f, 66.f}, 2);
+  } catch (const otl_exception &ex) {
+    logOtlException(get_logger(), ex);
+    throw;
+  }
 
-    std::terminate();
+  // Subscribe to all cameras
+  const rclcpp::SubscriptionOptions subOptions{};
+  const rclcpp::QoS qos{/*history_depth*/ 2};
+  auto subscribeDetection = [&](int cameraIndex, std::string cameraName) {
+    const std::string channel = cameraName + "/detections";
+    auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Detection>(
+        *this, channel, qos,
+        [this, cameraIndex](std::shared_ptr<const zoo_msgs::msg::Detection> msg) {
+          this->onDetection(cameraIndex, *msg);
+        },
+        subOptions);
+    RCLCPP_INFO(get_logger(), "Subscribed to detection results %s (loans=%d)", channel.c_str(),
+                subscription->can_loan_messages());
+    detectionSubscribers_.push_back(std::move(subscription));
+  };
+  auto subscribeClosedTrack = [&](int cameraIndex, std::string cameraName) {
+    const std::string channel = cameraName + "/track_closed";
+    auto subscription = rclcpp::create_subscription<zoo_msgs::msg::TrackClosed>(
+        *this, channel, qos,
+        [this, cameraIndex](std::shared_ptr<const zoo_msgs::msg::TrackClosed> msg) {
+          this->onTrackClosed(cameraIndex, *msg);
+        },
+        subOptions);
+    trackClosedSubscribers_.push_back(std::move(subscription));
+  };
+
+  const std::vector<std::string> cameraNames = [&]() {
+    std::vector<std::string> names;
+    nlohmann::json config = getConfig();
+    for (auto &item : config["cameras"].items()) {
+      names.push_back(item.key());
+    }
+    return names;
+  }();
+  for (const auto [idx, name] : std::views::enumerate(cameraNames)) {
+    subscribeDetection(idx, name);
+    subscribeClosedTrack(idx, name);
+  }
+}
+
+void DbForwarder::onDetection(int cameraIndex, const zoo_msgs::msg::Detection &msg) {
+  const SysTime msgTime = sysTimeFromRos(msg.header.stamp);
+  const auto locationSpan =
+      std::span(reinterpret_cast<const Eigen::Vector3f *>(msg.world_positions.data()), msg.detection_count);
+  for (const auto idx : std::views::iota(0u, msg.detection_count)) {
+    insertObservation(cameraIndex, msg.track_ids[idx], msgTime, {locationSpan[idx][0], locationSpan[idx][1]},
+                      msg.behaviour_ids[idx]);
+  }
+  cmdInsertObservation_->flush();
+}
+
+int DbForwarder::createTrack(int cameraIndex, TrackId id, SysTime startTime) {
+  try {
+    otl_stream &cmd = *cmdCreateTrack_;
+
+    otl_datetime time = otlTimestampFromSys(startTime);
+    cmd << time;
+
+    int dbId = -1;
+    cmd >> dbId;
+    dbTrackIdFromCameraAndTrackId_.insert(std::make_pair(std::make_pair(cameraIndex, id), dbId));
+
+    return dbId;
   } catch (const otl_exception &ex) {
     logOtlException(get_logger(), ex);
     throw;
   }
 }
 
-void DbForwarder::onDetection(std::shared_ptr<const zoo_msgs::msg::Detection> msg);
+int DbForwarder::getOrCreateTrack(int cameraIndex, TrackId id, SysTime startTime) {
+  const auto key = std::make_pair(cameraIndex, id);
+  auto it = dbTrackIdFromCameraAndTrackId_.find(key);
+  if (it == dbTrackIdFromCameraAndTrackId_.end()) {
+    return createTrack(cameraIndex, id, startTime);
+  } else {
+    return it->second;
+  }
+}
+void DbForwarder::insertObservation(int cameraIndex, TrackId id, SysTime time, Eigen::Vector2f location,
+                                    TBehaviour behaviourId) {
+  try {
+    const int dbTrackId = getOrCreateTrack(cameraIndex, id, time);
 
-void DbForwarder::createTrack(TrackId id, SysTime startTime) {
-  otl_stream &cmd = *cmdCreateTrack_;
-
-  otl_datetime time{};
-  time.year = 2025;
-  time.month = 01;
-  time.day = 01;
-  time.hour = 10;
-  time.minute = 22;
-  time.second = 03;
-  time.fraction = 10;
-  time.frac_precision = 3;
-  cmd << time;
-
-  int id = 666;
-  cmd >> id;
-  std::cout << "New id: " << id << std::endl;
+    otl_stream &cmd = *cmdInsertObservation_;
+    cmd << dbTrackId;
+    cmd << otlTimestampFromSys(time);
+    cmd << location[0];
+    cmd << location[1];
+    cmd << static_cast<int>(behaviourId);
+  } catch (const otl_exception &ex) {
+    logOtlException(get_logger(), ex);
+    throw;
+  }
 }
 
-void DbForwarder::insertObservation(TrackId id, SysTime time, Eigen::Vector2f location, TBehaviour behaviourId) {
-  otl_stream &cmd = *cmdInsertObservation_;
-  cmd << id;
+void DbForwarder::onTrackClosed(int cameraIndex, const zoo_msgs::msg::TrackClosed &msg) {
+  const SysTime msgTime = sysTimeFromRos(msg.header.stamp);
+  Eigen::Map<const Eigen::VectorXf> identityProbs(msg.identity_probs.data(), msg.identity_probs.size());
+  closeTrack(cameraIndex, msg.track_id, msgTime, msg.track_length, msg.selected_identity, identityProbs);
+
+  // Forget the track
+  auto it = dbTrackIdFromCameraAndTrackId_.find(std::make_pair(cameraIndex, msg.track_id));
+  assert(it != dbTrackIdFromCameraAndTrackId_.end());
+  dbTrackIdFromCameraAndTrackId_.erase(it);
 }
-void DbForwarder::closeTrack(TrackId, SysTime endTime, int frameCount, TIdentity identityId,
-                             Eigen::VectorXf identityProbs) {}
+
+void DbForwarder::closeTrack(int cameraIndex, TrackId id, SysTime endTime, int frameCount, TIdentity identityId,
+                             Eigen::VectorXf identityProbs) {
+  try {
+    const int dbTrackId = getOrCreateTrack(cameraIndex, id, endTime);
+
+    {
+      otl_stream &cmd = *cmdCloseTrack_;
+      cmd << otlTimestampFromSys(endTime);
+      cmd << frameCount;
+      cmd << static_cast<int>(identityId);
+      cmd << dbTrackId;
+    }
+
+    {
+      otl_stream &cmd = *cmdInsertIdentityProb_;
+      for (const auto identityId : std::views::iota(0l, identityProbs.size())) {
+        cmd << dbTrackId;
+        cmd << static_cast<int>(identityId);
+        cmd << identityProbs[identityId];
+      }
+      cmd.flush();
+    }
+  } catch (const otl_exception &ex) {
+    logOtlException(get_logger(), ex);
+    throw;
+  }
+}
 
 } // namespace zoo

@@ -635,7 +635,7 @@ impl RerunForwarder {
 
         // Log votes
         {
-            for (id_valid, votes) in msg.identity_votes.iter().enumerate() {
+            for (id_valid, probs) in msg.identity_probs.iter().enumerate() {
                 let id = id_valid as u32 + 1;
                 let (identity_name, identity_info) = &self.identity_from_id[&id];
                 // let logits = all_logits.slice(s![idx, ..]);
@@ -645,7 +645,7 @@ impl RerunForwarder {
                     rr_path.as_str(),
                     &rerun::SeriesLine::new().with_color(rerun_from_hex(&identity_info.color)),
                 )?;
-                recording.log(rr_path, &rerun::Scalar::new(*votes as f64))?;
+                recording.log(rr_path, &rerun::Scalar::new(*probs as f64))?;
             }
         }
 

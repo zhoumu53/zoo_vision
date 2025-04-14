@@ -84,7 +84,11 @@ int main(int argc, char *argv[]) {
 
   // Start rerun first so we can connect right away
   nodes.push_back(std::make_shared<RerunForwarder>(options));
-  nodes.push_back(std::make_shared<DbForwarder>(options));
+
+  // Start db node
+  if (config["db"]["enabled"].get<bool>()) {
+    nodes.push_back(std::make_shared<DbForwarder>(options));
+  }
 
   const bool useLiveStream = config["live_stream"].get<bool>();
   if (!useLiveStream) {

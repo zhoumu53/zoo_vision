@@ -64,6 +64,7 @@
     ]
   },
   "db": {
+    "enabled": false,
     "logon": "UID=dherrera;Database=zoo_vision;DSN=postgresql"
   },
   "models": {

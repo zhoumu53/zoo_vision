@@ -47,8 +47,10 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   readConfig(getConfig());
 
   // Set up paths to store improvement images
-  rootPathImprove_ = "/media/dherrera/ElephantExternal/elephants/improve";
-  std::filesystem::create_directories(rootPathImprove_);
+  if (recordTracks_) {
+    rootPathImprove_ = "/media/dherrera/ElephantExternal/elephants/improve";
+    std::filesystem::create_directories(rootPathImprove_);
+  }
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
@@ -65,13 +67,21 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       });
 
   // Publish detections
-  const auto detectionsTopic = cameraName_ + "/detections";
-  detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, detectionsTopic, 10);
-  RCLCPP_INFO(get_logger(), "Publishing detections at %s", detectionsTopic.c_str());
-
-  const auto trackStateTopic = cameraName_ + "/track_state";
-  trackStatePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::TrackState>(*this, trackStateTopic, 10);
-  RCLCPP_INFO(get_logger(), "Publishing track state at %s", trackStateTopic.c_str());
+  {
+    const auto topic = cameraName_ + "/detections";
+    detectionPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::Detection>(*this, topic, 10);
+    RCLCPP_INFO(get_logger(), "Publishing detections at %s", topic.c_str());
+  }
+  {
+    const auto topic = cameraName_ + "/track_state";
+    trackStatePublisher_ = rclcpp::create_publisher<zoo_msgs::msg::TrackState>(*this, topic, 10);
+    RCLCPP_INFO(get_logger(), "Publishing track state at %s", topic.c_str());
+  }
+  {
+    const auto topic = cameraName_ + "/track_closed";
+    trackClosedPublisher_ = rclcpp::create_publisher<zoo_msgs::msg::TrackClosed>(*this, topic, 10);
+    RCLCPP_INFO(get_logger(), "Publishing track closed at %s", topic.c_str());
+  }
 }
 
 void CameraPipeline::readConfig(const nlohmann::json &config) {
@@ -122,9 +132,13 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
     }
-    for (const auto &ptrack : trackUpdateStats.closedTracks) {
-      saveKeyframes(*ptrack);
-      moveTrackImagesToIdentityPath(*ptrack);
+  }
+  for (const auto &ptrack : trackUpdateStats.closedTracks) {
+    const auto &track = *ptrack;
+    publishTrackClosed(imageMsg.header, track);
+    if (recordTracks_) {
+      saveKeyframes(track);
+      moveTrackImagesToIdentityPath(track);
     }
   }
 
@@ -212,10 +226,24 @@ void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader,
 
   msg.selected_identity = track.selectedIdentity;
   for (const auto [idx, votes] : std::views::enumerate(track.identityHistogram.getVotes())) {
-    msg.identity_votes[idx] = votes;
+    msg.identity_probs[idx] = votes;
   }
 
   trackStatePublisher_->publish(std::move(msgPtr));
+}
+
+void CameraPipeline::publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track) {
+  auto msgPtr = std::make_unique<zoo_msgs::msg::TrackClosed>();
+  auto &msg = *msgPtr;
+  msg.header = imageHeader;
+  msg.track_id = track.id;
+  msg.track_length = track.trackLength;
+  msg.selected_identity = track.selectedIdentity;
+  for (const auto [idx, votes] : std::views::enumerate(track.identityHistogram.getVotes())) {
+    msg.identity_probs[idx] = votes;
+  }
+
+  trackClosedPublisher_->publish(std::move(msgPtr));
 }
 
 void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &cvImg) {

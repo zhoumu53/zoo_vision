@@ -33,6 +33,7 @@ set(msg_files
   "msg/Tensor3b32m.msg"
   "msg/Detection.msg" 
   "msg/TrackState.msg" 
+  "msg/TrackClosed.msg" 
 )
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${msg_files}
