@@ -1,6 +1,5 @@
 import json
 import sys
-from pathlib import Path
 from queue import SimpleQueue
 from typing import cast
 
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from project_root import PROJECT_ROOT
 from database import active_db, Record
 from serialization import serialize_database
 
@@ -43,7 +43,7 @@ class RecordItemWidget(QWidget):
 
 
 class SideMenu(QWidget):
-    def __init__(self, slider, work_queue: SimpleQueue):
+    def __init__(self, slider, work_queue: SimpleQueue[int]):
         super().__init__()
 
         self.slider = slider
@@ -90,7 +90,7 @@ class SideMenu(QWidget):
         self.update_save_status()  # Update the save status indicator
 
     def load_names(self) -> None:
-        path = Path("names.json")
+        path = PROJECT_ROOT / "labelling/common/names.json"
         try:
             with path.open("r") as file:
                 names = json.load(file)

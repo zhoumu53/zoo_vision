@@ -5,8 +5,8 @@ import argparse
 
 import cv2
 from tqdm import tqdm
-
-from utils import pretty_time_delta
+import project_root  # type: ignore
+from labelling.common.utils import pretty_time_delta
 
 logger = logging.getLogger(__name__)
 

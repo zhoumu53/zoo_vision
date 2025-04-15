@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import numpy as np
+import numpy.typing as npt
 from pathlib import Path
 from typing import TypeAlias
 
@@ -11,23 +12,23 @@ class Record:
     frame: int
     instance_id: TInstanceId
     name: str
-    positive_points: np.ndarray = field(
-        default_factory=lambda: np.ndarray((0, 2))
+    positive_points: npt.NDArray[np.float32] = field(
+        default_factory=lambda: np.empty((0, 2), dtype=np.float32)
     )  # [point, coords]
-    negative_points: np.ndarray = field(
-        default_factory=lambda: np.ndarray((0, 2))
+    negative_points: npt.NDArray[np.float32] = field(
+        default_factory=lambda: np.empty((0, 2), dtype=np.float32)
     )  # [point, coords]
 
-    segmentation: np.ndarray | None = None  # [H,W]
+    segmentation: npt.NDArray[np.uint8] | None = None  # [H,W]
 
 
 @dataclass
 class DatabaseFrame:
     frame: int
-    original_image: np.ndarray  # [H,W,3]
+    original_image: npt.NDArray[np.uint8]  # [H,W,3]
 
     records: dict[TInstanceId, Record] = field(default_factory=dict)
-    segmented_image: np.ndarray | None = None  # [H,W,3]
+    segmented_image: npt.NDArray[np.uint8] | None = None  # [H,W,3]
 
 
 @dataclass
@@ -40,7 +41,7 @@ class Database:
     def get_or_add_frame(
         self,
         frame_index: int,
-        original_image: np.ndarray,
+        original_image: npt.NDArray[np.uint8],
     ) -> DatabaseFrame:
         frame_data = self.frames.get(frame_index)
         if frame_data is None:
@@ -83,7 +84,7 @@ class Database:
     def add_point(
         self,
         record: Record,
-        point: np.ndarray,
+        point: npt.NDArray[np.float32],
         is_positive: bool,
     ) -> None:
         assert point.shape == (1, 2)

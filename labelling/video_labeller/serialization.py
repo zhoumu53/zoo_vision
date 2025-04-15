@@ -1,11 +1,11 @@
 from dataclasses import asdict
-import os
 import json
 from database import active_db, Database, DatabaseFrame, Record
 from pathlib import Path
 import cv2
-from typing import Any
+from typing import Any, cast
 import numpy as np
+import numpy.typing as npt
 
 
 def get_db_serialization_path(video_path: Path, labels_path: Path) -> Path:
@@ -76,6 +76,7 @@ def deserialize_database(
 
                 video_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
                 _, image = video_reader.read()
+                image = cast(npt.NDArray[np.uint8], image)
 
                 db.frames[frame_index] = DatabaseFrame(
                     frame=frame_index, original_image=image, records=records

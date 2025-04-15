@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/vscode-pyright/schemas/pyrightconfig.schema.json",
+  "include": [
+    "labelling/common",
+    "labelling/video_labeller",
+  ],
+  "exclude": [],
+  "typeCheckingMode": "strict",
+  // Allowed in base settings for incomplete stubs, checked in stricter settings
+  "reportIncompleteStub": "none",
+  "reportMissingParameterType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownVariableType": "none",
+  "useLibraryCodeForTypes": true,
+  "reportMissingTypeStubs": false,
+  "reportUnknownLambdaType": "none"
+}

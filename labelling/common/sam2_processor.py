@@ -1,7 +1,10 @@
 import numpy as np
+import numpy.typing as npt
 import torch
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+from project_root import PROJECT_ROOT
 
 
 class Sam2Processor:
@@ -31,15 +34,19 @@ class Sam2Processor:
 
         print("Using sam2 device type: " + self.device_.type)
 
-        sam2_checkpoint = "../models/sam2/sam2.1_hiera_large.pt"
-        model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+        # Model downloaded by install_deps.sh
+        sam2_checkpoint = PROJECT_ROOT / "models/sam2/sam2.1_hiera_large.pt"
+        model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"  # Config stored inside of the sam2 library
 
         sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=self.device_)
         self.predictor_ = SAM2ImagePredictor(sam2_model)
 
     def process_click(
-        self, image: np.ndarray, positive: np.ndarray, negative: np.ndarray
-    ) -> np.ndarray:
+        self,
+        image: npt.NDArray[np.uint8],
+        positive: npt.NDArray[np.float32],
+        negative: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.uint8]:
         self.predictor_.set_image(image)
 
         point_coords = np.concatenate([positive, negative])

@@ -8,6 +8,8 @@ from queue import SimpleQueue
 import PySide6.QtGui as QtGui
 import cv2
 import numpy as np
+import numpy.typing as npt
+from typing import cast
 from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QAction, QMouseEvent, QStatusTipEvent
 from PySide6.QtWidgets import (
@@ -24,20 +26,21 @@ from PySide6.QtWidgets import (
     QMenu,
 )
 
-from drawing import draw_clicks
-from database import active_db, set_db, DatabaseFrame
-from image_label import ImageLabel
+from project_root import PROJECT_ROOT  # type: ignore
+from labelling.common.drawing import draw_clicks
+from labelling.common.image_label import ImageLabel
+from labelling.common.utils import pretty_time_delta
+from database import active_db, set_db
 from mark_canvas import MarkCanvas
 from serialization import deserialize_database, serialize_database
 from side_menu import SideMenu
 from help import HelpMenu
 from motion_detector_ui import MotionDetectorUi
-from utils import pretty_time_delta
 
 
 class MainWindow(QMainWindow):
     def __init__(
-        self, work_queue: SimpleQueue, videos_path: Path, labels_path: Path
+        self, work_queue: SimpleQueue[int], videos_path: Path, labels_path: Path
     ) -> None:
         super().__init__()
 
@@ -46,7 +49,7 @@ class MainWindow(QMainWindow):
         self.video_reader_ = None
         self.video_fps_ = 1
         self.last_advance_time_ms = 0
-        self.image_: np.ndarray | None = None
+        self.image_: npt.NDArray[np.uint8] | None = None
         self.timer_ = QTimer()
         self.timer_.setInterval(int(1000 / 240))  # More or less 10x per frame ~240fps
         self.timer_.timeout.connect(self.advance_frame)  # pyre-ignore
@@ -347,7 +350,7 @@ class MainWindow(QMainWindow):
             ret, cv_frame = self.video_reader_.read()
             if not ret:
                 return
-            self.image_ = cv_frame
+            self.image_ = cast(npt.NDArray[np.uint8] | None, cv_frame)
         if self.image_ is None:
             return
         self.image_label_.set_image(self.image_)
@@ -387,8 +390,11 @@ class MainWindow(QMainWindow):
 
             # Do a quick draw with only clicks for feedback
             frame = active_db().frames[self.frame_index_]
-            frame.segmented_image = None
-            draw_clicks(frame)
+            frame.segmented_image = draw_clicks(
+                frame.original_image.copy(),
+                [r.positive_points for r in frame.records.values()],
+                [r.negative_points for r in frame.records.values()],
+            )
             self.update_ui(self.frame_index_)
 
             # Request background processing

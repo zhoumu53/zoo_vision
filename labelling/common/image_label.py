@@ -1,5 +1,6 @@
 from PySide6.QtCore import QPointF
 import numpy as np
+import numpy.typing as npt
 from PySide6.QtGui import QImage, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QLabel,
@@ -10,13 +11,13 @@ class ImageLabel(QLabel):
     def __init__(self):
         super().__init__()
 
-        self.image_: np.ndarray | None = None
+        self.image_: npt.NDArray[np.uint8] | None = None
         self.qimage_: QImage | None = None
         self.aspect_ = 1.0
 
         self.setScaledContents(True)
 
-    def set_image(self, image: np.ndarray):
+    def set_image(self, image: npt.NDArray[np.uint8]):
         self.image_ = image
 
         # Ensure the image is in the correct format (BGR888 or RGB888)
@@ -62,7 +63,9 @@ class ImageLabel(QLabel):
             vmargin = int((height - width / self.aspect_) / 2)
         self.setContentsMargins(hmargin, vmargin, hmargin, vmargin)
 
-    def event_to_image_position(self, event_position: QPointF) -> np.ndarray:
+    def event_to_image_position(
+        self, event_position: QPointF
+    ) -> npt.NDArray[np.float32]:
         margins = self.contentsMargins()
         localPos = np.array(event_position.toTuple()) - np.array(
             [margins.left(), margins.top()]
@@ -71,7 +74,7 @@ class ImageLabel(QLabel):
             [margins.left() + margins.right(), margins.top() + margins.bottom()]
         )
 
-        relPos = localPos / labelSize
+        relPos = localPos.astype(np.float32) / labelSize.astype(np.float32)
         relPos[0], relPos[1] = relPos[1], relPos[0]
         assert self.image_ is not None
         pixelPos = relPos * self.image_.shape[0:2]

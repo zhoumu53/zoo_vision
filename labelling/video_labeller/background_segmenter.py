@@ -4,14 +4,16 @@ import numpy as np
 from PySide6.QtGui import QStatusTipEvent
 from PySide6.QtWidgets import QApplication
 
+import project_root  # type: ignore
 from database import DatabaseFrame, Record, active_db
-from drawing import draw_clicks, update_frame_image
 from main_window import MainWindow
-from sam2_processor import Sam2Processor
+from labelling.common.drawing import update_frame_image
+from labelling.common.sam2_processor import Sam2Processor
+from labelling.common.utils import unwrap
 
 
 class BackgroundSegmenter:
-    def __init__(self, window: MainWindow, work_queue: SimpleQueue) -> None:
+    def __init__(self, window: MainWindow, work_queue: SimpleQueue[int]) -> None:
         self.should_stop = False
         self.window = window
 
@@ -56,7 +58,12 @@ class BackgroundSegmenter:
                             self.segment_record(frame, record)
 
                     # Combine segmentations into a single image
-                    update_frame_image(frame)
+                    frame.segmented_image = update_frame_image(
+                        frame.original_image,
+                        [unwrap(r.segmentation) for r in frame.records.values()],
+                        [r.positive_points for r in frame.records.values()],
+                        [r.negative_points for r in frame.records.values()],
+                    )
 
                 # Trigger UI update
                 self.window.update_ui(frame_index)

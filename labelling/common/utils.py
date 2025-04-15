@@ -1,3 +1,14 @@
+from typing import TypeVar
+
+T = TypeVar("T")
+
+
+def unwrap(opt: T | None) -> T:
+    if opt is None:
+        raise ValueError("Optional value is None")
+    return opt
+
+
 def pretty_time_delta(seconds: float, seconds_fmt: str = "%.1f") -> str:
     sign_string = "-" if seconds < 0 else ""
 

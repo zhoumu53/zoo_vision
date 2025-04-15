@@ -1,5 +1,5 @@
 import numpy as np
-from database import DatabaseFrame, Record
+import numpy.typing as npt
 
 COLOR_GREEN = np.array([0, 255, 0], dtype=np.uint8).reshape(1, 1, 3)
 COLOR_RED = np.array([0, 0, 255], dtype=np.uint8).reshape(1, 1, 3)
@@ -18,41 +18,48 @@ MASK_COLORS = np.array(
 )
 
 
-def draw_clicks(frame: DatabaseFrame) -> None:
-    image = frame.segmented_image
-    if image is None:
-        image = frame.original_image.copy()
+def draw_clicks(
+    image: npt.NDArray[np.uint8],
+    positive_points: list[npt.NDArray[np.float32]],
+    negative_points: list[npt.NDArray[np.float32]],
+) -> npt.NDArray[np.uint8]:
+    # image = frame.segmented_image
+    # if image is None:
+    #     image = frame.original_image.copy()
 
     # Add clicks
-    for i, record in enumerate(frame.records.values()):
+    for i, (positives, negatives) in enumerate(zip(positive_points, negative_points)):
         color = MASK_COLORS[i]
-        for pixelPos in record.positive_points:
+        for pixelPos in positives:
             pixelPos = pixelPos.reshape(-1).astype(np.int32)
             image[
                 pixelPos[1] - 5 : pixelPos[1] + 5, pixelPos[0] - 5 : pixelPos[0] + 5
             ] = color
 
-        for pixelPos in record.negative_points:
+        for pixelPos in negatives:
             pixelPos = pixelPos.reshape(-1).astype(np.int32)
             image[
                 pixelPos[1] - 5 : pixelPos[1] + 5, pixelPos[0] - 5 : pixelPos[0] + 5
             ] = COLOR_BLACK
-    frame.segmented_image = image
+    return image
 
 
-def update_frame_image(frame: DatabaseFrame) -> None:
+def update_frame_image(
+    image: npt.NDArray[np.uint8],
+    masks: list[npt.NDArray[np.uint8]],
+    positive_points: list[npt.NDArray[np.float32]],
+    negative_points: list[npt.NDArray[np.float32]],
+) -> npt.NDArray[np.uint8]:
 
     base_alpha = 0.4
-    masked_image = frame.original_image.astype(dtype=np.float32, copy=True)
+    masked_image = image.astype(dtype=np.float32, copy=True)
     masked_image *= 0.8
-    for i, record in enumerate(frame.records.values()):
-        assert record.segmentation is not None
-        mask = record.segmentation
+    for i, mask in enumerate(masks):
+        assert mask is not None
         alpha_mask = base_alpha * mask[:, :, np.newaxis]
         color_mask = MASK_COLORS[i].reshape(1, 1, 3) * mask[:, :, np.newaxis]
         masked_image = masked_image * (1 - alpha_mask) + alpha_mask * color_mask
     masked_image = masked_image.astype(np.uint8)
 
-    frame.segmented_image = masked_image
-
-    draw_clicks(frame)
+    masked_image = draw_clicks(masked_image, positive_points, negative_points)
+    return masked_image
