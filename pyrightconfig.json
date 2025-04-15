@@ -3,6 +3,7 @@
   "include": [
     "labelling/common",
     "labelling/video_labeller",
+    "labelling/image_labeller",
   ],
   "exclude": [],
   "typeCheckingMode": "strict",
