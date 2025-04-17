@@ -21,9 +21,13 @@ tensorboard_plugin_profile
 #tf2onnx==1.16.1
 pycocotools
 opencv-python
-torch
-torchvision
 torchinfo
+
+# These three (torch, torchvision, and tensorrt) need to be kept compatible
+torch==2.5.1
+torchvision==0.20.1
+torch-tensorrt==2.5.0
+
 lark
 fiftyone # To browse coco datasets and predictions
 
@@ -46,3 +50,4 @@ pyside6 # UI components
 enlighten # Progress bar
 git+https://github.com/XuehaiPan/nvitop.git#egg=nvitop # Check gpu usage in real-time
 pytesseract # To read video time, also requires apt install of tesseract-ocr
+psycopg2-binary # Postgresql adapter for python
