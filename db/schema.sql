@@ -1,5 +1,17 @@
 --------------------------------------------------------------
 -- Config
+CREATE TABLE cameras (
+    id              int PRIMARY KEY,
+    name            text NOT NULL
+);
+
+INSERT INTO cameras(id, name)
+	VALUES 
+	(0, 'zag_elp_cam_016'),
+	(1, 'zag_elp_cam_017'),
+	(2, 'zag_elp_cam_018'),
+	(3, 'zag_elp_cam_019');
+
 CREATE TABLE identities (
     id              int PRIMARY KEY,
     name            text NOT NULL
@@ -31,6 +43,7 @@ INSERT INTO behaviours(id, name)
 
 CREATE TABLE tracks (
     id              int PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    camera_id		int NOT NULL REFERENCES cameras,
     start_time      timestamp NOT NULL,
     end_time        timestamp NULL,  	-- Only valid after track is closed
     frame_count     int NULL,			-- Only valid after track is closed
@@ -75,3 +88,7 @@ CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
 GRANT INSERT ON tracks,observations,summary_per_behaviour,summary_per_visibility TO zoo_vision;
 
+CREATE USER grafanareader WITH PASSWORD 'asdf';
+GRANT CONNECT ON DATABASE zoo_vision TO grafanareader;
+GRANT USAGE ON SCHEMA public TO grafanareader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafanareader;

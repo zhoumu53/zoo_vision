@@ -171,6 +171,7 @@ void VideoLoader::loadNextVideo(const std::string &cameraName, CameraData &camer
 
 void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
+    image = cv::Mat3b{};
     return;
   }
 
@@ -178,6 +179,12 @@ void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   auto &cvVideo = *cameraData.videoStream_;
 
   cvVideo >> image;
+  if (image.empty()) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF",
+                         cameraData.currentVideo_->videoFile.c_str());
+    cameraData.videoStartTime_.reset();
+    cameraData.videoStream_.reset();
+  }
 }
 
 auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
@@ -213,9 +220,7 @@ void VideoLoader::onTimer() {
 
     cv::Mat3b image = wrapMat3bFromMsg(*msg);
     loadImage(cameraData, image);
-    if (image.empty()) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF", cameraName.c_str());
-
+    if (!cameraData.videoStream_.has_value()) {
       loadNextVideo(cameraName, cameraData);
       loadImage(cameraData, image);
       if (image.empty()) {

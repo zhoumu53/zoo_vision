@@ -56,8 +56,9 @@ DbForwarder::DbForwarder(const rclcpp::NodeOptions &options) : rclcpp::Node("DbF
     db_.rlogon(logonString.c_str(), /*auto_commit*/ 1);
 
     cmdCreateTrack_ = std::make_unique<otl_stream>(
-        /*buffer_size*/ 1, "INSERT INTO tracks(start_time) VALUES(:start_time<timestamp,in>) RETURNING id;", db_,
-        otl_implicit_select);
+        /*buffer_size*/ 1,
+        "INSERT INTO tracks(camera_id, start_time) VALUES(:camera_id<int,in>, :start_time<timestamp,in>) RETURNING id;",
+        db_, otl_implicit_select);
     cmdInsertObservation_ = std::make_unique<otl_stream>(
         /*buffer_size*/ 10,
         "INSERT INTO observations(track_id, time, location, behaviour_id) VALUES(:track_id<int>, :time<timestamp>, "
@@ -108,14 +109,9 @@ DbForwarder::DbForwarder(const rclcpp::NodeOptions &options) : rclcpp::Node("DbF
     trackClosedSubscribers_.push_back(std::move(subscription));
   };
 
-  const std::vector<std::string> cameraNames = [&]() {
-    std::vector<std::string> names;
-    nlohmann::json config = getConfig();
-    for (auto &item : config["cameras"].items()) {
-      names.push_back(item.key());
-    }
-    return names;
-  }();
+  // Camera names are hardcoded to match their indices with the db cameras table
+  const std::vector<std::string> cameraNames = {"zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018",
+                                                "zag_elp_cam_019"};
   for (const auto [idx, name] : std::views::enumerate(cameraNames)) {
     subscribeDetection(idx, name);
     subscribeClosedTrack(idx, name);
@@ -137,8 +133,8 @@ int DbForwarder::createTrack(int cameraIndex, TrackId id, SysTime startTime) {
   try {
     otl_stream &cmd = *cmdCreateTrack_;
 
-    otl_datetime time = otlTimestampFromSys(startTime);
-    cmd << time;
+    cmd << cameraIndex;
+    cmd << otlTimestampFromSys(startTime);
 
     int dbId = -1;
     cmd >> dbId;
