@@ -62,7 +62,6 @@ def serialize_database() -> None:
 
 def deserialize_database(image_path: Path) -> Database:
     image = cv2.imread(str(image_path))
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     image = cast(npt.NDArray[np.uint8], image)
     db = Database(image_path=image_path, image=image)
 

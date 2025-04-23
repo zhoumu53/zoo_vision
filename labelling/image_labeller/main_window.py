@@ -141,14 +141,19 @@ class MainWindow(QMainWindow):
         # Display image from the database
         self.update_image()
 
-    def prev_instance(self):
-        if self.instance_id_ > 0:
-            self.instance_id_ -= 1
+        # Reset instance id
+        self.set_instance(0)
+
+    def set_instance(self, id):
+        self.instance_id_ = id
         self.statusLabels_["instance"].setText(f"{self.instance_id_}")
 
+    def prev_instance(self):
+        if self.instance_id_ > 0:
+            self.set_instance(self.instance_id_ - 1)
+
     def next_instance(self):
-        self.instance_id_ += 1
-        self.statusLabels_["instance"].setText(f"{self.instance_id_}")
+        self.set_instance(self.instance_id_ + 1)
 
     def next_image(self):
         self.current_image_index_ += 1
