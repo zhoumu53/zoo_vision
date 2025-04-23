@@ -1,17 +1,18 @@
 python training/segmentation/train_segmentation.py \
     --model_name_or_path facebook/mask2former-swin-base-coco-panoptic \
     --dataset_name zoo_elephants \
+    --train_val_split 0.2 \
     --image_width 1060 \
     --image_height 600 \
     --remove_unused_columns False \
-    --dataloader_num_workers 12 \
+    --dataloader_num_workers 4 \
     --dataloader_prefetch_factor 2 \
     --do_train \
     --do_eval \
     --eval_strategy epoch \
     --num_train_epochs 200 \
     --learning_rate 0.00006 \
-    --lr_scheduler_type polynomial \
+    --lr_scheduler_type cosine_with_restarts \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 12 \
     --logging_strategy steps \

@@ -1,6 +1,8 @@
 python training/classification_vit/train_classification.py \
     --model_name_or_path google/vit-base-patch16-224 \
-    --train_dir /home/dherrera/data/elephants/behaviour/mix \
+    --train_dir /home/dherrera/data/elephants/behaviour/sleep_v1 \
+    --train_dir /home/dherrera/data/elephants/behaviour/sleep_v2 \
+    --train_val_split 0.2 \
     --remove_unused_columns False \
     --dataloader_num_workers 12 \
     --dataloader_prefetch_factor 2 \
@@ -9,13 +11,14 @@ python training/classification_vit/train_classification.py \
     --eval_strategy epoch \
     --num_train_epochs 200 \
     --learning_rate 2e-5 \
+    --lr_scheduler_type cosine_with_restarts \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 8 \
     --logging_strategy steps \
     --logging_steps 10 \
     --load_best_model_at_end True \
     --save_total_limit 20 \
-    --metric_for_best_model accuracy \
+    --metric_for_best_model loss \
     --save_strategy epoch \
     --seed 1337 \
     --overwrite_output_dir \

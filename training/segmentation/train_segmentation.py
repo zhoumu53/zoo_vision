@@ -47,6 +47,7 @@ from torchvision.transforms import (
     RandomAutocontrast,
 )
 
+from torch.utils.data.dataset import random_split, Subset
 from coco_panoptic_dataset import CocoPanopticDataset
 from project_root import DATASETS_ROOT
 
@@ -80,6 +81,9 @@ class Arguments:
         metadata={
             "help": "Name of a dataset from the hub (could be your own, possibly private dataset hosted on the hub)."
         },
+    )
+    train_val_split: Optional[float] = field(
+        default=0.15, metadata={"help": "Percent to split off of train for validation."}
     )
     trust_remote_code: bool = field(
         default=False,
@@ -431,12 +435,33 @@ def main():
     # dataset = load_dataset(args.dataset_name, trust_remote_code=args.trust_remote_code)
     dataset = {
         "train": CocoPanopticDataset(
-            DATASETS_ROOT / "elephants/segmentation/v1_d2_good_pan.json"
-        ),
-        "validation": CocoPanopticDataset(
-            DATASETS_ROOT / "elephants/segmentation/val_coco_dan1_pan.json"
+            DATASETS_ROOT / "elephants/segmentation/all_pan.json"
         ),
     }
+
+    # If we don't have a validation split, split off a percentage of train as validation.
+    args.train_val_split = (
+        None if "validation" in dataset.keys() else args.train_val_split
+    )
+    if isinstance(args.train_val_split, float) and args.train_val_split > 0.0:
+        from copy import deepcopy
+
+        # Clone the datasets so they can have different transforms
+        ds_train_all = dataset["train"]
+        ds_val_all = deepcopy(ds_train_all)
+
+        ds_val, ds_train = random_split(
+            ds_train_all, [args.train_val_split, 1 - args.train_val_split]
+        )
+        # Redirect ds_val to point to the cloned dataset
+        ds_val = Subset(ds_val_all, ds_val.indices)
+        dataset["train"] = ds_train
+        dataset["validation"] = ds_val
+    if len(dataset["train"]) == 0:
+        raise RuntimeError("Training dataset is empty")
+    print(
+        f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
+    )
 
     # We need to specify the label2id mapping for the model
     # it is a mapping from semantic class name to class index.
@@ -525,10 +550,18 @@ def main():
 
     # dataset["train"] = dataset["train"].with_transform(train_transform_batch)
     # dataset["validation"] = dataset["validation"].with_transform(validation_transform_batch)
-    dataset["train"].transform = train_augment_and_transform
-    dataset["train"].processor = image_processor
-    dataset["validation"].transform = validation_transform
-    dataset["validation"].processor = image_processor
+    def set_transform_and_processor(ds, transform, processor):
+        if isinstance(ds, Subset):
+            ds = ds.dataset
+        ds.transform = transform
+        ds.processor = processor
+
+    set_transform_and_processor(
+        dataset["train"], train_augment_and_transform, image_processor
+    )
+    set_transform_and_processor(
+        dataset["validation"], validation_transform, image_processor
+    )
 
     # dataset["validation"] = [dataset["validation"][i] for i in [0, 1]]
 

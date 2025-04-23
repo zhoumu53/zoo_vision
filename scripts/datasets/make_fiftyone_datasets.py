@@ -53,6 +53,31 @@ def process_classification_dataset(
         }
 
 
+def merge_datasets(name: str, inputs: list[str], args: argparse.Namespace):
+    exists = fo.dataset_exists(name)
+    force = (
+        args.force_all
+        or name in args.force
+        or np.any([input in args.force for input in inputs])
+    )
+    if not exists or force:
+        if exists:
+            print(f"Deleting {name}...")
+            fo.delete_dataset(name)
+        print(f"Building {name}...")
+        ds = None
+        for input in inputs:
+            ds_input = fo.load_dataset(input)
+            if ds is None:
+                ds = ds_input.clone(name, persistent=True)
+            else:
+                ds.merge_samples(ds_input)
+
+        print(f"Size of {name}={len(ds)}")
+        return ds
+    return None
+
+
 def main():
     args = parse_args()
 
@@ -66,7 +91,7 @@ def main():
         "coco-elephants-train2017",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path=DATASETS_ROOT / "train2017",
+            data_path=coco_root / "train2017",
             labels_path=coco_root / "annotations/elephants_train2017.json",
             name=name,
             persistent=True,
@@ -78,7 +103,7 @@ def main():
         "coco-elephants-val2017",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path=DATASETS_ROOT / "val2017",
+            data_path=coco_root / "val2017",
             labels_path=coco_root / "annotations/elephants_val2017.json",
             name=name,
             persistent=True,
@@ -88,81 +113,78 @@ def main():
 
     # Detection dataset
     process_dataset(
-        "zoo-elephants-detection-train",
+        "zoo-elephants-detection",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
-            data_path=elephant_ds_root,
-            labels_path=elephant_ds_root / "segmentation/coco_v1_d2_good.json",
-            name=name,
-            persistent=True,
-        ),
-        args,
-    )
-    process_dataset(
-        "zoo-elephants-detection-val",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.COCODetectionDataset,
-            data_path=elephant_ds_root,
-            labels_path=elephant_ds_root / "segmentation/val_coco_dan1.json",
+            data_path=elephant_ds_root / "segmentation",
+            labels_path=elephant_ds_root / "segmentation/all_pan.json",
             name=name,
             persistent=True,
         ),
         args,
     )
 
+    ###############################################################
     # Identity dataset
-    process_classification_dataset(
-        "zoo-elephants-identity-train",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "identity/dataset/certainty/train/good",
-            name=name,
-            persistent=True,
-        ),
-        args,
-    )
-
-    process_classification_dataset(
-        "zoo-elephants-identity-val",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "identity/dataset/certainty/val",
-            name=name,
-            persistent=True,
-        ),
-        args,
-    )
-
-    process_classification_dataset(
-        "zoo-elephants-identity-id3",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "identity/dataset/id3",
-            name=name,
-            persistent=True,
-        ),
-        args,
-    )
-
-    process_classification_dataset(
-        "zoo-elephants-identity-tracks",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=Path(
-                "/media/dherrera/ElephantExternal/elephants/tracks/tracks_apr03/maybe"
+    def make_identity_dataset(name, dir):
+        process_classification_dataset(
+            name,
+            lambda name: fo.Dataset.from_dir(
+                dataset_type=fo.types.ImageClassificationDirectoryTree,
+                dataset_dir=elephant_ds_root / dir,
+                name=name,
+                persistent=True,
             ),
-            name=name,
-            persistent=True,
-        ),
+            args,
+        )
+
+    make_identity_dataset(
+        "zoo-elephants-identity-v1-curated", "identity/dataset/v1/train_curated"
+    )
+    make_identity_dataset("zoo-elephants-identity-v1-val", "identity/dataset/v1/val")
+    make_identity_dataset("zoo-elephants-identity-d2", "identity/dataset/d2/train")
+    make_identity_dataset(
+        "zoo-elephants-identity-certainty-good", "identity/dataset/certainty/train/good"
+    )
+    make_identity_dataset(
+        "zoo-elephants-identity-certainty-val", "identity/dataset/certainty/val"
+    )
+    make_identity_dataset("zoo-elephants-identity-id3", "identity/dataset/id3")
+    make_identity_dataset("zoo-elephants-identity-v4", "identity/dataset/v4")
+    merge_datasets(
+        "zoo-elephants-identity",
+        [
+            "zoo-elephants-identity-v1-curated",
+            "zoo-elephants-identity-v1-val",
+            "zoo-elephants-identity-d2",
+            "zoo-elephants-identity-certainty-good",
+            "zoo-elephants-identity-certainty-val",
+            "zoo-elephants-identity-id3",
+            "zoo-elephants-identity-v4",
+        ],
         args,
     )
 
+    # process_classification_dataset(
+    #     "zoo-elephants-identity-tracks",
+    #     lambda name: fo.Dataset.from_dir(
+    #         dataset_type=fo.types.ImageClassificationDirectoryTree,
+    #         dataset_dir=Path(
+    #             "/media/dherrera/ElephantExternal/elephants/tracks/tracks_apr03/maybe"
+    #         ),
+    #         name=name,
+    #         persistent=True,
+    #     ),
+    #     args,
+    # )
+
+    ##############################################################
     # Behaviour dataset
     process_classification_dataset(
-        "zoo-elephants-sleep-train",
+        "zoo-elephants-sleep-v1",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "behaviour/train",
+            dataset_dir=elephant_ds_root / "behaviour/sleep_v1",
             name=name,
             persistent=True,
         ),
@@ -170,18 +192,7 @@ def main():
     )
 
     process_classification_dataset(
-        "zoo-elephants-sleep-val",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "behaviour/val",
-            name=name,
-            persistent=True,
-        ),
-        args,
-    )
-
-    process_classification_dataset(
-        "zoo-elephants-sleep-val2",
+        "zoo-elephants-sleep-v2",
         lambda name: fo.Dataset.from_dir(
             dataset_type=fo.types.ImageClassificationDirectoryTree,
             dataset_dir=elephant_ds_root / "behaviour/sleep_v2",
@@ -191,14 +202,9 @@ def main():
         args,
     )
 
-    process_classification_dataset(
-        "zoo-elephants-sleep-mix",
-        lambda name: fo.Dataset.from_dir(
-            dataset_type=fo.types.ImageClassificationDirectoryTree,
-            dataset_dir=elephant_ds_root / "behaviour/mix",
-            name=name,
-            persistent=True,
-        ),
+    merge_datasets(
+        "zoo-elephants-sleep",
+        ["zoo-elephants-sleep-v1", "zoo-elephants-sleep-v2"],
         args,
     )
 

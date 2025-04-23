@@ -105,7 +105,7 @@ void Behaviourer::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor
   // TODO: sort tracks based on score
   std::vector<int> bestClasses;
   bestClasses.resize(patchCount);
-  constexpr float32_t CONFIDENCE_THRESHOLD = 0.4f;
+  constexpr float32_t CONFIDENCE_THRESHOLD = 0.2f;
 
   // Force to max probability
   const auto &[maxProbs, maxIndices] = probabilities.topk(/*k*/ 2, /*dim*/ 1);
@@ -114,7 +114,7 @@ void Behaviourer::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor
     const float32_t top2 = maxProbs.index({i, 1}).item<float32_t>();
     if ((top1 - top2) >= CONFIDENCE_THRESHOLD) {
       const int maxIdx = maxIndices.index({i, 0}).item<int>();
-      bestClasses[i] = maxIdx + 1; // Add one because class 0 is invalid
+      bestClasses[i] = maxIdx;
     } else {
       bestClasses[i] = 0;
     }

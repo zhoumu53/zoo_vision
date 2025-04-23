@@ -70,11 +70,11 @@
   "models": {
     "elephant_label_id": 0,
     "score_threshold": 0.9,
-    "segmentation": "../models/segmentation/mask2former/freeze_encoder_q100/config.ptc",
+    "segmentation": "../models/segmentation/mask2former/v3/config.ptc",
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
     "quality": "../models/certainty/vit/freeze_vit_v2/config.ptc",
-    "identity": "../models/identity/vit/all/config.ptc",
-    "behaviour": "../models/sleep/vit/mix/config.ptc"
+    "identity": "../models/identity/vit/v4/config.ptc",
+    "behaviour": "../models/sleep/vit/v2/config.ptc"
   },
   "rerun_config": {
     "low_res": false,

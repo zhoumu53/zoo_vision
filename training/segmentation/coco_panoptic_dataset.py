@@ -70,12 +70,16 @@ class CocoPanopticDataset(torch.utils.data.Dataset):
         #         (0, inputs["pixel_values"].shape[-2], inputs["pixel_values"].shape[-1])
         #     )
         # else:
-        inputs = self.processor(
-            [image],
-            [instance_seg],
-            instance_id_to_semantic_id=class_from_instance,
-            return_tensors="pt",
-        )
+        try:
+            inputs = self.processor(
+                [image],
+                [instance_seg],
+                instance_id_to_semantic_id=class_from_instance,
+                return_tensors="pt",
+            )
+        except:
+            print(f"Failed at file: {self.image_files[idx]}")
+            raise
         inputs = {
             k: v.squeeze() if isinstance(v, torch.Tensor) else v[0]
             for k, v in inputs.items()

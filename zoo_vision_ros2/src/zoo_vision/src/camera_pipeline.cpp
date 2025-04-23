@@ -266,7 +266,7 @@ void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &
 }
 
 void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behaviourId, const at::Tensor &img) {
-  static std::array<std::string, 4> BEHAVIOUR_NAMES = {"XX_Invalid", "00_Standing", "01_SleepL", "02_SleepR"};
+  static std::array<std::string, 4> BEHAVIOUR_NAMES = {"00_Invalid", "01_Standing", "02_SleepL", "03_SleepR"};
   std::filesystem::path rootPath =
       rootPathImprove_ / "behaviour" / BEHAVIOUR_NAMES[behaviourId] / std::format("{:%Y-%m-%d}", time);
   std::filesystem::create_directories(rootPath);

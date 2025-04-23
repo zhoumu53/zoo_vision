@@ -69,7 +69,7 @@ def annotation_from_segmentation(
     }
 
     segmentation: np.ndarray = cv2.imread(segmentation_file, flags=cv2.IMREAD_GRAYSCALE)
-    instance_ids = [int(id) for id in set(np.unique(segmentation))]
+    instance_ids = [int(id) for id in set(np.unique(segmentation)) if id is not None]
     for instance_id in instance_ids:
         # See https://cocodataset.org/#format-data
         segment_id = instance_id + instance_id * 256 + instance_id * 256 * 256
@@ -105,13 +105,14 @@ def main():
     elephant_annotations = create_elephant_annotation()
     gen_image_id = IDGenerator()
 
-    files = [f.relative_to(input_path) for f in input_path.glob("**/*_img.jpg")]
+    files = [f.relative_to(input_path) for f in input_path.glob("**/*.jpg")]
     print(f"Total {len(files)} files")
     print(f"For example: {files[0]}")
 
     for file in tqdm(files):
         image_id = gen_image_id.create()
-        segmentation_file = input_path / str(file).replace("_img.jpg", "_seg.png")
+        suffix = "_img.jpg" if file.name.endswith("_img.jpg") else ".jpg"
+        segmentation_file = input_path / str(file).replace(suffix, "_seg.png")
 
         # Need to read image to get size
         im = cv2.imread(input_path / file)
