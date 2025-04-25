@@ -80,7 +80,9 @@ fn rerun_from_hex(color: &HexColor) -> rerun::Color {
 fn start_rerun_file_recording(recording_prefix: &str) -> Result<RecordingStream, Error> {
     const DATE_FORMAT_STR: &'static str = "[year]-[month]-[day]-[hour]:[minute]:[second]";
     let dt_fmt = time::format_description::parse(DATE_FORMAT_STR)?;
-    let now: time::OffsetDateTime = std::time::SystemTime::now().into();
+
+    let local_offset = time::UtcOffset::current_local_offset()?;
+    let now = time::UtcDateTime::now().to_offset(local_offset);
     let path = format!("{}{}.rrd", recording_prefix, now.format(&dt_fmt)?);
     println!("Saving rerun stream to {}", path);
 
