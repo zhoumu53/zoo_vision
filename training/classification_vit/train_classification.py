@@ -403,6 +403,16 @@ def main():
         )
         return {"pixel_values": pixel_values, "labels": labels}
 
+    # Compute class weights
+    class_names = dataset["train"].features["label"].names
+    labels = np.asarray(dataset["train"].data)
+    class_weights = np.asarray(
+        [np.sum(labels == i) for i in range(len(class_names))], dtype=np.float32
+    )
+    class_weights = (np.sum(class_weights) / len(class_names)) / class_weights
+    class_weights = torch.from_numpy(class_weights)
+    print(f"Class weights: {class_weights}")
+
     # If we don't have a validation split, split off a percentage of train as validation.
     data_args.train_val_split = (
         None if "validation" in dataset.keys() else data_args.train_val_split
@@ -413,6 +423,7 @@ def main():
         dataset["validation"] = split["test"]
     if len(dataset["train"]) == 0:
         raise RuntimeError("Training dataset is empty")
+
     print(
         f'Dataset sizes: train={len(dataset["train"])}, val={len(dataset["validation"])}'
     )
@@ -457,7 +468,9 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
-    model.loss_fct = torch.nn.CrossEntropyLoss(label_smoothing=0.3)
+    model.loss_fct = torch.nn.CrossEntropyLoss(
+        label_smoothing=0.3, weight=class_weights
+    )
 
     layers_to_freeze = []
     layers_to_freeze_str = data_args.freeze_layers.split("+")

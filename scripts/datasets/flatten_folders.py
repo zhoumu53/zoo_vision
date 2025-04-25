@@ -11,16 +11,11 @@ import fiftyone.brain as fob
 
 
 def flatten_folders(path: Path) -> None:
-    classes = [f.name for f in path.glob("*") if f.is_dir()]
-    print(f"Detected classes under {path}: {classes}")
-
-    class_bar = Counter(total=len(classes), desc="Classes")
-    for c in class_bar(classes):
-        files = [f for f in (path / c).glob("**/*") if not f.is_dir()]
-        file_bar = Counter(total=len(files), desc="Files")
-        for i, file in enumerate(file_bar(files)):
-            new_name = path / c / f"{i:08}{file.suffix}"
-            shutil.move(file, new_name)
+    files = [f for f in path.glob("**/*") if not f.is_dir()]
+    file_bar = Counter(total=len(files), desc="Files")
+    for i, file in enumerate(file_bar(files)):
+        new_name = path / f"{i:08}{file.suffix}"
+        shutil.move(file, new_name)
 
 
 def parse_args() -> argparse.Namespace:

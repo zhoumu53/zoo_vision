@@ -78,6 +78,31 @@ def merge_datasets(name: str, inputs: list[str], args: argparse.Namespace):
     return None
 
 
+def make_certainty_dataset(name):
+    good_dirs = [
+        "/home/dherrera/data/elephants/identity/dataset/certainty/train/good",
+        "/home/dherrera/data/elephants/identity/dataset/certainty/val",
+        "/home/dherrera/data/elephants/identity/dataset/id3",
+        "/home/dherrera/data/elephants/identity/dataset/v4",
+    ]
+    bad_dirs = [
+        "/home/dherrera/data/elephants/certainty/v1",
+        "/home/dherrera/data/elephants/certainty/v2",
+        "/home/dherrera/data/elephants/certainty/v4",
+    ]
+
+    samples = []
+    for label, dirs in zip(["good", "bad"], [good_dirs, bad_dirs]):
+        for dir in dirs:
+            for file in Path(dir).glob("**/*.jpg"):
+                sample = fo.Sample(filepath=file)
+                sample["ground_truth"] = fo.Classification(label=label)
+                samples.append(sample)
+    dataset = fo.Dataset(name, persistent=True)
+    dataset.add_samples(samples)
+    return dataset
+
+
 def main():
     args = parse_args()
 
@@ -205,6 +230,14 @@ def main():
     merge_datasets(
         "zoo-elephants-sleep",
         ["zoo-elephants-sleep-v1", "zoo-elephants-sleep-v2"],
+        args,
+    )
+
+    ##############################################################
+    # Certainty dataset
+    process_classification_dataset(
+        "zoo-elephants-certainty",
+        make_certainty_dataset,
         args,
     )
 

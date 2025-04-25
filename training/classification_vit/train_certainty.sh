@@ -1,11 +1,14 @@
 python training/classification_vit/train_classification.py \
     --model_name_or_path google/vit-base-patch16-224 \
     --dataset_name certainty_good_bad \
-    --train_dir /home/dherrera/data/elephants/identity/dataset/id3 \
-    --train_dir /home/dherrera/data/elephants/identity/dataset/v1/train_curated \
-    --train_dir_bad /home/dherrera/data/elephants/certainty/v1/00_bad/terrible \
-    --train_dir_bad /home/dherrera/data/elephants/certainty/v1/00_bad/TracksApr03 \
-    --train_val_split 0.2 \
+    --train_dir /home/dherrera/data/elephants/identity/dataset/certainty/train/good \
+                /home/dherrera/data/elephants/identity/dataset/certainty/val \
+                /home/dherrera/data/elephants/identity/dataset/id3 \
+                /home/dherrera/data/elephants/identity/dataset/v4 \
+    --train_dir_bad /home/dherrera/data/elephants/certainty/v1 \
+                    /home/dherrera/data/elephants/certainty/v2 \
+                    /home/dherrera/data/elephants/certainty/v4 \
+    --train_val_split 0.8 \
     --freeze_layers vit \
     --remove_unused_columns False \
     --dataloader_num_workers 12 \
@@ -16,6 +19,7 @@ python training/classification_vit/train_classification.py \
     --eval_strategy epoch \
     --num_train_epochs 200 \
     --learning_rate 2e-5 \
+    --lr_scheduler_type cosine_with_restarts \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 8 \
     --logging_strategy steps \

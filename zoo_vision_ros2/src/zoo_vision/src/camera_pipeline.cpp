@@ -48,7 +48,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   // Set up paths to store improvement images
   if (recordTracks_) {
-    rootPathImprove_ = "/media/dherrera/ElephantExternal/elephants/improve";
+    rootPathImprove_ = "/media/dherrera/ElephantsWD/elephants/improve";
     std::filesystem::create_directories(rootPathImprove_);
   }
 
