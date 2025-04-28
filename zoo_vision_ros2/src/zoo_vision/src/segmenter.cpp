@@ -129,13 +129,16 @@ struct MaskComponentResult {
   Eigen::AlignedBox2f bbox;
 };
 
-MaskComponentResult getBestMaskComponent(const at::Tensor rawMask) {
+std::optional<MaskComponentResult> getBestMaskComponent(const at::Tensor rawMask) {
   // Segmentation network doesn't always produce a single coherent segmentation
   // Select largest connected component
   const cv::Mat1b cvRawMask = wrapCvFromTensor1b(rawMask);
 
   cv::Mat labels, stats, centroids;
   cv::connectedComponentsWithStats(cvRawMask, labels, stats, centroids, 8, CV_16U);
+  if (stats.empty()) {
+    return std::nullopt;
+  }
 
   // Find biggest component
   int bestIdx = 0;
@@ -161,7 +164,7 @@ MaskComponentResult getBestMaskComponent(const at::Tensor rawMask) {
 
   auto bbox = Eigen::AlignedBox2f(x0, x0 + bboxSize);
 
-  return {bestMask, bestArea, bbox};
+  return {{bestMask, bestArea, bbox}};
 }
 
 void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
@@ -249,7 +252,6 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
 
   detectionMsg.detection_count = 0;
 
-  const auto world_from_world2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
   boxes.clear();
   for (int i = 0; i < modelDetectionCount && detectionMsg.detection_count < MAX_DETECTION_COUNT; ++i) {
     const auto inputIndex = sortedIndices[i].item<int>();
@@ -266,7 +268,11 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
 
     // Segmentation network doesn't always produce a single coherent segmentation
     // Select largest connected component
-    const auto &[mask, area, bbox] = getBestMaskComponent(masks[inputIndex]);
+    const auto maybeMask = getBestMaskComponent(masks[inputIndex]);
+    if (!maybeMask.has_value()) {
+      continue;
+    }
+    const auto &[mask, area, bbox] = *maybeMask;
 
     // Threshold area
     const int AREA_THRESHOLD = 5 * 5; // 5x5 box in a map of ~(150x270)
@@ -303,15 +309,50 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
 
     // Project to world
     const float32_t scale_calibratedFromImage = static_cast<float32_t>(calibratedCameraSize_[0]) / imageWidth;
-
-    const Eigen::Vector2f imagePosition = Eigen::Vector2f{bbox.center()[0] * detectionMsg.scalex_image_from_detection,
-                                                          bbox.max()[1] * detectionMsg.scaley_image_from_detection} *
-                                          scale_calibratedFromImage;
-    const Eigen::Vector3f worldPosition =
-        world_from_world2((H_world2FromCamera_ * imagePosition.homogeneous()).hnormalized());
+    auto scalePoint = [&](Eigen::Vector2f p) {
+      return Eigen::Vector2f{p.x() * detectionMsg.scalex_image_from_detection * scale_calibratedFromImage,
+                             p.y() * detectionMsg.scaley_image_from_detection * scale_calibratedFromImage};
+    };
+    const Eigen::AlignedBox2f bboxInCalibrated = {scalePoint(bbox.min()), scalePoint(bbox.max())};
+    const Eigen::Vector3f worldPosition = worldFromBbox(bboxInCalibrated);
     worldPositionsMap.col(outputIndex) = worldPosition;
   }
   detectionMsg.masks.sizes[0] = detectionMsg.detection_count;
 }
 
+Eigen::Vector3f Segmenter::worldFromBbox(const Eigen::AlignedBox2f &bbox) const {
+  const auto world2FromImage = [&](Eigen::Vector2f p) { return (H_world2FromCamera_ * p.homogeneous()).hnormalized(); };
+  const auto worldFromWorld2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
+
+  // Here we do a small trick. The initial imagePosition is at the middle-bottom of the bounding box.
+  // But animals are 3D so we try to guess the center by assuming the animal is a rectangle of X-Y-Z dimensions.
+  // Observing the animal from the front gives an aspect ratio of Ax=X/Z, whereas from the side the aspect is Ay=Y/Z.
+  // For aspect ratio Ax we want to add an offset of Y/2 in the world plane. For aspect Ay we want to add X/2.
+  // So we do a linear interpolation between Ax and Ay to find the offset to apply.
+  constexpr float32_t aspectMin = 0.5f;
+  constexpr float32_t aspectMax = 1.0f;
+  constexpr float32_t offsetMin = 1.5f;
+  constexpr float32_t offsetMax = 0.5f;
+
+  const float32_t aspect = bbox.sizes()[0] / bbox.sizes()[1];
+  float32_t offset;
+  if (aspect <= aspectMin) {
+    offset = offsetMin;
+  } else if (aspect >= aspectMax) {
+    offset = offsetMax;
+  } else {
+    offset = (aspect - aspectMin) / (aspectMax - aspectMin) * (offsetMax - offsetMin) + offsetMin;
+  }
+
+  const Eigen::Vector2f bboxMiddleInImage = Eigen::Vector2f{bbox.center()[0], bbox.max()[1]};
+  const Eigen::Vector2f bboxMiddleInWorld2 = world2FromImage(bboxMiddleInImage);
+
+  const Eigen::Vector2f deltaInImage = bboxMiddleInImage + Eigen::Vector2f{0.f, -1.f};
+  const Eigen::Vector2f deltaInWorld2 = world2FromImage(deltaInImage);
+  const Eigen::Vector2f offsetDirection = (deltaInWorld2 - bboxMiddleInWorld2).normalized();
+
+  const Eigen::Vector2f centerInWorld2 = bboxMiddleInWorld2 + offsetDirection * offset;
+
+  return worldFromWorld2(centerInWorld2);
+}
 } // namespace zoo

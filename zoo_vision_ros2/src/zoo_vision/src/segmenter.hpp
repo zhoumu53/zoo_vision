@@ -54,6 +54,7 @@ private:
 
   SegmentationResult callMaskrcnn(const at::Tensor &image);
   SegmentationResult callMask2Former(const at::Tensor &image);
+  Eigen::Vector3f worldFromBbox(const Eigen::AlignedBox2f &bbox) const;
 
   std::string name_;
   rclcpp::Logger logger_;
