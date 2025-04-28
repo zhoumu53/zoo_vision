@@ -204,7 +204,12 @@ void VideoLoader::onTimer() {
   bool framePublished = false;
 
   for (auto &[cameraName, cameraData] : cameras_) {
+    // Try to load the next video if we are not at the end of the list
+    if (!cameraData.videoStream_.has_value() && cameraData.currentVideo_ != cameraData.videoList_.end()) {
+      loadNextVideo(cameraName, cameraData);
+    }
     if (!cameraData.videoStream_.has_value()) {
+      // No video to load, ignore camera from now on
       continue;
     }
 

@@ -88,10 +88,11 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
   std::array<bool, MAX_TRACK_COUNT> trackUsed{false};
 
   // Greedy matching
+  constexpr float32_t MIN_IOU_THRESHOLD = 0.4f;
   [[maybe_unused]] int matchCount = 0;
   if (tracks_.size() > 0 && inputBoxCount > 0) {
     auto argmax = eigen_argmax(score);
-    while (argmax.second > 0) {
+    while (argmax.second > MIN_IOU_THRESHOLD) {
       const auto [r, c] = argmax.first;
 
       TrackData &track = *trackIts[r]->second;
