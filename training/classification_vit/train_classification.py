@@ -421,6 +421,11 @@ def main():
         split = dataset["train"].train_test_split(data_args.train_val_split)
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
+    elif "validation" not in dataset:
+        import copy
+
+        print("No validation dataset, cloning train into validation")
+        dataset["validation"] = copy.deepcopy(dataset["train"])
     if len(dataset["train"]) == 0:
         raise RuntimeError("Training dataset is empty")
 
@@ -528,12 +533,18 @@ def main():
 
         _train_transforms = A.Compose(
             [
-                A.RandomResizedCrop(size),
                 A.HorizontalFlip(p=0.5 if not data_args.no_flip else 0),
-                A.Rotate(3),
+                A.Affine(
+                    p=0.9,
+                    scale=[0.9, 1.1],
+                    translate_percent=[-0.02, +0.02],
+                    rotate=[-3, +3],
+                    keep_ratio=True,
+                ),
                 A.ColorJitter(),
                 A.GaussNoise(mean_range=[0, 0], std_range=[0.1, 0.2]),
                 A.Erasing(),
+                A.RandomResizedCrop(size),
                 A.Lambda(image=apply_image_processor),
             ]
         )

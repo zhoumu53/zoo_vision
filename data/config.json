@@ -12,7 +12,7 @@
       "id": 2,
       "color": "#B4E1FF"
     },
-    "Fahra": {
+    "Farha": {
       "id": 3,
       "color": "#AB87FF"
     },
@@ -74,7 +74,7 @@
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
     "quality": "../models/certainty/vit/v4/config.ptc",
     "identity": "../models/identity/vit/v4/config.ptc",
-    "behaviour": "../models/sleep/vit/v2/config.ptc"
+    "behaviour": "../models/sleep/vit/v2_no_validation/config.ptc"
   },
   "rerun_config": {
     "low_res": false,

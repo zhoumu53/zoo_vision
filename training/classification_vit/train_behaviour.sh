@@ -1,8 +1,9 @@
 python training/classification_vit/train_classification.py \
     --model_name_or_path google/vit-base-patch16-224 \
     --train_dir /home/dherrera/data/elephants/behaviour/sleep_v1 \
-    --train_dir /home/dherrera/data/elephants/behaviour/sleep_v2 \
-    --train_val_split 0.2 \
+                /home/dherrera/data/elephants/behaviour/sleep_v2 \
+    --train_val_split 0.0 \
+    --freeze_layers embeddings \
     --remove_unused_columns False \
     --dataloader_num_workers 12 \
     --dataloader_prefetch_factor 2 \

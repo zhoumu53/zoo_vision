@@ -1,12 +1,14 @@
 python training/classification_vit/train_classification.py \
     --model_name_or_path /home/dherrera/git/zoo_vision/models/identity/vit/all_freeze_vit \
-    --train_dir /home/dherrera/data/elephants/identity/dataset/v1/train_curated \
-                /home/dherrera/data/elephants/identity/dataset/v1/val \
-                /home/dherrera/data/elephants/identity/dataset/d2/train \
-                /home/dherrera/data/elephants/identity/dataset/certainty/train/good \
-                /home/dherrera/data/elephants/identity/dataset/certainty/val \
-                /home/dherrera/data/elephants/identity/dataset/id3 \
-                /home/dherrera/data/elephants/identity/dataset/v4 \
+    --train_dir \
+    /home/dherrera/data/elephants/identity/dataset/v1/train_curated \
+    /home/dherrera/data/elephants/identity/dataset/v1/val \
+    /home/dherrera/data/elephants/identity/dataset/d2/train \
+    /home/dherrera/data/elephants/identity/dataset/certainty/train/good \
+    /home/dherrera/data/elephants/identity/dataset/certainty/val \
+    /home/dherrera/data/elephants/identity/dataset/id3 \
+    --validation_dir \
+    /home/dherrera/data/elephants/identity/dataset/v4 \
     --train_val_split 0.8 \
     --freeze_layers embeddings \
     --remove_unused_columns False \

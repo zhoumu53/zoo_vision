@@ -227,9 +227,20 @@ def main():
         args,
     )
 
+    process_classification_dataset(
+        "zoo-elephants-sleep-v3",
+        lambda name: fo.Dataset.from_dir(
+            dataset_type=fo.types.ImageClassificationDirectoryTree,
+            dataset_dir=elephant_ds_root / "behaviour/sleep_v3",
+            name=name,
+            persistent=True,
+        ),
+        args,
+    )
+
     merge_datasets(
         "zoo-elephants-sleep",
-        ["zoo-elephants-sleep-v1", "zoo-elephants-sleep-v2"],
+        ["zoo-elephants-sleep-v1", "zoo-elephants-sleep-v2", "zoo-elephants-sleep-v3"],
         args,
     )
 
