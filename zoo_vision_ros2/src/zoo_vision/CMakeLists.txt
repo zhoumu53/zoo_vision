@@ -26,13 +26,31 @@ find_package( OpenCV 4.6.0 EXACT REQUIRED )
 find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Download all deps
+FetchContent_Declare(onnxruntime_release URL https://github.com/microsoft/onnxruntime/releases/download/v1.21.1/onnxruntime-linux-x64-gpu-1.21.1.tgz)
 FetchContent_Declare(TorchRelease URL https://download.pytorch.org/libtorch/cu124/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcu124.zip)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
 FetchContent_Declare(nvtx3 URL https://github.com/NVIDIA/NVTX/archive/refs/tags/v3.1.0.tar.gz)
 FetchContent_Declare(argparse GIT_REPOSITORY https://github.com/p-ranav/argparse.git)
 FetchContent_Declare(date GIT_REPOSITORY https://github.com/HowardHinnant/date.git)
 FetchContent_Declare(otl URL https://otl.sourceforge.net/otlv4_h2.zip)
-FetchContent_MakeAvailable(TorchRelease json nvtx3 argparse date otl)
+
+FetchContent_MakeAvailable(onnxruntime_release TorchRelease json nvtx3 argparse date otl)
+
+# yolos-cpp asks for a very old cmake so the ONNXRUNTIME_DIR gets cleared
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) 
+set(ONNXRUNTIME_DIR ${onnxruntime_release_SOURCE_DIR})
+FetchContent_Declare(yolos-cpp GIT_REPOSITORY https://github.com/plumonito/YOLOs-CPP GIT_TAG feature/header-cmake-target)
+FetchContent_MakeAvailable(yolos-cpp)
+
+# onnx
+# Bugfix: there are cmake files that could produce the onnxruntime target with
+#   list(APPEND CMAKE_PREFIX_PATH "${onnxruntime_release_SOURCE_DIR}")
+#   find_package(onnxruntime REQUIRED)
+# But the cmake files in the release package are broken. Ignore and create our own imported targets.
+add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+target_include_directories(onnxruntime::onnxruntime INTERFACE ${onnxruntime_release_SOURCE_DIR}/include)
+set_target_properties(onnxruntime::onnxruntime PROPERTIES 
+  IMPORTED_LOCATION ${onnxruntime_release_SOURCE_DIR}/lib/libonnxruntime.so)
 
 # torch
 list(APPEND CMAKE_PREFIX_PATH "${torchrelease_SOURCE_DIR}")
@@ -75,6 +93,8 @@ add_executable(zoo_vision
   src/video_loader.cpp
   src/segmenter.hpp
   src/segmenter.cpp
+  src/segmenter_yolo.hpp
+  src/segmenter_yolo.cpp
   src/patch_cropper.hpp
   src/patch_cropper.cpp
   src/vote_histogram.hpp
@@ -120,6 +140,8 @@ target_link_libraries(zoo_vision
   zoo_vision_rs
   argparse
   date
+  onnxruntime::onnxruntime
+  yolos_cpp
 )
 
 install(TARGETS

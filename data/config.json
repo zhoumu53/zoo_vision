@@ -70,7 +70,7 @@
   "models": {
     "elephant_label_id": 0,
     "score_threshold": 0.9,
-    "segmentation": "../models/segmentation/mask2former/freeze_encoder_q100/config.ptc",
+    "segmentation": "../models/segmentation/yolo/all_v3/weights/best.onnx",
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
     "quality": "../models/certainty/vit/v4/config.ptc",
     "identity": "../models/identity/vit/v4/config.ptc",

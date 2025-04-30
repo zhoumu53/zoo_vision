@@ -41,7 +41,8 @@ namespace zoo {
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
-      trackMatcher_{}, segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
+      trackMatcher_{}, /*segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_},*/
+      segmenterYolo_{nameIndex, cameraName_, cudaStream_},
       identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
@@ -121,8 +122,9 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Segmentation
-  std::vector<Eigen::AlignedBox2f> boxes;
-  segmenter_.onImage(detectionMsg, boxes, imageNorm);
+  std::vector<Eigen::AlignedBox2f> boxes{};
+  // segmenter_.onImage(detectionMsg, boxes, imageNorm);
+  segmenterYolo_.onImage(detectionMsg, boxes, img);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids

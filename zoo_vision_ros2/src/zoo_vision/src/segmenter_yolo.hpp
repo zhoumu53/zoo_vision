@@ -23,24 +23,25 @@
 #include <Eigen/Dense>
 #include <c10/cuda/CUDAStream.h>
 #include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <torch/script.h>
 
 #include <filesystem>
+
+class YOLOv11SegDetector;
 
 namespace zoo {
 
 using float32_t = float;
 
-class Segmenter {
+class SegmenterYolo {
 public:
-  explicit Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                     at::cuda::CUDAStream cudaStream);
+  explicit SegmenterYolo(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream);
+~SegmenterYolo();
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
-               const at::Tensor &imageTensor);
+  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes, const cv::Mat &image);
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
@@ -52,9 +53,7 @@ private:
     at::Tensor labels;
   };
 
-  SegmentationResult callMaskrcnn(const at::Tensor &image);
-  SegmentationResult callMask2Former(const at::Tensor &image);
-  Eigen::Vector3f worldFromBbox(const Eigen::AlignedBox2f &bbox) const;
+  SegmentationResult callYolo(const cv::Mat &image);
 
   std::string name_;
   rclcpp::Logger logger_;
@@ -63,13 +62,7 @@ private:
   std::string cameraName_;
 
   float32_t scoreThreshold_;
-  Eigen::Vector2i calibratedCameraSize_;
-  Eigen::Matrix3f H_world2FromCamera_;
-  Eigen::Matrix3f H_mapFromWorld2_;
 
-  int elephant_label_id_;
-  torch::jit::script::Module model_;
-
-  TrackMatcher &trackMatcher_; // TODO: we're not using this for anything, remove?
+  std::unique_ptr<YOLOv11SegDetector> model_;
 };
 } // namespace zoo

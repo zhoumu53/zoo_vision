@@ -38,6 +38,7 @@ datasets
 albumentations
 torchmetrics
 tf-keras # Solves compatibility issue between transformers.Trainer and Keras 3
+ultralytics
 
 # Rerun is our main visualization library
 rerun-sdk==0.22.1
@@ -47,6 +48,7 @@ git+https://github.com/plumonito/sam2 # Custom repo to allow passing images dire
 pyside6 # UI components
 
 # Other
+simple-parsing # Define input args as a Dataclass
 enlighten # Progress bar
 git+https://github.com/XuehaiPan/nvitop.git#egg=nvitop # Check gpu usage in real-time
 pytesseract # To read video time, also requires apt install of tesseract-ocr

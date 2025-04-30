@@ -25,6 +25,7 @@
 #include "zoo_vision/image_quality.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter.hpp"
+#include "zoo_vision/segmenter_yolo.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 
@@ -67,7 +68,8 @@ private:
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;
-  Segmenter segmenter_;
+  // Segmenter segmenter_;
+  SegmenterYolo segmenterYolo_;
   ImageEmbedder embedder_;
   ImageQualityNet quality_;
   Identifier identifier_;
