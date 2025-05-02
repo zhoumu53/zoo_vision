@@ -81,7 +81,7 @@ auto SegmenterYolo::callYolo(const cv::Mat &image) -> SegmentationResult {
   return SegmentationResult{};
 }
 
-void SegmenterYolo::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
+void SegmenterYolo::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> & /*boxes*/,
                             const cv::Mat &image) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 

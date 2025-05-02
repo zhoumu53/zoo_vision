@@ -20,6 +20,7 @@
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/types.hpp"
 
 #include <Eigen/Dense>
 #include <c10/cuda/CUDAStream.h>
@@ -31,40 +32,28 @@
 
 namespace zoo {
 
-class Segmenter {
+class WorldLocator {
 public:
-  explicit Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                     at::cuda::CUDAStream cudaStream);
+  explicit WorldLocator(int nameIndex, std::string cameraName);
 
   void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<AlignedBox2f> &boxes, Vector2i &detectionImageSize,
-               const at::Tensor &imageTensor);
+  void setDetectionImageSize(Eigen::Vector2i size) { detectionImageSize_ = size; }
+
+  void worldFromBboxes(Eigen::Ref<MatrixX3f> positionsInWorld, std::span<const AlignedBox2f> bboxesInDetection) const;
+  Eigen::Vector3f worldFromBbox(const AlignedBox2f &bboxInDetection) const;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
 
-  struct SegmentationResult {
-    at::Tensor masks_u8;
-    at::Tensor boxes;
-    at::Tensor scores;
-    at::Tensor labels;
-  };
-
-  SegmentationResult callMaskrcnn(const at::Tensor &image);
-  SegmentationResult callMask2Former(const at::Tensor &image);
-
   std::string name_;
   rclcpp::Logger logger_;
-  at::cuda::CUDAStream cudaStream_;
 
   std::string cameraName_;
 
-  float32_t scoreThreshold_;
+  Vector2i detectionImageSize_;
 
-  int elephant_label_id_;
-  torch::jit::script::Module model_;
-
-  TrackMatcher &trackMatcher_; // TODO: we're not using this for anything, remove?
+  Vector2i calibratedCameraSize_;
+  Matrix3f H_world2FromCamera_;
+  Matrix3f H_mapFromWorld2_;
 };
 } // namespace zoo

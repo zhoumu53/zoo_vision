@@ -91,10 +91,13 @@ add_executable(zoo_vision
   src/image_quality.cpp
   src/video_loader.hpp
   src/video_loader.cpp
+  src/segmenter_interface.hpp
   src/segmenter.hpp
   src/segmenter.cpp
   src/segmenter_yolo.hpp
   src/segmenter_yolo.cpp
+  src/world_locator.hpp
+  src/world_locator.cpp
   src/patch_cropper.hpp
   src/patch_cropper.cpp
   src/vote_histogram.hpp

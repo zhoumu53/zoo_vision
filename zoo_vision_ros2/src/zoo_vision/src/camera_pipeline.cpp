@@ -41,8 +41,7 @@ namespace zoo {
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
-      trackMatcher_{}, /*segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_},*/
-      segmenterYolo_{nameIndex, cameraName_, cudaStream_},
+      trackMatcher_{}, segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_}, locator_{nameIndex, cameraName_},
       identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
@@ -122,14 +121,30 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Segmentation
-  std::vector<Eigen::AlignedBox2f> boxes{};
-  // segmenter_.onImage(detectionMsg, boxes, imageNorm);
-  segmenterYolo_.onImage(detectionMsg, boxes, img);
+  std::vector<Eigen::AlignedBox2f> bboxesInDetection{};
+  Eigen::Vector2i detectionImageSize;
+  {
+    segmenter_.onImage(detectionMsg, bboxesInDetection, detectionImageSize, imageNorm);
+
+    // Copy results to detectionMsg
+    detectionMsg.scalex_image_from_detection = static_cast<float>(imageMsg.width) / detectionImageSize[0];
+    detectionMsg.scaley_image_from_detection = static_cast<float>(imageMsg.height) / detectionImageSize[1];
+  }
+
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  // Localize in world
+  {
+    Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
+                                                   detectionMsg.world_positions.size() / 3);
+
+    locator_.setDetectionImageSize(detectionImageSize);
+    locator_.worldFromBboxes(worldPositionsMap, bboxesInDetection);
+  }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  auto trackUpdateStats = trackMatcher_.update(sysTime, boxes, trackIds);
+  auto trackUpdateStats = trackMatcher_.update(sysTime, bboxesInDetection, trackIds);
   if (recordTracks_) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);

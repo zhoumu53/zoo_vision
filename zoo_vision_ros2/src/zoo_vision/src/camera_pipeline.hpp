@@ -28,6 +28,7 @@
 #include "zoo_vision/segmenter_yolo.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/world_locator.hpp"
 
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
@@ -68,8 +69,8 @@ private:
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;
-  // Segmenter segmenter_;
-  SegmenterYolo segmenterYolo_;
+  Segmenter segmenter_;
+  WorldLocator locator_;
   ImageEmbedder embedder_;
   ImageQualityNet quality_;
   Identifier identifier_;

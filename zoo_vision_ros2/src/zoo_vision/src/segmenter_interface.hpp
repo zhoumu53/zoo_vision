@@ -13,34 +13,25 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_vision/types.hpp"
+
+#include <ATen/core/Tensor.h>
 #include <Eigen/Dense>
-#include <cstdint>
-
-#ifndef NDEBUG
-#define ASSERT_DEBUG(x) assert(x)
-#else
-#define ASSERT_DEBUG(x) ((void)(x))
-#endif
-
-using float32_t = float;
+#include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 namespace zoo {
 
-using TrackId = uint32_t;
+struct SegmenterResult {
+  std::vector<Eigen::AlignedBox2f> boxes;
+};
 
-using TClassId = uint32_t;
-using TIdentity = uint32_t;
-constexpr TIdentity INVALID_IDENTITY = TIdentity(0);
+class ISegmenter {
+public:
+  virtual ~ISegmenter() = default;
 
-using TBehaviour = uint32_t;
-constexpr TBehaviour INVALID_BEHAVIOUR = TBehaviour(0);
-
-using Matrix3f = Eigen::Matrix3f;
-using MatrixX2f = Eigen::MatrixX2f;
-using MatrixX3f = Eigen::MatrixX3f;
-using Vector2i = Eigen::Vector2i;
-using Vector2f = Eigen::Vector2f;
-
-using AlignedBox2f = Eigen::AlignedBox2f;
-
+  virtual void readConfig(const nlohmann::json &config) = 0;
+  virtual void onImage(const cv::Mat &imageCpu, const at::Tensor &imageGpu) = 0;
+};
 } // namespace zoo
