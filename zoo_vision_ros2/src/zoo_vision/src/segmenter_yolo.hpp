@@ -13,17 +13,11 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_msgs/msg/detection.hpp"
-#include "zoo_msgs/msg/image12m.hpp"
-#include "zoo_msgs/msg/image4m.hpp"
-#include "zoo_vision/identifier.hpp"
+#include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
-#include "zoo_vision/track_matcher.hpp"
 
-#include <Eigen/Dense>
 #include <c10/cuda/CUDAStream.h>
-#include <nlohmann/json.hpp>
-#include <opencv2/core.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
@@ -32,16 +26,17 @@ class YOLOv11SegDetector;
 
 namespace zoo {
 
-using float32_t = float;
-
-class SegmenterYolo {
+class SegmenterYolo : public ISegmenter {
 public:
   explicit SegmenterYolo(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream);
-~SegmenterYolo();
+  ~SegmenterYolo();
 
   void readConfig(const nlohmann::json &config);
+
   void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes, const cv::Mat &image);
+  Vector2i getDetectionImageSize() const override { return detectionImageSize_; }
+  void onImage(SegmenterResult &result, const at::Tensor &imageGpu,
+               const cv::Mat &imageCpu /*TODO: remove imageCpu*/) override;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
@@ -64,5 +59,6 @@ private:
   float32_t scoreThreshold_;
 
   std::unique_ptr<YOLOv11SegDetector> model_;
+  Vector2i detectionImageSize_;
 };
 } // namespace zoo

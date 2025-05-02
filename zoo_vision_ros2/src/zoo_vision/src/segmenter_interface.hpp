@@ -17,9 +17,7 @@
 
 #include <ATen/core/Tensor.h>
 #include <Eigen/Dense>
-#include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
-#include <rclcpp/rclcpp.hpp>
 
 namespace zoo {
 

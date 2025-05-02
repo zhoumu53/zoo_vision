@@ -23,12 +23,8 @@
 #include <nlohmann/json.hpp>
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
 #include <seg/YOLO11Seg.hpp>
-#include <sensor_msgs/image_encodings.hpp>
-#include <torch/torch.h>
 
 #include <algorithm>
 #include <chrono>
@@ -72,17 +68,15 @@ void SegmenterYolo::loadModel(const std::filesystem::path &modelPath) {
     std::cout << "Exception: " << ex.what() << std::endl;
     std::terminate();
   }
-  // DEBUG print model info
+  detectionImageSize_ = {2688, 1520};
 }
 
-auto SegmenterYolo::callYolo(const cv::Mat &image) -> SegmentationResult {
-  std::vector<Segmentation> result = model_->segment(image);
-  RCLCPP_INFO(get_logger(), "Detected %i objects", int(result.size()));
-  return SegmentationResult{};
+AlignedBox2f eigenBboxFromYoloBbox(const BoundingBox &bbox) {
+  Vector2f min = {bbox.x, bbox.y};
+  Vector2f size = {bbox.width, bbox.height};
+  return AlignedBox2f(min, min + size);
 }
-
-void SegmenterYolo::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> & /*boxes*/,
-                            const cv::Mat &image) {
+void SegmenterYolo::onImage(SegmenterResult &result, const at::Tensor & /*imageGpu*/, const cv::Mat &imageCpu) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
   std::optional<nvtx3::scoped_range> nvtxLabel{"seg_before (" + cameraName_ + ")"};
@@ -91,14 +85,12 @@ void SegmenterYolo::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<
 
   ////////////////////////////////////////////////////////////
   // Execute segmentation network
-  SegmentationResult segmentationResult;
+  std::vector<Segmentation> resultsYolo;
   {
-    torch::jit::GraphOptimizerEnabledGuard optGuard(false);
-
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 
     eventBeforeNetwork.record();
-    segmentationResult = callYolo(image);
+    resultsYolo = model_->segment(imageCpu);
     eventAfterNetwork.record();
   }
 
@@ -107,11 +99,14 @@ void SegmenterYolo::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<
 
   nvtxLabel.emplace("seg_after (" + cameraName_ + ")");
 
-  cudaStreamSynchronize(cudaStream_);
+  for (const auto &[i, resultYolo] : std::views::enumerate(resultsYolo)) {
+    CHECK_EQ(detectionImageSize_[0], resultYolo.mask.cols);
+    CHECK_EQ(detectionImageSize_[1], resultYolo.mask.rows);
 
-  constexpr auto MS_TO_NS = 1e6f;
-  addRosKeyValue(detectionMsg.timings.items_ns, "seg_net",
-                 eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
+    result.bboxesInDetection.push_back(eigenBboxFromYoloBbox(resultYolo.box));
+    cv::Mat1b maskMap = wrapCvFromTensor1b(result.masks[i]);
+    resultYolo.mask.copyTo(maskMap);
+  }
 }
 
 } // namespace zoo

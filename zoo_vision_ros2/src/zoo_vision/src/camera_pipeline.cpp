@@ -44,7 +44,7 @@ namespace zoo {
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
-      trackMatcher_{}, segmenter_{std::make_unique<Segmenter>(nameIndex, cameraName_, cudaStream_)},
+      trackMatcher_{}, segmenter_{std::make_unique<SegmenterYolo>(nameIndex, cameraName_, cudaStream_)},
       locator_{nameIndex, cameraName_}, identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());

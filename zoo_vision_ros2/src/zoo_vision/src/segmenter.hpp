@@ -23,7 +23,7 @@
 
 #include <Eigen/Dense>
 #include <c10/cuda/CUDAStream.h>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <torch/script.h>
 
