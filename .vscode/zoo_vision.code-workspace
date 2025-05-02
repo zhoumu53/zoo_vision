@@ -139,6 +139,9 @@
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"
 		],
-		"editor.formatOnSave": true
+		"editor.formatOnSave": true,
+		"files.exclude": {
+			"**/zoo_vision/include/zoo_vision/*": true
+		}
 	}
 }
