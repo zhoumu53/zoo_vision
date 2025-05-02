@@ -16,10 +16,6 @@ find_package(ament_cmake REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
-find_package(image_transport REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(zoo_msgs REQUIRED)
-# find_package(zoo_vision_rs REQUIRED)
 
 find_package( OpenCV 4.6.0 EXACT REQUIRED )
 
@@ -61,13 +57,6 @@ find_package(TorchVision REQUIRED)
 
 # nvtext
 include("${nvtx3_SOURCE_DIR}/c/nvtxImportedTargets.cmake")
-
-# zoo_vision_rs
-add_library(zoo_vision_rs STATIC IMPORTED)
-set_target_properties(zoo_vision_rs PROPERTIES 
-  IMPORTED_LOCATION_DEBUG   /home/dherrera/git/zoo_vision/zoo_vision_ros2/build/zoo_vision_rs/debug/libzoo_vision_rs.a
-  IMPORTED_LOCATION_RELEASE /home/dherrera/git/zoo_vision/zoo_vision_ros2/build/zoo_vision_rs/release/libzoo_vision_rs.a
-  IMPORTED_LOCATION_RELWITHDEBINFO /home/dherrera/git/zoo_vision/zoo_vision_ros2/build/zoo_vision_rs/release/libzoo_vision_rs.a)
 
 ####################################
 # zoo_vision package
@@ -128,22 +117,24 @@ target_compile_features(zoo_vision PUBLIC cxx_std_23)
 ament_target_dependencies(zoo_vision
   rclcpp
   rclcpp_components
-  image_transport
-  cv_bridge
-  OpenCV
-  zoo_msgs
+  builtin_interfaces
 )
+# add_dependencies(zoo_vision zoo_msgs)
 target_link_libraries(zoo_vision 
+  zoo_vision_rs
+  zoo_msgs_library
+  zoo_msgs_library_c
   stdc++exp
   /usr/lib/x86_64-linux-gnu/odbc/psqlodbcw.so
   Eigen3::Eigen torch
   -Wl,--no-as-needed TorchVision::TorchVision -Wl,--as-needed 
   nlohmann_json::nlohmann_json
   nvtx3-cpp
-  zoo_vision_rs
   argparse
   date
   onnxruntime::onnxruntime
+  opencv_core
+  opencv_highgui
   yolos_cpp
 )
 

@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "${env:HOME}/git/zoo_vision/zoo_vision_ros2/src/zoo_vision",
+    "cmake.sourceDirectory": "${env:HOME}/git/zoo_vision/",
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
     "cmake.generator": "Ninja"
 }

@@ -142,6 +142,7 @@
 		"editor.formatOnSave": true,
 		"files.exclude": {
 			"**/zoo_vision/include/zoo_vision/*": true
-		}
+		},
+		"cmake.buildDirectory": "${workspaceFolder}/build/${buildType}"
 	}
 }

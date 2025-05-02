@@ -12,33 +12,5 @@
             "problemMatcher": [],
             "detail": "CMake template build task"
         },
-        {
-            "type": "shell",
-            "label": "Colcon: build release",
-            "command": "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_COLOR_DIAGNOSTICS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo --cargo-args '--release'",
-            "group": "build",
-            "problemMatcher": [],
-            "options": {
-                "cwd": "${workspaceFolder}/zoo_vision_ros2",
-                "env": {
-                    "CMAKE_BUILD_PARALLEL_LEVEL": "32"
-                }
-            },
-            "detail": "Colcon build all packages task"
-        },
-        {
-            "type": "shell",
-            "label": "Colcon: build debug",
-            "command": "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_COLOR_DIAGNOSTICS=ON -DCMAKE_BUILD_TYPE=Debug",
-            "group": "build",
-            "problemMatcher": [],
-            "options": {
-                "cwd": "${workspaceFolder}/zoo_vision_ros2",
-                "env": {
-                    "CMAKE_BUILD_PARALLEL_LEVEL": "32"
-                }
-            },
-            "detail": "Colcon build all packages task"
-        },
     ]
 }

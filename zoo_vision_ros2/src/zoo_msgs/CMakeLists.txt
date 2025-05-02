@@ -55,6 +55,19 @@ if(cpp_typesupport_target)
   )
 endif()
 
+rosidl_get_typesupport_target(c_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_c")
+if(c_typesupport_target)
+  add_library(${PROJECT_NAME}_library_c INTERFACE)
+  target_include_directories(${PROJECT_NAME}_library_c INTERFACE
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
+  target_link_libraries(${PROJECT_NAME}_library_c INTERFACE
+  "${c_typesupport_target}")
+
+  install(
+    TARGETS ${PROJECT_NAME}_library_c EXPORT export_${PROJECT_NAME}
+  )
+endif()
 
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_targets(export_${PROJECT_NAME})
