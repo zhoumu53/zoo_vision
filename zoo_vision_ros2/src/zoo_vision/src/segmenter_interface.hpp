@@ -30,6 +30,7 @@ struct SegmenterResult {
 class ISegmenter {
 public:
   virtual ~ISegmenter() = default;
+  virtual void setImageSize(Vector2i size) = 0;
   virtual Vector2i getDetectionImageSize() const = 0;
   virtual void onImage(SegmenterResult &result, const at::Tensor &imageGpu,
                        const cv::Mat &imageCpu /*TODO: remove imageCpu*/) = 0;

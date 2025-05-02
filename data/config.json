@@ -67,11 +67,17 @@
     "enabled": false,
     "logon": "UID=dherrera;Database=zoo_vision;DSN=postgresql"
   },
-  "models": {
+  "detection": {
+    "image": {
+      "width": 2688,
+      "height": 1520
+    },
+    "model": "../models/segmentation/yolo/all_v3/weights/best.onnx",
+    "model_backup": "../models/segmentation/mask2former/all/config.ptc",
     "elephant_label_id": 0,
-    "score_threshold": 0.9,
-    "segmentation": "../models/segmentation/yolo/all_v3/weights/best.onnx",
-    "segmentation2": "../models/segmentation/mask2former/all/config.ptc",
+    "score_threshold": 0.9
+  },
+  "models": {
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
     "quality": "../models/certainty/vit/v4/config.ptc",
     "identity": "../models/identity/vit/v4/config.ptc",

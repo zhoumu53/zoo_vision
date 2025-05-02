@@ -55,6 +55,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     std::filesystem::create_directories(rootPathImprove_);
   }
 
+  segmenter_->setImageSize(detectionImageSize_);
   locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 
   // Subscribe to receive images from camera
@@ -92,6 +93,9 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 void CameraPipeline::readConfig(const nlohmann::json &config) {
   // Settings
   recordTracks_ = config["record_tracks"].get<bool>();
+
+  const auto detectionImageJson = config["detection"]["image"];
+  detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
 }
 
 // std::mutex globalMutex;

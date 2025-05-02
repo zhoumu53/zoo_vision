@@ -48,9 +48,9 @@ SegmenterYolo::~SegmenterYolo() = default;
 
 void SegmenterYolo::readConfig(const nlohmann::json &config) {
   // Load model
-  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["segmentation"]);
+  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["detection"]["model"]);
   loadModel(modelPath);
-  scoreThreshold_ = config["models"]["score_threshold"].get<float>();
+  scoreThreshold_ = config["detection"]["score_threshold"].get<float>();
 }
 
 void SegmenterYolo::loadModel(const std::filesystem::path &modelPath) {
@@ -68,7 +68,6 @@ void SegmenterYolo::loadModel(const std::filesystem::path &modelPath) {
     std::cout << "Exception: " << ex.what() << std::endl;
     std::terminate();
   }
-  detectionImageSize_ = {2688, 1520};
 }
 
 AlignedBox2f eigenBboxFromYoloBbox(const BoundingBox &bbox) {

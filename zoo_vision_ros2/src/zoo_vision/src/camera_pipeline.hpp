@@ -63,6 +63,7 @@ private:
 
   bool recordTracks_;
 
+  Vector2i detectionImageSize_;
   ImageNormalizer normalizer_;
 
   at::cuda::CUDAStream cudaStream_;

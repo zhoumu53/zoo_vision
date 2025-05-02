@@ -32,9 +32,11 @@ public:
   ~SegmenterYolo();
 
   void readConfig(const nlohmann::json &config);
-
   void loadModel(const std::filesystem::path &modelPath);
+
+  void setImageSize(Vector2i size) override { detectionImageSize_ = size; }
   Vector2i getDetectionImageSize() const override { return detectionImageSize_; }
+
   void onImage(SegmenterResult &result, const at::Tensor &imageGpu,
                const cv::Mat &imageCpu /*TODO: remove imageCpu*/) override;
 

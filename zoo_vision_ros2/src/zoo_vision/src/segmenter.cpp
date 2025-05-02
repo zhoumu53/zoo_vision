@@ -49,10 +49,10 @@ Segmenter::Segmenter(int nameIndex, std::string cameraName, at::cuda::CUDAStream
 
 void Segmenter::readConfig(const nlohmann::json &config) {
   // Load model
-  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["segmentation"]);
+  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["detection"]["model"]);
   loadModel(modelPath);
-  elephant_label_id_ = config["models"]["elephant_label_id"].get<int>();
-  scoreThreshold_ = config["models"]["score_threshold"].get<float>();
+  elephant_label_id_ = config["detection"]["elephant_label_id"].get<int>();
+  scoreThreshold_ = config["detection"]["score_threshold"].get<float>();
 }
 
 void Segmenter::loadModel(const std::filesystem::path &modelPath) {

@@ -37,7 +37,10 @@ public:
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
+
+  void setImageSize(Vector2i /*size*/) override {}
   Vector2i getDetectionImageSize() const override { return detectionImageSize_; }
+
   void onImage(SegmenterResult &result, const at::Tensor &imageTensor, const cv::Mat & /*imageCpu*/) override;
 
 private:
