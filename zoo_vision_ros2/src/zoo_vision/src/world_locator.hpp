@@ -13,20 +13,11 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_msgs/msg/detection.hpp"
-#include "zoo_msgs/msg/image12m.hpp"
-#include "zoo_msgs/msg/image4m.hpp"
-#include "zoo_vision/identifier.hpp"
-#include "zoo_vision/segmenter_interface.hpp"
-#include "zoo_vision/timings.hpp"
-#include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/types.hpp"
 
 #include <Eigen/Dense>
-#include <c10/cuda/CUDAStream.h>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <torch/script.h>
 
 #include <filesystem>
 

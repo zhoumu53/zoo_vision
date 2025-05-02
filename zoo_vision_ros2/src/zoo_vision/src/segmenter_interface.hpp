@@ -24,14 +24,17 @@
 namespace zoo {
 
 struct SegmenterResult {
-  std::vector<Eigen::AlignedBox2f> boxes;
+  at::Tensor masks; // This must be initialized with the correct dimensions. It can be a mapped location into the output
+                    // message buffer.
+  std::vector<Eigen::AlignedBox2f> bboxesInDetection;
 };
 
 class ISegmenter {
 public:
   virtual ~ISegmenter() = default;
-
-  virtual void readConfig(const nlohmann::json &config) = 0;
-  virtual void onImage(const cv::Mat &imageCpu, const at::Tensor &imageGpu) = 0;
+  virtual Vector2i getDetectionImageSize() const = 0;
+  virtual void onImage(SegmenterResult &result, const at::Tensor &imageGpu,
+                       const cv::Mat &imageCpu /*TODO: remove imageCpu*/) = 0;
 };
+
 } // namespace zoo

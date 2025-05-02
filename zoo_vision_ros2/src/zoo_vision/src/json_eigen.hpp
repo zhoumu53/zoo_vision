@@ -5,8 +5,7 @@
 #include <typeinfo>
 
 #include <Eigen/Core>
-
-#include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json.hpp>
 
 /**
  * Provide to_json() and from_json() overloads for nlohmann::json,

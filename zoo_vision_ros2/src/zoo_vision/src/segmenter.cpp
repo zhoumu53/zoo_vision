@@ -38,9 +38,9 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Segmenter::Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher, at::cuda::CUDAStream cudaStream)
+Segmenter::Segmenter(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream)
     : name_{std::format("segmenter_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
-      cameraName_{cameraName}, trackMatcher_{trackMatcher} {
+      cameraName_{cameraName} {
   at::InferenceMode inferenceGuard;
   RCLCPP_INFO(get_logger(), "Starting segmenter for %s", cameraName_.c_str());
 
@@ -69,16 +69,9 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
     std::cout << "Exception: " << ex.what() << std::endl;
     std::terminate();
   }
-  // DEBUG print model info
-}
 
-void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const Eigen::AlignedBox2f &in) {
-  const Eigen::Vector2f center = in.center();
-  const Eigen::Vector2f halfSize = in.sizes() / 2;
-  outBbox.center[0] = center[0];
-  outBbox.center[1] = center[1];
-  outBbox.half_size[0] = halfSize[0];
-  outBbox.half_size[1] = halfSize[1];
+  // TODO: infer mask size from the model
+  detectionImageSize_ = {265, 150};
 }
 
 auto Segmenter::callMaskrcnn(const at::Tensor &image) -> SegmentationResult {
@@ -161,8 +154,7 @@ std::optional<MaskComponentResult> getBestMaskComponent(const at::Tensor rawMask
   return {{bestMask, bestArea, bbox}};
 }
 
-void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eigen::AlignedBox2f> &boxes,
-                        Eigen::Vector2i &detectionImageSize, const at::Tensor &imageTensor) {
+void Segmenter::onImage(SegmenterResult &result, const at::Tensor &imageTensor, const cv::Mat & /*imageCpu*/) {
   // RCLCPP_INFO(get_logger(), "Segmenter received id: %s", detectionMsg.header.frame_id.data.data());
 
   // at::InferenceMode inferenceGuard; // Runtime error: Global alloc not supported yet
@@ -215,15 +207,8 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
   assert(segmentationResult.boxes.size(0) == modelDetectionCount);
   assert(segmentationResult.masks_u8.size(0) == modelDetectionCount);
 
-  const int64_t maskHeight = segmentationResult.masks_u8.sizes()[1];
-  const int64_t maskWidth = segmentationResult.masks_u8.sizes()[2];
-  detectionImageSize = {maskWidth, maskHeight};
-
-  const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
-  detectionMsg.masks.sizes[0] = MAX_DETECTION_COUNT;
-  detectionMsg.masks.sizes[1] = maskHeight;
-  detectionMsg.masks.sizes[2] = maskWidth;
-  at::Tensor masksMap = mapRosTensor(detectionMsg.masks);
+  CHECK_EQ(detectionImageSize_[1], segmentationResult.masks_u8.sizes()[1]); // maskHeight
+  CHECK_EQ(detectionImageSize_[0], segmentationResult.masks_u8.sizes()[2]); // maskWidth
 
   // Move all to cpu
   const at::Tensor scores = segmentationResult.scores.to(at::kCPU, true);
@@ -235,14 +220,16 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
   // Sort scores
   const auto [sortedScores, sortedIndices] = torch::sort(scores, /*dim*/ 0, /*descending*/ true);
 
-  constexpr auto MS_TO_NS = 1e6f;
-  addRosKeyValue(detectionMsg.timings.items_ns, "seg_net",
-                 eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
+  // constexpr auto MS_TO_NS = 1e6f;
+  // addRosKeyValue(detectionMsg.timings.items_ns, "seg_net",
+  //                eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 
-  detectionMsg.detection_count = 0;
+  // detectionMsg.detection_count = 0;
 
-  boxes.clear();
-  for (int i = 0; i < modelDetectionCount && detectionMsg.detection_count < MAX_DETECTION_COUNT; ++i) {
+  const auto MAX_DETECTION_COUNT = static_cast<uint32_t>(masks.size(0));
+  uint32_t detectionCount = 0;
+  result.bboxesInDetection.clear();
+  for (int i = 0; i < modelDetectionCount && detectionCount < MAX_DETECTION_COUNT; ++i) {
     const auto inputIndex = sortedIndices[i].item<int>();
 
     const float score = sortedScores[i].item<float>();
@@ -271,8 +258,8 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
 
     // Threshold intersection with others
     int maxIntersectionArea = 0;
-    for (uint32_t maskIdx = 0; maskIdx < detectionMsg.detection_count; maskIdx++) {
-      const int intersection = (masksMap[maskIdx] * mask).sum().item<int>();
+    for (uint32_t maskIdx = 0; maskIdx < detectionCount; maskIdx++) {
+      const int intersection = (masks[maskIdx] * mask).sum().item<int>();
       if (intersection > maxIntersectionArea) {
         maxIntersectionArea = intersection;
       }
@@ -285,18 +272,17 @@ void Segmenter::onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<Eige
     }
 
     // All checks passed, keep this detection
-    const auto outputIndex = detectionMsg.detection_count;
-    detectionMsg.detection_count += 1;
+    const auto outputIndex = detectionCount;
+    detectionCount += 1;
 
     // Track ids are decided later
 
     // Mask
-    masksMap[outputIndex].copy_(mask);
+    result.masks[outputIndex].copy_(mask);
 
-    boxes.push_back(bbox);
-    copyBboxToRos(detectionMsg.bboxes[outputIndex], bbox);
+    result.bboxesInDetection.push_back(bbox);
   }
-  detectionMsg.masks.sizes[0] = detectionMsg.detection_count;
+  CHECK_EQ(result.bboxesInDetection.size(), detectionCount);
 }
 
 } // namespace zoo

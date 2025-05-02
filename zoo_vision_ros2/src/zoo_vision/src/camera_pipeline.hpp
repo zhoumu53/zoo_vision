@@ -24,14 +24,13 @@
 #include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/image_quality.hpp"
 #include "zoo_vision/patch_cropper.hpp"
-#include "zoo_vision/segmenter.hpp"
-#include "zoo_vision/segmenter_yolo.hpp"
+#include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/world_locator.hpp"
 
 #include <Eigen/Dense>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/mat.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -69,7 +68,7 @@ private:
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;
-  Segmenter segmenter_;
+  std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
   ImageQualityNet quality_;

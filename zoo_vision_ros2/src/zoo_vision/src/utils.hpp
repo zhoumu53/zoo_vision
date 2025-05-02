@@ -15,6 +15,7 @@
 
 #include "zoo_vision/types.hpp"
 
+#include "zoo_msgs/msg/bounding_box2_d.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/key_value_arrayf.hpp"
@@ -37,6 +38,8 @@ std::string_view getMsgString(const zoo_msgs::msg::String &dest);
 
 void addRosKeyValue(zoo_msgs::msg::KeyValueArrayi64 &array, const std::string_view &key, int64_t value);
 void addRosKeyValue(zoo_msgs::msg::KeyValueArrayf &array, const std::string_view &key, float value);
+
+void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const AlignedBox2f &in);
 
 cv::Mat3b wrapMat3bFromMsg(zoo_msgs::msg::Image12m &);
 

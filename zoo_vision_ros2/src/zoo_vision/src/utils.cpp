@@ -79,6 +79,15 @@ void addRosKeyValue(zoo_msgs::msg::KeyValueArrayf &array, const std::string_view
   array.values[idx] = value;
 }
 
+void copyBboxToRos(zoo_msgs::msg::BoundingBox2D &outBbox, const Eigen::AlignedBox2f &in) {
+  const Eigen::Vector2f center = in.center();
+  const Eigen::Vector2f halfSize = in.sizes() / 2;
+  outBbox.center[0] = center[0];
+  outBbox.center[1] = center[1];
+  outBbox.half_size[0] = halfSize[0];
+  outBbox.half_size[1] = halfSize[1];
+}
+
 namespace detail {
 template <class TMsg> cv::Mat3b wrapMat3bFromMsg(TMsg &msg) {
   // DANGER: casting away const. Data may be modified by opencv if we're not careful
@@ -103,8 +112,8 @@ void copyMat1bToMsg(const cv::Mat1b &img, zoo_msgs::msg::Image4m &msg) {
 }
 
 at::Tensor mapRosTensor(zoo_msgs::msg::Tensor3b32m &rosTensor) {
-  const size_t totalSize = rosTensor.sizes[0] * rosTensor.sizes[1] * rosTensor.sizes[2];
-  ASSERT_DEBUG(totalSize <= zoo_msgs::msg::Tensor3b32m::DATA_MAX_SIZE);
+  [[maybe_unused]] const size_t totalSize = rosTensor.sizes[0] * rosTensor.sizes[1] * rosTensor.sizes[2];
+  assert(totalSize <= zoo_msgs::msg::Tensor3b32m::DATA_MAX_SIZE);
   return at::from_blob(rosTensor.data.data(), {rosTensor.sizes[0], rosTensor.sizes[1], rosTensor.sizes[2]},
                        at::TensorOptions().dtype(at::kByte));
 }

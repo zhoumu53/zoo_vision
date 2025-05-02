@@ -13,16 +13,22 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+// GCC raises a false-positive with eigen array assignments
+// See https://gitlab.com/libeigen/eigen/-/issues/2506
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+
 #include <Eigen/Dense>
 #include <cstdint>
-
-#ifndef NDEBUG
-#define ASSERT_DEBUG(x) assert(x)
-#else
-#define ASSERT_DEBUG(x) ((void)(x))
-#endif
+#include <format>
+#include <stdexcept>
 
 using float32_t = float;
+
+#define CHECK_EQ(a, b)                                                                                                 \
+  if (a != b) {                                                                                                        \
+    throw std::runtime_error(std::format("Check failed: " #a "==" #b ", with \n" #a "={}\n" #b "={}", a, b));          \
+  }
 
 namespace zoo {
 

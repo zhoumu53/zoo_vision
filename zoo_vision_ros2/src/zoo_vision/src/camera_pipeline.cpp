@@ -15,12 +15,15 @@
 #include "zoo_vision/camera_pipeline.hpp"
 
 #include "zoo_vision/json_eigen.hpp"
+#include "zoo_vision/segmenter.hpp"
+#include "zoo_vision/segmenter_yolo.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <nlohmann/json.hpp>
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -41,8 +44,8 @@ namespace zoo {
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
-      trackMatcher_{}, segmenter_{nameIndex, cameraName_, trackMatcher_, cudaStream_}, locator_{nameIndex, cameraName_},
-      identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
+      trackMatcher_{}, segmenter_{std::make_unique<Segmenter>(nameIndex, cameraName_, cudaStream_)},
+      locator_{nameIndex, cameraName_}, identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
 
@@ -51,6 +54,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     rootPathImprove_ = "/media/dherrera/ElephantsWD/elephants/improve";
     std::filesystem::create_directories(rootPathImprove_);
   }
+
+  locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
@@ -121,14 +126,25 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Segmentation
-  std::vector<Eigen::AlignedBox2f> bboxesInDetection{};
-  Eigen::Vector2i detectionImageSize;
+  SegmenterResult segmenterResult;
   {
-    segmenter_.onImage(detectionMsg, bboxesInDetection, detectionImageSize, imageNorm);
+    const Vector2i detectionImageSize = segmenter_->getDetectionImageSize();
+    const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
+    detectionMsg.masks.sizes[0] = MAX_DETECTION_COUNT;
+    detectionMsg.masks.sizes[1] = detectionImageSize.y();
+    detectionMsg.masks.sizes[2] = detectionImageSize.x();
+    segmenterResult.masks = mapRosTensor(detectionMsg.masks);
+
+    segmenter_->onImage(segmenterResult, imageNorm, img);
 
     // Copy results to detectionMsg
+    detectionMsg.detection_count = segmenterResult.bboxesInDetection.size();
+    detectionMsg.masks.sizes[0] = detectionMsg.detection_count;
     detectionMsg.scalex_image_from_detection = static_cast<float>(imageMsg.width) / detectionImageSize[0];
     detectionMsg.scaley_image_from_detection = static_cast<float>(imageMsg.height) / detectionImageSize[1];
+    for (auto [i, bbox] : std::views::enumerate(segmenterResult.bboxesInDetection)) {
+      copyBboxToRos(detectionMsg.bboxes[i], bbox);
+    }
   }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -137,14 +153,13 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
                                                    detectionMsg.world_positions.size() / 3);
 
-    locator_.setDetectionImageSize(detectionImageSize);
-    locator_.worldFromBboxes(worldPositionsMap, bboxesInDetection);
+    locator_.worldFromBboxes(worldPositionsMap, segmenterResult.bboxesInDetection);
   }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  auto trackUpdateStats = trackMatcher_.update(sysTime, bboxesInDetection, trackIds);
+  auto trackUpdateStats = trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, trackIds);
   if (recordTracks_) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);

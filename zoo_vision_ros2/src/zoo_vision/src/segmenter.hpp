@@ -31,15 +31,14 @@
 
 namespace zoo {
 
-class Segmenter {
+class Segmenter : public ISegmenter {
 public:
-  explicit Segmenter(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                     at::cuda::CUDAStream cudaStream);
+  explicit Segmenter(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream);
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
-  void onImage(zoo_msgs::msg::Detection &detectionMsg, std::vector<AlignedBox2f> &boxes, Vector2i &detectionImageSize,
-               const at::Tensor &imageTensor);
+  Vector2i getDetectionImageSize() const override { return detectionImageSize_; }
+  void onImage(SegmenterResult &result, const at::Tensor &imageTensor, const cv::Mat & /*imageCpu*/) override;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
@@ -64,7 +63,6 @@ private:
 
   int elephant_label_id_;
   torch::jit::script::Module model_;
-
-  TrackMatcher &trackMatcher_; // TODO: we're not using this for anything, remove?
+  Vector2i detectionImageSize_;
 };
 } // namespace zoo

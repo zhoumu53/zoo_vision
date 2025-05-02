@@ -18,23 +18,8 @@
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
-#include <ATen/cuda/CUDAEvent.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <nlohmann/json.hpp>
-#include <nvtx3/nvtx3.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/image_encodings.hpp>
-#include <torch/torch.h>
-
-#include <algorithm>
-#include <chrono>
-#include <string.h>
-
-using namespace std::chrono_literals;
-using namespace at::indexing;
 
 namespace zoo {
 
@@ -62,9 +47,9 @@ void WorldLocator::worldFromBboxes(Eigen::Ref<MatrixX3f> positionsInWorld,
 
 Eigen::Vector3f WorldLocator::worldFromBbox(const Eigen::AlignedBox2f &bboxInDetection) const {
   const float32_t scaleX_calibratedFromDetection =
-      static_cast<float32_t>(calibratedCameraSize_[0]) / detectionImageSize_[0];
+      static_cast<float32_t>(calibratedCameraSize_.x()) / detectionImageSize_.x();
   const float32_t scaleY_calibratedFromDetection =
-      static_cast<float32_t>(calibratedCameraSize_[1]) / detectionImageSize_[1];
+      static_cast<float32_t>(calibratedCameraSize_.y()) / detectionImageSize_.y();
   auto scalePoint = [&](Eigen::Vector2f p) {
     return Eigen::Vector2f{p.x() * scaleX_calibratedFromDetection, p.y() * scaleY_calibratedFromDetection};
   };
