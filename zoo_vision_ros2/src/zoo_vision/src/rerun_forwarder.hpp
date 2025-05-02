@@ -18,7 +18,6 @@
 #include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/image_queue.hpp"
 
-#include <image_transport/image_transport.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <deque>

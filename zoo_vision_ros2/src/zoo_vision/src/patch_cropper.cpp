@@ -18,7 +18,6 @@
 #include "zoo_vision/utils.hpp"
 
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/image_encodings.hpp>
 #include <torch/torch.h>
 
 #include <algorithm>

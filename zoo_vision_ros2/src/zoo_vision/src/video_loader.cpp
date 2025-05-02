@@ -21,7 +21,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/image_encodings.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -217,7 +216,7 @@ void VideoLoader::onTimer() {
     msg->header.stamp =
         rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
     setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
-    setMsgString(msg->encoding, sensor_msgs::image_encodings::RGB8);
+    setMsgString(msg->encoding, "rgb8");
     msg->width = cameraData.frameSize.width;
     msg->height = cameraData.frameSize.height;
     msg->is_bigendian = false;

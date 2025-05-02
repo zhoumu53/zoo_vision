@@ -15,8 +15,6 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
-#include <image_transport/camera_publisher.hpp>
-#include <image_transport/image_transport.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
 #include <filesystem>

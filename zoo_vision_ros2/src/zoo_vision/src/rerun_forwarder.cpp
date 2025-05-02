@@ -17,7 +17,6 @@
 #include "zoo_msgs/msg/track_state.h"
 #include "zoo_vision/utils.hpp"
 
-#include <cv_bridge/cv_bridge.hpp>
 #include <nlohmann/json.hpp>
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/core/mat.hpp>

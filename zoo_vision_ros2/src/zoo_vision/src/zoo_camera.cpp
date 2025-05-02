@@ -20,7 +20,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/image_encodings.hpp>
 
 #include <chrono>
 
@@ -82,7 +81,7 @@ void ZooCamera::openCamera() {
 void ZooCamera::onTimer() {
   auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
   msg->header.stamp = now();
-  setMsgString(msg->encoding, sensor_msgs::image_encodings::RGB8);
+  setMsgString(msg->encoding, "rgb8");
   msg->width = frameWidth_;
   msg->height = frameHeight_;
   msg->is_bigendian = false;

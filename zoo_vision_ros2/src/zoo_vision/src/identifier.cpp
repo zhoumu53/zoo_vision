@@ -22,7 +22,6 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <nvtx3/nvtx3.hpp>
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/image_encodings.hpp>
 #include <torch/torch.h>
 
 #include <algorithm>

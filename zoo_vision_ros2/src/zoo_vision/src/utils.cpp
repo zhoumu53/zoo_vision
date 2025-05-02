@@ -14,8 +14,6 @@
 
 #include "zoo_vision/utils.hpp"
 
-#include <sensor_msgs/image_encodings.hpp>
-
 #include <ATen/ops/from_blob.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -34,7 +32,7 @@ std::unique_ptr<nlohmann::json> global_config;
 std::filesystem::path getDataPath() {
   static std::filesystem::path dataPath = {};
   if (dataPath.empty()) {
-    const int MAX_DEPTH = 5;
+    const int MAX_DEPTH = 10;
 
     std::filesystem::path root = std::filesystem::path(".");
     int depth = 0;
@@ -101,7 +99,7 @@ cv::Mat3b wrapMat3bFromMsg(zoo_msgs::msg::Image12m &msg) { return detail::wrapMa
 cv::Mat3b wrapMat3bFromMsg(const zoo_msgs::msg::Image12m &msg) { return detail::wrapMat3bFromMsg(msg); }
 
 void copyMat1bToMsg(const cv::Mat1b &img, zoo_msgs::msg::Image4m &msg) {
-  setMsgString(msg.encoding, sensor_msgs::image_encodings::MONO8);
+  setMsgString(msg.encoding, "mono8");
   msg.width = img.cols;
   msg.height = img.rows;
   msg.is_bigendian = false;
