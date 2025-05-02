@@ -133,7 +133,8 @@
 			"core": "cpp",
 			"numericaldiff": "cpp",
 			"specialfunctions": "cpp",
-			"locale": "cpp"
+			"locale": "cpp",
+			"*.icc": "cpp"
 		},
 		"rust-analyzer.linkedProjects": [
 			"${workspaceFolder}/zoo_vision_ros2/src/zoo_vision_rs/Cargo.toml"
