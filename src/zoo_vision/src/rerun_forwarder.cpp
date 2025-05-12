@@ -44,6 +44,13 @@ extern uint32_t zoo_rs_detection_callback(void *zoo_rs_handle, char const *const
                                           const CDetection *);
 extern uint32_t zoo_rs_track_state_callback(void *zoo_rs_handle, char const *const cameraTopic,
                                             char const *const channel, const CTrackState *);
+
+// Dummy definitions to disable the zoo_vision_rs library
+// uint32_t zoo_rs_init(void **, char const *const, char const *const) { return 0; }
+// uint32_t zoo_rs_test_me(void *, char const *const) { return 0; }
+// uint32_t zoo_rs_image_callback(void *, char const *const, char const *const, const CImage12m *) { return 0; }
+// uint32_t zoo_rs_detection_callback(void *, char const *const, char const *const, const CDetection *) { return 0; }
+// uint32_t zoo_rs_track_state_callback(void *, char const *const, char const *const, const CTrackState *) { return 0; }
 }
 namespace zoo {
 

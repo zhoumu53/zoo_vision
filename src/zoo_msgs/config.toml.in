@@ -1,0 +1,2 @@
+[patch.crates-io.zoo_msgs]
+path = "${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_rs/zoo_msgs/rust"

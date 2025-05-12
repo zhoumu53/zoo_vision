@@ -122,8 +122,7 @@ ament_target_dependencies(zoo_vision
 # add_dependencies(zoo_vision zoo_msgs)
 target_link_libraries(zoo_vision 
   zoo_vision_rs
-  zoo_msgs_library
-  zoo_msgs_library_c
+  zoo_msgs_libs
   stdc++exp
   /usr/lib/x86_64-linux-gnu/odbc/psqlodbcw.so
   Eigen3::Eigen torch

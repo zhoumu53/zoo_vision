@@ -11,7 +11,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
@@ -45,10 +44,11 @@ rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_t
 if(cpp_typesupport_target)
   add_library(${PROJECT_NAME}_library INTERFACE)
   target_include_directories(${PROJECT_NAME}_library INTERFACE
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/rosidl_generator_cpp>"
+    "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
   target_link_libraries(${PROJECT_NAME}_library INTERFACE
-  "${cpp_typesupport_target}")
+    "${cpp_typesupport_target}")
 
   install(
     TARGETS ${PROJECT_NAME}_library EXPORT export_${PROJECT_NAME}
@@ -59,16 +59,25 @@ rosidl_get_typesupport_target(c_typesupport_target "${PROJECT_NAME}" "rosidl_typ
 if(c_typesupport_target)
   add_library(${PROJECT_NAME}_library_c INTERFACE)
   target_include_directories(${PROJECT_NAME}_library_c INTERFACE
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
   target_link_libraries(${PROJECT_NAME}_library_c INTERFACE
-  "${c_typesupport_target}")
+    "${c_typesupport_target}")
 
   install(
     TARGETS ${PROJECT_NAME}_library_c EXPORT export_${PROJECT_NAME}
   )
 endif()
 
-ament_export_dependencies(rosidl_default_runtime)
-ament_export_targets(export_${PROJECT_NAME})
-ament_package()
+# Make an empty lib directory to satisfy the check in src/zoo_msgs/rosidl_generator_rs/zoo_msgs/rust/build.rs
+make_directory("${CMAKE_CURRENT_BINARY_DIR}/lib")
+
+# Patch cargo to find this package
+configure_file("config.toml.in" "${CMAKE_BINARY_DIR}/.cargo/config.toml")
+
+add_library(zoo_msgs_libs INTERFACE)
+target_link_libraries(zoo_msgs_libs INTERFACE
+  zoo_msgs_library
+  zoo_msgs_library_c
+  zoo_msgs::zoo_msgs__rosidl_generator_cpp
+)
