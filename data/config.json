@@ -68,6 +68,10 @@
     "logon": "UID=dherrera;Database=zoo_vision;DSN=postgresql"
   },
   "detection": {
+    "image": {
+      "width": 1060,
+      "height": 600
+    },
     "model": "../models/segmentation/yolo/all_v3/weights/best.onnx",
     "model_backup": "../models/segmentation/mask2former/all/config.ptc",
     "elephant_label_id": 0,

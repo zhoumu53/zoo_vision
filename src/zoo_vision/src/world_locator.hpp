@@ -30,7 +30,7 @@ public:
   void readConfig(const nlohmann::json &config);
   void setDetectionImageSize(Eigen::Vector2i size) { detectionImageSize_ = size; }
 
-  void worldFromBboxes(Eigen::Ref<MatrixX3f> positionsInWorld, std::span<const AlignedBox2f> bboxesInDetection) const;
+  void worldFromBboxes(Eigen::Ref<Matrix3Xf> positionsInWorld, std::span<const AlignedBox2f> bboxesInDetection) const;
   Eigen::Vector3f worldFromBbox(const AlignedBox2f &bboxInDetection) const;
 
 private:

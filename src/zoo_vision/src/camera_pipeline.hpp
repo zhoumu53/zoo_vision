@@ -64,6 +64,7 @@ private:
 
   bool recordTracks_;
 
+  bool dynamicConfigDone_ = false;
   Vector2i detectionImageSize_{0, 0};
   ImageNormalizer normalizer_;
 

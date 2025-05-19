@@ -44,7 +44,7 @@ void overrideConfig(nlohmann::json &config, const std::string_view &configOverri
   const auto split = std::vector<std::string_view>(splitView.begin(), splitView.end());
   if (split.size() != 2) {
     std::cout << "Vec " << split << std::endl;
-    throw ZooVisionError(std::format("Invalid config override: {}", configOverride));
+    throw zoo::ZooVisionError(std::format("Invalid config override: {}", configOverride));
   }
   const auto &path = split[0];
   const auto &newValueStr = split[1];

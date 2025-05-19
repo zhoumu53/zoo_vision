@@ -94,10 +94,14 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 void CameraPipeline::readConfig(const nlohmann::json &config) {
   // Settings
   recordTracks_ = config["record_tracks"].get<bool>();
+
+  const auto detectionImageJson = config["detection"]["image"];
+  detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
 }
 
-void CameraPipeline::dynamicConfig(cv::Size2i imageSize) {
-  detectionImageSize_ = {imageSize.width, imageSize.height};
+void CameraPipeline::dynamicConfig(cv::Size2i /*imageSize*/) {
+  dynamicConfigDone_ = true;
+  // detectionImageSize_ = {imageSize.width, imageSize.height};
   segmenter_->setImageSize(detectionImageSize_);
   locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 }
@@ -115,7 +119,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
 
-  if (detectionImageSize_[0] == 0) {
+  if (!dynamicConfigDone_) {
     // First image received, initialized things that need to know the image size
     dynamicConfig(cv::Size2i(imageMsg.width, imageMsg.height));
   }
@@ -128,18 +132,22 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   ////////////////////////////////////////////////////////////
   // Prepare image for segmentation network
   const cv::Mat3b img = wrapMat3bFromMsg(imageMsg);
-  assert(imageMsg.step == imageMsg.width * 3 * sizeof(char));
+  CHECK_EQ(imageMsg.step, imageMsg.width * 3 * sizeof(char));
+
   at::Tensor imageTensorCPU =
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
   const at::Tensor imageTensor_f32 = imageTensorCPU.to(at::kCUDA, /*non_blocking*/ true).to(at::kFloat);
-  const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
+  // const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Segmentation
   SegmenterResult segmenterResult;
   {
+    cv::Mat3b detectionImage;
+    cv::resize(img, detectionImage, {detectionImageSize_.x(), detectionImageSize_.y()});
+
     const Vector2i detectionImageSize = segmenter_->getDetectionImageSize();
     const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
     detectionMsg.masks.sizes[0] = MAX_DETECTION_COUNT;
@@ -147,7 +155,7 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
     detectionMsg.masks.sizes[2] = detectionImageSize.x();
     segmenterResult.masks = mapRosTensor(detectionMsg.masks);
 
-    segmenter_->onImage(segmenterResult, imageNorm, img);
+    segmenter_->onImage(segmenterResult, /*imageNorm*/ {}, detectionImage);
 
     // Copy results to detectionMsg
     detectionMsg.detection_count = segmenterResult.bboxesInDetection.size();

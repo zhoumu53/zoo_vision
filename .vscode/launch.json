@@ -13,24 +13,31 @@
             "args": "${command:pickArgs}"
         },
         {
-            "name": "(gdb) Launch zoo_camera",
+            "name": "(gdb) Launch cmake",
             "type": "cppdbg",
-            // "preLaunchTask": "Colcon: build debug",
             "request": "launch",
-            "program": "${workspaceFolder}/zoo_vision_ros2/build/zoo_vision/zoo_vision",
+            // Resolved by CMake Tools:
+            "program": "${command:cmake.launchTargetPath}",
             "args": [
-                "-c",
-                "/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]",
+                //  "-c",
+                // "/enabled_cameras=\\[\\\"zag_elp_cam_016\\\"\\]",
                 // "-c",
                 // "/video_db=\\\"/media/dherrera/ElephantExternal/elephants/night_sarah/zurich/2023/video_db.json\\\"",
-                "-c",
-                "/replay_time=\\\"2025-01-25T09:00:00\\\"",
                 // "-c",
                 // "/record_tracks=false"
+                "-c",
+                "/replay_time=\\\"2025-03-18T14:40:00\\\""
             ],
-            "stopAtEntry": false,
+            "stopAtEntry": true,
             "cwd": "${workspaceFolder}",
-            "environment": [],
+            "environment": [
+                {
+                    // add the directory where our target was built to the PATHs
+                    // it gets resolved by CMake Tools:
+                    "name": "PATH",
+                    "value": "$PATH:${command:cmake.launchTargetDirectory}"
+                }
+            ],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -38,38 +45,8 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
-                },
-                {
-                    "description": "Set Disassembly Flavor to Intel",
-                    "text": "-gdb-set disassembly-flavor intel",
-                    "ignoreFailures": true
                 }
             ]
-        },
-        {
-            "name": "(gdb) Launch zoo_rerun",
-            "type": "cppdbg",
-            "preLaunchTask": "Colcon: build debug",
-            "request": "launch",
-            "program": "${workspaceFolder}/zoo_vision_ros2/build/zoo_vision/zoo_rerun",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "description": "Set Disassembly Flavor to Intel",
-                    "text": "-gdb-set disassembly-flavor intel",
-                    "ignoreFailures": true
-                }
-            ]
-        },
+        }
     ]
 }

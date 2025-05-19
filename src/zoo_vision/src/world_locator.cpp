@@ -37,7 +37,7 @@ void WorldLocator::readConfig(const nlohmann::json &config) {
   H_world2FromCamera_ = config["cameras"][cameraName_]["H_world2_from_camera"];
 }
 
-void WorldLocator::worldFromBboxes(Eigen::Ref<MatrixX3f> positionsInWorld,
+void WorldLocator::worldFromBboxes(Eigen::Ref<Matrix3Xf> positionsInWorld,
                                    std::span<const AlignedBox2f> bboxesInDetection) const {
   for (auto i : std::views::iota(0uz, bboxesInDetection.size())) {
     // Copy results to detectionMsg

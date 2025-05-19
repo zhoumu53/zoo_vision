@@ -52,6 +52,7 @@ constexpr TBehaviour INVALID_BEHAVIOUR = TBehaviour(0);
 using Matrix3f = Eigen::Matrix3f;
 using MatrixX2f = Eigen::MatrixX2f;
 using MatrixX3f = Eigen::MatrixX3f;
+using Matrix3Xf = Eigen::Matrix3Xf;
 using Vector2i = Eigen::Vector2i;
 using Vector2f = Eigen::Vector2f;
 
