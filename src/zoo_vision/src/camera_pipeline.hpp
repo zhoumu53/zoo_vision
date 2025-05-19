@@ -52,7 +52,8 @@ public:
   void saveKeyframes(const TrackData &track);
 
 private:
-  at::Tensor preprocessImage(const at::Tensor &image);
+  void dynamicConfig(cv::Size2i imageSize);
+
   void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
@@ -63,7 +64,7 @@ private:
 
   bool recordTracks_;
 
-  Vector2i detectionImageSize_;
+  Vector2i detectionImageSize_{0, 0};
   ImageNormalizer normalizer_;
 
   at::cuda::CUDAStream cudaStream_;

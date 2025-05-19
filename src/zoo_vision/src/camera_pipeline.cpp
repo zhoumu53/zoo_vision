@@ -55,9 +55,6 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     std::filesystem::create_directories(rootPathImprove_);
   }
 
-  segmenter_->setImageSize(detectionImageSize_);
-  locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
-
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
@@ -93,9 +90,12 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 void CameraPipeline::readConfig(const nlohmann::json &config) {
   // Settings
   recordTracks_ = config["record_tracks"].get<bool>();
+}
 
-  const auto detectionImageJson = config["detection"]["image"];
-  detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
+void CameraPipeline::dynamicConfig(cv::Size2i imageSize) {
+  detectionImageSize_ = {imageSize.width, imageSize.height};
+  segmenter_->setImageSize(detectionImageSize_);
+  locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 }
 
 // std::mutex globalMutex;
@@ -111,6 +111,10 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
   at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
 
+  if (detectionImageSize_[0] == 0) {
+    // First image received, initialized things that need to know the image size
+    dynamicConfig(cv::Size2i(imageMsg.width, imageMsg.height));
+  }
   // Allocate detection message so we can already start putting things here
   auto detectionMsgPtr = std::make_unique<zoo_msgs::msg::Detection>();
   auto &detectionMsg = *detectionMsgPtr;
