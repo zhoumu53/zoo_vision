@@ -34,7 +34,7 @@ void ImageEmbedder::readConfig(const nlohmann::json &config) { // Load model
 void ImageEmbedder::loadModel(const std::filesystem::path &modelPath) {
   try {
     if (!std::filesystem::exists(modelPath)) {
-      throw std::runtime_error("Model does not exist");
+      throw ZooVisionError("Model does not exist");
     }
     module_ = torch::jit::load(modelPath, torch::kCUDA);
     module_.eval();

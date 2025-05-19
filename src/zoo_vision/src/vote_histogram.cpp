@@ -44,7 +44,7 @@ void VoteHistogram::clear() {
 }
 void VoteHistogram::addVote(TClassId classId, float32_t weight) {
   // if (classId >= votes_.size()) {
-  //   throw std::runtime_error("Class outside of histogram range");
+  //   throw ZooVisionError("Class outside of histogram range");
   // }
   // for (auto &count : votes_) {
   //   count *= dampeningFactor_;

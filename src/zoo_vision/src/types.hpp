@@ -21,13 +21,21 @@
 #include <Eigen/Dense>
 #include <cstdint>
 #include <format>
+#include <stacktrace>
 #include <stdexcept>
 
 using float32_t = float;
 
 #define CHECK_EQ(a, b)                                                                                                 \
-  if (a != b) {                                                                                                        \
-    throw std::runtime_error(std::format("Check failed: " #a "==" #b ", with \n" #a "={}\n" #b "={}", a, b));          \
+  if (!(a == b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n" #a "={}\n" #b "={}", a, b));              \
+  }
+
+#define CHECK_TRUE(a) CHECK_EQ((a), true)
+
+#define CHECK_LE(a, b)                                                                                                 \
+  if (!(a <= b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n" #a "={}\n" #b "={}", a, b));              \
   }
 
 namespace zoo {
@@ -48,5 +56,14 @@ using Vector2i = Eigen::Vector2i;
 using Vector2f = Eigen::Vector2f;
 
 using AlignedBox2f = Eigen::AlignedBox2f;
+
+////////////////////////////////////////
+// Exceptions
+class ZooVisionError : public std::runtime_error {
+public:
+  ZooVisionError(const std::string &__arg) : std::runtime_error(__arg) { trace = std::stacktrace::current(1); }
+
+  std::stacktrace trace;
+};
 
 } // namespace zoo

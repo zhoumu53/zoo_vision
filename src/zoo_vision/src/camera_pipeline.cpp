@@ -61,6 +61,10 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       *this, imageTopic, 10, [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
         try {
           this->onImage(std::move(msg));
+        } catch (const ZooVisionError &e) {
+          std::cerr << e.trace << std::endl;
+          RCLCPP_ERROR(this->get_logger(), "Exception:\n%s\nTerminating\n", e.what());
+          std::terminate();
         } catch (const std::exception &e) {
           auto trace = std::stacktrace::current();
           std::cerr << trace << std::endl;

@@ -58,7 +58,7 @@ void Identifier::loadModel(const std::filesystem::path &modelPath) {
 
   try {
     if (!std::filesystem::exists(modelPath)) {
-      throw std::runtime_error("Model does not exist");
+      throw ZooVisionError("Model does not exist");
     }
     identityNetwork_ = torch::jit::load(modelPath, torch::kCUDA);
     identityNetwork_.eval();
@@ -164,7 +164,7 @@ void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &p
   eventBeforeNetwork.record();
   if (isStatefulModel_) {
     // callStatefulModel(identityLogitsGpu, patches, trackIds);
-    throw std::runtime_error("Stateful doesn't make sense any more");
+    throw ZooVisionError("Stateful doesn't make sense any more");
   } else {
     callStatelessModel(identityLogitsGpu, patch_f32.unsqueeze(0));
     identityLogitsGpu = identityLogitsGpu.squeeze(0); // Remove dummy batch dimension

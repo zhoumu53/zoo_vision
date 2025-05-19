@@ -59,7 +59,7 @@ void Segmenter::loadModel(const std::filesystem::path &modelPath) {
 
   try {
     if (!std::filesystem::exists(modelPath)) {
-      throw std::runtime_error("Model does not exist");
+      throw ZooVisionError("Model does not exist");
     }
     model_ = torch::jit::load(modelPath, torch::kCUDA);
     model_.eval();

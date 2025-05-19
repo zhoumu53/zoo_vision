@@ -52,7 +52,7 @@ TrackMatcher::TrackMatcher() = default;
 TrackData &TrackMatcher::getTrackData(TrackId id) {
   auto it = tracks_.find(id);
   if (it == tracks_.end()) {
-    throw std::runtime_error("Track id not found in track matcher");
+    throw ZooVisionError("Track id not found in track matcher");
   }
   return *it->second;
 }
