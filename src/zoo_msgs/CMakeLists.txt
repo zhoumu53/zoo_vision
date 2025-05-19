@@ -72,9 +72,6 @@ endif()
 # Make an empty lib directory to satisfy the check in src/zoo_msgs/rosidl_generator_rs/zoo_msgs/rust/build.rs
 make_directory("${CMAKE_CURRENT_BINARY_DIR}/lib")
 
-# Patch cargo to find this package
-configure_file("config.toml.in" "${CMAKE_BINARY_DIR}/.cargo/config.toml")
-
 add_library(zoo_msgs_libs INTERFACE)
 target_link_libraries(zoo_msgs_libs INTERFACE
   zoo_msgs_library

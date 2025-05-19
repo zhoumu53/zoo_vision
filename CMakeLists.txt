@@ -16,9 +16,10 @@ FetchContent_MakeAvailable(Corrosion)
 # Components
 add_subdirectory(src/zoo_msgs)
 
-configure_file("${CMAKE_BINARY_DIR}/.cargo/config.toml" "${CMAKE_BINARY_DIR}/src/zoo_vision_rs/.cargo/config.toml" COPYONLY)
-
-corrosion_import_crate(MANIFEST_PATH src/zoo_vision_rs//Cargo.toml)
+corrosion_import_crate(
+    MANIFEST_PATH src/zoo_vision_rs/Cargo.toml
+    FLAGS --config patch.crates-io.zoo_msgs.path="${CMAKE_BINARY_DIR}/src/zoo_msgs/rosidl_generator_rs/zoo_msgs/rust"
+)
 add_dependencies(_cargo-build_zoo_vision_rs  zoo_msgs)
 # target_link_libraries(zoo_vision_rs INTERFACE zoo_msgs)
 
