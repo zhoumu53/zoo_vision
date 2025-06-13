@@ -77,13 +77,12 @@ fn rerun_from_hex(color: &HexColor) -> rerun::Color {
     rerun::Color::from_unmultiplied_rgba(color.r, color.g, color.b, color.a)
 }
 
-fn start_rerun_file_recording(recording_prefix: &str) -> Result<RecordingStream, Error> {
-    const DATE_FORMAT_STR: &'static str = "[year]-[month]-[day]-[hour]:[minute]:[second]";
-    let dt_fmt = time::format_description::parse(DATE_FORMAT_STR)?;
+fn start_rerun_file_recording(recording_filename: &str) -> Result<RecordingStream, Error> {
+    let dt_fmt = time::format_description::parse(recording_filename)?;
 
     let local_offset = time::UtcOffset::current_local_offset()?;
     let now = time::UtcDateTime::now().to_offset(local_offset);
-    let path = format!("{}{}.rrd", recording_prefix, now.format(&dt_fmt)?);
+    let path = now.format(&dt_fmt)?;
     println!("Saving rerun stream to {}", path);
 
     let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
@@ -232,7 +231,7 @@ impl RerunForwarder {
 
         // Begin rerun stream
         let recording = if config.rerun_config.save_to_disk {
-            start_rerun_file_recording(&config.rerun_config.recording_prefix)?
+            start_rerun_file_recording(&config.rerun_config.recording_filename)?
         } else {
             let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
             let ws_port = 9877u16;
@@ -325,7 +324,7 @@ impl RerunForwarder {
         let max_duration = self.config.rerun_config.max_seconds_per_recording as f32;
         if recording_duration.as_secs_f32() > max_duration {
             *lock_guard = Rc::new(
-                start_rerun_file_recording(&self.config.rerun_config.recording_prefix)
+                start_rerun_file_recording(&self.config.rerun_config.recording_filename)
                     .expect("Could not start new recording"),
             );
             log_static_components(
