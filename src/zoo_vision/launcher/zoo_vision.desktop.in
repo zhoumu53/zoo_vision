@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=ZooVision
+Path=${CMAKE_BINARY_DIR}
+Exec=zsh -c '. ./run_zoo_vision.sh -c /live_stream=true ; zsh'
+Comment=Launch ZooVision live
+Terminal=true
+Icon=${CMAKE_SOURCE_DIR}/src/zoo_vision/launcher/icon.png
+Type=Application

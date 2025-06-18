@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=ZooVision Rerun UI
+Path=${CMAKE_BINARY_DIR}
+Exec=zsh -c '. ./run_zoo_vision_ui.sh '
+Comment=Launch ZooVision live ui
+Terminal=true
+Icon=${CMAKE_SOURCE_DIR}/src/zoo_vision/launcher/icon_ui.png
+Type=Application
