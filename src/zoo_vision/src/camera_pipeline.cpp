@@ -58,7 +58,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10, [this](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
+      *this, imageTopic, 10, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
         try {
           this->onImage(std::move(msg));
         } catch (const ZooVisionError &e) {
@@ -97,6 +97,16 @@ void CameraPipeline::readConfig(const nlohmann::json &config) {
 
   const auto detectionImageJson = config["detection"]["image"];
   detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
+
+  // Mask polyogons
+  for (const auto &polyJson : config["cameras"][cameraName_]["mask_polygons"]) {
+    Polygon poly;
+    for (const auto &pointJson : polyJson) {
+      const auto p = cv::Point(pointJson[0].get<int>(), pointJson[1].get<int>());
+      poly.push_back(p);
+    }
+    maskPolygons_.push_back(std::move(poly));
+  }
 }
 
 void CameraPipeline::dynamicConfig(cv::Size2i /*imageSize*/) {
@@ -108,7 +118,7 @@ void CameraPipeline::dynamicConfig(cv::Size2i /*imageSize*/) {
 
 // std::mutex globalMutex;
 
-void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imageMsgPtr) {
+void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
   const auto &imageMsg = *imageMsgPtr;
   // std::optional<std::lock_guard<std::mutex>> lock;
   // if (imageMsg.header.frame_id.data[0] == '7' && imageMsg.header.frame_id.data[1] == '3') {
@@ -130,9 +140,22 @@ void CameraPipeline::onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> imag
   addRosKeyValue(detectionMsg.timings.items_hz, std::format("seg", cameraName_), rateSampler_.rateHz());
 
   ////////////////////////////////////////////////////////////
-  // Prepare image for segmentation network
-  const cv::Mat3b img = wrapMat3bFromMsg(imageMsg);
+  // Map ros message to opencv
+  cv::Mat3b img = wrapMat3bFromMsg(imageMsg);
   CHECK_EQ(imageMsg.step, imageMsg.width * 3 * sizeof(char));
+
+  ////////////////////////////////////////////////////////////
+  // Black out mased areas
+  for (const auto &poly : maskPolygons_) {
+    // TODO: scale poly to img size
+    cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
+  }
+  cv::imwrite("test_" + cameraName_ + ".jpg", img);
+  while (true) {
+  }
+
+  ////////////////////////////////////////////////////////////
+  // Prepare image for segmentation network
 
   at::Tensor imageTensorCPU =
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))

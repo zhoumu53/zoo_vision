@@ -44,7 +44,7 @@ public:
 
   void readConfig(const nlohmann::json &config);
 
-  void onImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
+  void onImage(std::shared_ptr<zoo_msgs::msg::Image12m> msg);
 
   void saveImageToImproveDetection(const SysTime time, const cv::Mat3b &cvImg);
   void saveImageToImproveBehaviour(const SysTime time, TBehaviour behaviourId, const at::Tensor &img);
@@ -59,6 +59,9 @@ private:
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
   std::string cameraName_;
+
+  using Polygon = std::vector<cv::Point>;
+  std::vector<Polygon> maskPolygons_;
 
   RateSampler rateSampler_;
 

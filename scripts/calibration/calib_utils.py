@@ -193,3 +193,46 @@ def plot_camera(
     # Cols
     for i in range(xv.shape[1]):
         ax.plot(xv[:, i], yv[:, i], "-", color="black")
+
+
+class MouseHandler:
+    """
+    Helper class to click on images
+    Example:
+       image_clicker = MouseHandler(im, "test_name", is_polygon=True)
+       cv2.startWindowThread()
+       image_clicker.start()
+       cv2.waitKey(0)
+       cv2.destroyAllWindows()
+
+       polygon = np.array(image_clicker.positions)
+
+    """
+
+    def __init__(self, img: np.ndarray, window_name: str, is_polygon: bool = False):
+        self.img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        self.window_name = window_name
+        self.is_polygon = is_polygon
+        self.positions = []
+
+    def start(self, window_flags: int = cv2.WINDOW_AUTOSIZE):
+        cv2.namedWindow(self.window_name, window_flags)
+        cv2.setMouseCallback(self.window_name, self)
+        cv2.imshow(self.window_name, self.img)
+
+    def __call__(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.positions.append((x, y))
+            count = len(self.positions)
+            if self.is_polygon:
+                color = [0, 0, 200]
+            else:
+                color = [0, 0, 0]
+                color[count % 3] = 200
+            self.img = cv2.circle(self.img, (x, y), radius=10, color=color, thickness=5)
+            if count > 1 and self.is_polygon:
+                prev_x, prev_y = self.positions[count - 2]
+                self.img = cv2.line(
+                    self.img, (x, y), (prev_x, prev_y), color=color, thickness=3
+                )
+            cv2.imshow(self.window_name, self.img)
