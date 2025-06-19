@@ -355,7 +355,7 @@ void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint
     }
 
     const std::filesystem::path trackDir =
-        rootPath / cameraName_ / std::format("{:%Y-%m-%d}", track.startTime) / std::format("{:06d}", track.id);
+        rootPath / std::format("{:%Y-%m-%d}", track.startTime) / cameraName_ / std::format("{:06d}", track.id);
 
     const std::string imgName =
         std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.jpg", cameraName_, secondsTime, trackId, track.trackLength);
