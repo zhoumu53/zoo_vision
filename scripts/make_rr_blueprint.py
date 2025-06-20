@@ -76,7 +76,7 @@ def make_blueprint():
                 ),
             ],
         ),
-        collapse_panels=False,
+        collapse_panels=True,
     )
     return my_blueprint
 
