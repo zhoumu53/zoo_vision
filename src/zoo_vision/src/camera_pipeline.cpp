@@ -43,9 +43,10 @@ namespace zoo {
 
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
-      cameraName_{declare_parameter<std::string>("camera_name")}, cudaStream_{at::cuda::getStreamFromPool()},
-      trackMatcher_{}, segmenter_{std::make_unique<SegmenterYolo>(nameIndex, cameraName_, cudaStream_)},
-      locator_{nameIndex, cameraName_}, identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
+      cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_},
+      cudaStream_{at::cuda::getStreamFromPool()}, trackMatcher_{},
+      segmenter_{std::make_unique<SegmenterYolo>(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
+      identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
 
@@ -97,21 +98,11 @@ void CameraPipeline::readConfig(const nlohmann::json &config) {
 
   const auto detectionImageJson = config["detection"]["image"];
   detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
-
-  // Mask polyogons
-  for (const auto &polyJson : config["cameras"][cameraName_]["mask_polygons"]) {
-    Polygon poly;
-    for (const auto &pointJson : polyJson) {
-      const auto p = cv::Point(pointJson[0].get<int>(), pointJson[1].get<int>());
-      poly.push_back(p);
-    }
-    maskPolygons_.push_back(std::move(poly));
-  }
 }
 
-void CameraPipeline::dynamicConfig(cv::Size2i /*imageSize*/) {
+void CameraPipeline::dynamicConfig(Vector2i imageSize) {
   dynamicConfigDone_ = true;
-  // detectionImageSize_ = {imageSize.width, imageSize.height};
+  calibration_.setImageSize(imageSize);
   segmenter_->setImageSize(detectionImageSize_);
   locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 }
@@ -131,7 +122,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   if (!dynamicConfigDone_) {
     // First image received, initialized things that need to know the image size
-    dynamicConfig(cv::Size2i(imageMsg.width, imageMsg.height));
+    dynamicConfig(Vector2i(imageMsg.width, imageMsg.height));
   }
   // Allocate detection message so we can already start putting things here
   auto detectionMsgPtr = std::make_unique<zoo_msgs::msg::Detection>();
@@ -146,12 +137,8 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   ////////////////////////////////////////////////////////////
   // Black out mased areas
-  for (const auto &poly : maskPolygons_) {
-    // TODO: scale poly to img size
+  for (const auto &poly : calibration_.maskPolygons_) {
     cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
-  }
-  cv::imwrite("test_" + cameraName_ + ".jpg", img);
-  while (true) {
   }
 
   ////////////////////////////////////////////////////////////

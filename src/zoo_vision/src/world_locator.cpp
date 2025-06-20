@@ -23,19 +23,7 @@
 
 namespace zoo {
 
-WorldLocator::WorldLocator(int nameIndex, std::string cameraName)
-    : name_{std::format("world_locator_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cameraName_{cameraName} {
-  at::InferenceMode inferenceGuard;
-  readConfig(getConfig());
-}
-
-void WorldLocator::readConfig(const nlohmann::json &config) {
-  // Camera calibration
-  calibratedCameraSize_ = Eigen::Vector2i{config["cameras"][cameraName_]["intrinsics"]["width"].get<int>(),
-                                          config["cameras"][cameraName_]["intrinsics"]["height"].get<int>()};
-  H_mapFromWorld2_ = config["map"]["T_map_from_world2"];
-  H_world2FromCamera_ = config["cameras"][cameraName_]["H_world2_from_camera"];
-}
+WorldLocator::WorldLocator(CameraCalibration &calibration) : calibration_{calibration} {}
 
 void WorldLocator::worldFromBboxes(Eigen::Ref<Matrix3Xf> positionsInWorld,
                                    std::span<const AlignedBox2f> bboxesInDetection) const {
@@ -47,15 +35,17 @@ void WorldLocator::worldFromBboxes(Eigen::Ref<Matrix3Xf> positionsInWorld,
 
 Eigen::Vector3f WorldLocator::worldFromBbox(const Eigen::AlignedBox2f &bboxInDetection) const {
   const float32_t scaleX_calibratedFromDetection =
-      static_cast<float32_t>(calibratedCameraSize_.x()) / detectionImageSize_.x();
+      static_cast<float32_t>(calibration_.calibratedCameraSize_.x()) / detectionImageSize_.x();
   const float32_t scaleY_calibratedFromDetection =
-      static_cast<float32_t>(calibratedCameraSize_.y()) / detectionImageSize_.y();
+      static_cast<float32_t>(calibration_.calibratedCameraSize_.y()) / detectionImageSize_.y();
   auto scalePoint = [&](Eigen::Vector2f p) {
     return Eigen::Vector2f{p.x() * scaleX_calibratedFromDetection, p.y() * scaleY_calibratedFromDetection};
   };
   const Eigen::AlignedBox2f bboxInCalibrated = {scalePoint(bboxInDetection.min()), scalePoint(bboxInDetection.max())};
 
-  const auto world2FromImage = [&](Eigen::Vector2f p) { return (H_world2FromCamera_ * p.homogeneous()).hnormalized(); };
+  const auto world2FromImage = [&](Eigen::Vector2f p) {
+    return (calibration_.H_world2FromCamera_ * p.homogeneous()).hnormalized();
+  };
   const auto worldFromWorld2 = [](const Eigen::Vector2f &x2) { return Eigen::Vector3f{x2[0], x2[1], 0.0f}; };
 
   // Here we do a small trick. The initial imagePosition is at the middle-bottom of the bounding box.

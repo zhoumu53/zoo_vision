@@ -13,28 +13,35 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/camera_calibration.hpp"
 #include "zoo_vision/types.hpp"
 
-#include <Eigen/Dense>
 #include <nlohmann/json_fwd.hpp>
-#include <rclcpp/rclcpp.hpp>
-
-#include <filesystem>
 
 namespace zoo {
 
-class WorldLocator {
+class CameraCalibration {
 public:
-  explicit WorldLocator(CameraCalibration &calibration);
+  explicit CameraCalibration(std::string cameraName);
 
-  void setDetectionImageSize(Eigen::Vector2i size) { detectionImageSize_ = size; }
+  void readConfig(const nlohmann::json &config);
 
-  void worldFromBboxes(Eigen::Ref<Matrix3Xf> positionsInWorld, std::span<const AlignedBox2f> bboxesInDetection) const;
-  Eigen::Vector3f worldFromBbox(const AlignedBox2f &bboxInDetection) const;
+  void setImageSize(Vector2i size);
 
-private:
-  CameraCalibration &calibration_;
-  Vector2i detectionImageSize_;
+  // Members are public
+  std::string cameraName_;
+
+  // The original calibrated values
+  Vector2i calibratedCameraSize_;
+  Matrix3f H_world2FromCamera_;
+  Matrix3f H_mapFromWorld2_;
+
+  std::vector<Polygon> calibratedMaskPolygons_;
+
+  // Scalings to match the calibration to the real image size received
+  Vector2i imageSize_;
+  float32_t scaleX_calibratedFromImage_;
+  float32_t scaleY_calibratedFromImage_;
+
+  std::vector<Polygon> maskPolygons_;
 };
 } // namespace zoo

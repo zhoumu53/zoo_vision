@@ -18,11 +18,13 @@
 #pragma GCC diagnostic ignored "-Warray-bounds"
 #pragma GCC diagnostic ignored "-Wstringop-overread"
 
-#include <Eigen/Dense>
 #include <cstdint>
 #include <format>
 #include <stacktrace>
 #include <stdexcept>
+
+#include <Eigen/Dense>
+#include <opencv2/core/types.hpp>
 
 using float32_t = float;
 
@@ -37,6 +39,27 @@ using float32_t = float;
   if (!(a <= b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n" #a "={}\n" #b "={}", a, b));              \
   }
+
+namespace cv {
+// Define opencv DataType for Eigen Vectors so that we can use it inside the fillConvexPoly() function.
+template <typename _Tp> class DataType<Eigen::Vector2<_Tp>> {
+public:
+  typedef Eigen::Vector2<_Tp> value_type;
+  typedef Eigen::Vector2<typename DataType<_Tp>::work_type> work_type;
+  typedef _Tp channel_type;
+
+  enum {
+    generic_type = 0,
+    channels = 2,
+    fmt = traits::SafeFmt<channel_type>::fmt + ((channels - 1) << 8),
+    depth = DataType<channel_type>::depth,
+    type = CV_MAKETYPE(depth, channels)
+  };
+
+  typedef Vec<channel_type, channels> vec_type;
+};
+
+} // namespace cv
 
 namespace zoo {
 
@@ -55,6 +78,8 @@ using MatrixX3f = Eigen::MatrixX3f;
 using Matrix3Xf = Eigen::Matrix3Xf;
 using Vector2i = Eigen::Vector2i;
 using Vector2f = Eigen::Vector2f;
+
+using Polygon = std::vector<Vector2i>;
 
 using AlignedBox2f = Eigen::AlignedBox2f;
 

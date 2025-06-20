@@ -72,6 +72,8 @@ add_executable(zoo_vision
   src/json_eigen.cpp
   src/zoo_camera.hpp
   src/zoo_camera.cpp
+  src/camera_calibration.hpp
+  src/camera_calibration.cpp
   src/image_normalizer.hpp
   src/image_normalizer.cpp
   src/image_embedder.hpp

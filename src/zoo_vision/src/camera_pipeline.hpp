@@ -19,6 +19,7 @@
 #include "zoo_msgs/msg/track_closed.hpp"
 #include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/behaviourer.hpp"
+#include "zoo_vision/camera_calibration.hpp"
 #include "zoo_vision/identifier.hpp"
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
@@ -52,16 +53,13 @@ public:
   void saveKeyframes(const TrackData &track);
 
 private:
-  void dynamicConfig(cv::Size2i imageSize);
+  void dynamicConfig(Vector2i imageSize);
 
   void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
   std::string cameraName_;
-
-  using Polygon = std::vector<cv::Point>;
-  std::vector<Polygon> maskPolygons_;
 
   RateSampler rateSampler_;
 
@@ -70,6 +68,8 @@ private:
   bool dynamicConfigDone_ = false;
   Vector2i detectionImageSize_{0, 0};
   ImageNormalizer normalizer_;
+
+  CameraCalibration calibration_;
 
   at::cuda::CUDAStream cudaStream_;
   TrackMatcher trackMatcher_;
