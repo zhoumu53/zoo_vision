@@ -89,7 +89,10 @@
     "recording_filename": "/media/dherrera/ElephantsWD/elephants/rerun_recordings/new/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
     "max_seconds_per_recording": 1800
   },
+  "record_detection_loss": false,
+  "record_keyframes": false,
   "record_tracks": false,
+  "record_behaviour_change": false,
   "live_stream": false,
   "video_db": "/media/dherrera/ElephantsWD/elephants/videos/video_db.json",
   "replay_time": "2025-01-25T05:00:29",

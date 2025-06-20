@@ -51,7 +51,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   readConfig(getConfig());
 
   // Set up paths to store improvement images
-  if (recordTracks_) {
+  if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_) {
     rootPathImprove_ = "/media/dherrera/ElephantsWD/elephants/improve";
     std::filesystem::create_directories(rootPathImprove_);
   }
@@ -94,7 +94,10 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
 void CameraPipeline::readConfig(const nlohmann::json &config) {
   // Settings
+  recordDetectionLoss_ = config["record_detection_loss"].get<bool>();
+  recordKeyframes_ = config["record_keyframes"].get<bool>();
   recordTracks_ = config["record_tracks"].get<bool>();
+  recordBehaviourChange_ = config["record_behaviour_change"].get<bool>();
 
   const auto detectionImageJson = config["detection"]["image"];
   detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
@@ -190,7 +193,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
   auto trackUpdateStats = trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, trackIds);
-  if (recordTracks_) {
+  if (recordDetectionLoss_) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
     }
@@ -198,8 +201,11 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   for (const auto &ptrack : trackUpdateStats.closedTracks) {
     const auto &track = *ptrack;
     publishTrackClosed(imageMsg.header, track);
-    if (recordTracks_) {
+    if (recordKeyframes_) {
       saveKeyframes(track);
+      // moveTrackImagesToIdentityPath(track);
+    }
+    if (recordTracks_) {
       moveTrackImagesToIdentityPath(track);
     }
   }
@@ -249,7 +255,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       TrackData &track = trackMatcher_.getTrackData(trackId);
       if (track.selectedBehaviour != INVALID_BEHAVIOUR && track.selectedBehaviour != behaviourId) {
         // Behaviour changed, save image for network improvement
-        if (recordTracks_) {
+        if (recordBehaviourChange_) {
           const at::Tensor patch = patches_f32[i].to(at::kByte);
           saveImageToImproveBehaviour(sysTime, behaviourId, patch);
         }
@@ -349,19 +355,26 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
 void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint32_t> trackIds,
                                   const at::Tensor &patches) {
   const std::filesystem::path rootPath = rootPathImprove_ / "tracks";
-  constexpr int MIN_TRACK_LENGTH = 20;
-  constexpr int SKIP_COUNT = 20;
+  constexpr auto MIN_TRACK_LENGTH = std::chrono::seconds(2);
+  constexpr auto TIME_BETWEEN_RECORDS = std::chrono::seconds(2);
 
   const SecondsTimePoint secondsTime = secondsTimePointFromTimePoint(time);
 
   for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    if (track.trackLength <= MIN_TRACK_LENGTH) {
-      continue;
-    }
-    if ((track.trackLength - MIN_TRACK_LENGTH - 1) % SKIP_COUNT != 0) {
-      continue;
+    if (!track.lastImageSaved.has_value()) {
+      // Check that the track has been alive long enough
+      const auto ellapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(time - track.startTime);
+      if (ellapsedSeconds < MIN_TRACK_LENGTH) {
+        continue;
+      }
+    } else {
+      // Check that the last record is not too recent
+      const auto ellapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(time - *track.lastImageSaved);
+      if (ellapsedSeconds < TIME_BETWEEN_RECORDS) {
+        continue;
+      }
     }
 
     const std::filesystem::path trackDir =
@@ -371,10 +384,12 @@ void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint
         std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.jpg", cameraName_, secondsTime, trackId, track.trackLength);
 
     // The first image makes sure we create the directory
-    if (track.trackLength == MIN_TRACK_LENGTH + 1) {
+    if (!track.lastImageSaved.has_value()) {
       std::filesystem::create_directories(trackDir);
     }
     saveTensorImage(patches[idx], trackDir / imgName);
+
+    track.lastImageSaved = time;
   }
 }
 

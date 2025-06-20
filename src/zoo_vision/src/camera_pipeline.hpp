@@ -63,7 +63,10 @@ private:
 
   RateSampler rateSampler_;
 
+  bool recordDetectionLoss_;
   bool recordTracks_;
+  bool recordKeyframes_;
+  bool recordBehaviourChange_;
 
   bool dynamicConfigDone_ = false;
   Vector2i detectionImageSize_{0, 0};
