@@ -203,10 +203,9 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     publishTrackClosed(imageMsg.header, track);
     if (recordKeyframes_) {
       saveKeyframes(track);
-      // moveTrackImagesToIdentityPath(track);
     }
     if (recordTracks_) {
-      moveTrackImagesToIdentityPath(track);
+      // moveTrackImagesToIdentityPath(track);
     }
   }
 
@@ -381,7 +380,7 @@ void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint
         rootPath / std::format("{:%Y-%m-%d}", track.startTime) / cameraName_ / std::format("{:06d}", track.id);
 
     const std::string imgName =
-        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.jpg", cameraName_, secondsTime, trackId, track.trackLength);
+        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, secondsTime, trackId, track.trackLength);
 
     // The first image makes sure we create the directory
     if (!track.lastImageSaved.has_value()) {

@@ -10,10 +10,11 @@ import fiftyone as fo
 import fiftyone.brain as fob
 
 DRY_RUN = False
+IMAGE_EXTENSIONS = {".jpg", ".png"}
 
 
 def delete_similar_images(path: Path, min_count: int, keep_count: int) -> None:
-    image_count = len(list(path.glob("*.jpg")))
+    image_count = len([f for f in path.iterdir() if f.suffix in IMAGE_EXTENSIONS])
     print(f"Dataset at {path} has {image_count} images")
     if image_count < min_count:
         print(f" Track is too small, deleting folder")
@@ -54,9 +55,12 @@ def glob_dirs_with_images(root: Path) -> Generator[Path, None, None]:
         if not path.is_dir():
             # Not a directory, ignore
             continue
-        files = path.glob("*.jpg")
-        first_file = next(files, None)
-        if first_file is None:
+        has_images = False
+        for file in path.iterdir():
+            if file.suffix in IMAGE_EXTENSIONS:
+                has_images = True
+                break
+        if not has_images:
             # No images in this directory, ignore
             continue
 
