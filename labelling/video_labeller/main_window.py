@@ -40,7 +40,11 @@ from motion_detector_ui import MotionDetectorUi
 
 class MainWindow(QMainWindow):
     def __init__(
-        self, work_queue: SimpleQueue[int], videos_path: Path, labels_path: Path
+        self,
+        work_queue: SimpleQueue[int],
+        videos_path: Path,
+        labels_path: Path,
+        use_behaviour_classes: bool,
     ) -> None:
         super().__init__()
 
@@ -124,7 +128,11 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout()
 
         # JSON content display
-        self.side_menu = SideMenu(self.position_slider_, self.work_queue_)
+        self.side_menu = SideMenu(
+            self.position_slider_,
+            self.work_queue_,
+            self.load_class_names(use_behaviour_classes),
+        )
         right_layout.addWidget(self.side_menu)
 
         # Add right layout to the main layout
@@ -166,6 +174,21 @@ class MainWindow(QMainWindow):
 
         # Load the first video
         self.load_video(self.current_video_index_)
+
+    def load_class_names(self, use_behaviour_classes) -> list[str]:
+        path = (
+            PROJECT_ROOT
+            / f"labelling/common/{'behaviours' if use_behaviour_classes else 'names'}.json"
+        )
+        try:
+            with path.open("r") as file:
+                names = json.load(file)
+            return names
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"Failed to load classes from {str(path)}: \n{e}"
+            )
+            sys.exit()
 
     def create_action(self, name, func, shortcut):
         action = QAction(name, self)

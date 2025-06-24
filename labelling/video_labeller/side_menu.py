@@ -43,7 +43,7 @@ class RecordItemWidget(QWidget):
 
 
 class SideMenu(QWidget):
-    def __init__(self, slider, work_queue: SimpleQueue[int]):
+    def __init__(self, slider, work_queue: SimpleQueue[int], class_names: list[str]):
         super().__init__()
 
         self.slider = slider
@@ -60,7 +60,7 @@ class SideMenu(QWidget):
 
         # Dropdown for names
         self.name_dropdown = QComboBox()
-        self.load_names()  # Load names from the JSON file
+        self.name_dropdown.addItems(class_names)
         layout.addWidget(QLabel("Select Name:"))
         layout.addWidget(self.name_dropdown)
 

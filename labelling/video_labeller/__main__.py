@@ -13,6 +13,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--video_dir", help="Directory containing the videos to label.")
     parser.add_argument("--label_dir", help="Directory containing the labels.")
+    parser.add_argument(
+        "--behaviours",
+        action="store_true",
+        help="Label behaviours. Default is to label identities.",
+    )
     return parser.parse_args()
 
 
@@ -37,7 +42,7 @@ if __name__ == "__main__":
 
     # Create the work queue and main window
     work_queue = SimpleQueue()
-    main_win = MainWindow(work_queue, videos_path, labels_path)
+    main_win = MainWindow(work_queue, videos_path, labels_path, args.behaviours)
 
     # Initialize and start the background segmenter thread
     segmenter = BackgroundSegmenter(main_win, work_queue)
