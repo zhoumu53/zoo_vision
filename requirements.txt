@@ -3,6 +3,10 @@
 # python==3.11
 
 # Colcon cargo allows building rust packages with for ros2
+catkin-pkg
+empy
+numpy
+lark
 colcon-cargo
 colcon-ros-cargo
 

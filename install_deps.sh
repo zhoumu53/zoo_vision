@@ -39,6 +39,7 @@ colcon build
 # sudo apt install bazel
 
 # Torch
+#curl -o ~/Downloads/libtorch-2.5.1cpu.zip https://download.pytorch.org/libtorch/cu124/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcpu.zip
 curl -o ~/Downloads/libtorch-2.5.1.zip https://download.pytorch.org/libtorch/cu124/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcu124.zip
 mkdir ~/install
 unzip ~/Downloads/libtorch-2.5.1.zip -d ~/install/libtorch-2.5.1
