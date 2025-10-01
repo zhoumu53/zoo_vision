@@ -52,7 +52,9 @@ set_target_properties(onnxruntime::onnxruntime PROPERTIES
 list(APPEND CMAKE_PREFIX_PATH "${torchrelease_SOURCE_DIR}")
 find_package(Torch REQUIRED)
 
-list(APPEND CMAKE_PREFIX_PATH "/home/dherrera/install/vision")
+# TorchVision was installed by install_deps.sh. Find it from home dir.
+file(REAL_PATH "~" HOME EXPAND_TILDE)
+list(APPEND CMAKE_PREFIX_PATH "${HOME}/install/vision")
 find_package(TorchVision REQUIRED)
 
 # nvtext

@@ -17,7 +17,8 @@ sudo rosdep init
 rosdep update
 
 # Rust
-sudo apt install cargo
+sudo apt install rustup
+rustup default stable
 
 # ros2_rust
 sudo apt install libclang-dev python3-vcstool

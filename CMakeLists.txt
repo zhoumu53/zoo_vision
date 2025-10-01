@@ -19,6 +19,8 @@ add_subdirectory(src/zoo_msgs)
 corrosion_import_crate(
     MANIFEST_PATH src/zoo_vision_rs/Cargo.toml
     FLAGS --config patch.crates-io.zoo_msgs.path="${CMAKE_BINARY_DIR}/src/zoo_msgs/rosidl_generator_rs/zoo_msgs/rust"
+          --config patch.crates-io.builtin_interfaces.path="${builtin_interfaces_DIR}/../rust"
+          --config patch.crates-io.std_msgs.path="${std_msgs_DIR}/../rust"
 )
 add_dependencies(_cargo-build_zoo_vision_rs  zoo_msgs)
 # target_link_libraries(zoo_vision_rs INTERFACE zoo_msgs)
