@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
-#include "zoo_vision/video_loader.hpp"
+#include "zoo_vision/video_db_loader.hpp"
 
 #include "zoo_vision/utils.hpp"
 
@@ -54,7 +54,7 @@ std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
 
 } // namespace
 
-VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loader", options) {
+VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_loader", options) {
   RCLCPP_INFO(get_logger(), "Starting video_loader");
 
   const nlohmann::json &config = getConfig();
@@ -77,11 +77,15 @@ VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loade
   timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
 }
 
-void VideoLoader::loadVideoDatabase(const std::filesystem::path &database,
-                                    const std::span<const std::string> enabledCameras) {
+void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
+                                      const std::span<const std::string> enabledCameras) {
   const auto videoRootPath = database.parent_path();
 
   std::ifstream f(database);
+  if (f.fail()) {
+    using namespace std::literals;
+    throw std::runtime_error("Could not open video database file: "s + database.string());
+  }
   nlohmann::json databaseJson = nlohmann::json::parse(f);
 
   // Set replay clock to database start time
@@ -104,7 +108,7 @@ void VideoLoader::loadVideoDatabase(const std::filesystem::path &database,
   }
 }
 
-void VideoLoader::openVideo(const std::string & /*cameraName*/, CameraData &cameraData, const VideoInfo &info) {
+void VideoDBLoader::openVideo(const std::string & /*cameraName*/, CameraData &cameraData, const VideoInfo &info) {
   cv::VideoCapture cvVideo;
   const bool ok = cvVideo.open(info.videoFile);
   if (ok) {
@@ -128,7 +132,7 @@ void VideoLoader::openVideo(const std::string & /*cameraName*/, CameraData &came
     RCLCPP_ERROR(get_logger(), "Failed to open video %s", info.videoFile.c_str());
   }
 }
-void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time) {
+void VideoDBLoader::loadVideo(const std::string &cameraName, CameraData &cameraData, const Clock::time_point time) {
   if (cameraData.videoList_.empty()) {
     RCLCPP_WARN(get_logger(), "Video list for %s is empty.", cameraName.c_str());
     return;
@@ -154,7 +158,7 @@ void VideoLoader::loadVideo(const std::string &cameraName, CameraData &cameraDat
                  std::format("{}", time).c_str());
   }
 }
-void VideoLoader::loadNextVideo(const std::string &cameraName, CameraData &cameraData) {
+void VideoDBLoader::loadNextVideo(const std::string &cameraName, CameraData &cameraData) {
   if (cameraData.currentVideo_ != cameraData.videoList_.end()) {
     cameraData.currentVideo_++;
   }
@@ -168,7 +172,7 @@ void VideoLoader::loadNextVideo(const std::string &cameraName, CameraData &camer
   openVideo(cameraName, cameraData, *cameraData.currentVideo_);
 }
 
-void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
+void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
     image = cv::Mat3b{};
     return;
@@ -186,7 +190,7 @@ void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   }
 }
 
-auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
+auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
   std::optional<Clock::time_point> minTime;
   for (const auto &[_, cameraData] : cameras_) {
     if (cameraData.videoStartTime_.has_value()) {
@@ -198,7 +202,7 @@ auto VideoLoader::findNextValidReplayTime() const -> std::optional<Clock::time_p
   return minTime;
 }
 
-void VideoLoader::onTimer() {
+void VideoDBLoader::onTimer() {
   std::optional<Clock::time_point> newReplayTime;
   bool framePublished = false;
 
@@ -278,4 +282,4 @@ void VideoLoader::onTimer() {
 
 #include "rclcpp_components/register_node_macro.hpp"
 
-RCLCPP_COMPONENTS_REGISTER_NODE(zoo::VideoLoader)
+RCLCPP_COMPONENTS_REGISTER_NODE(zoo::VideoDBLoader)

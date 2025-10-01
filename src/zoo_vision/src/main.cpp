@@ -16,7 +16,7 @@
 #include "zoo_vision/db_forwarder.hpp"
 #include "zoo_vision/rerun_forwarder.hpp"
 #include "zoo_vision/utils.hpp"
-#include "zoo_vision/video_loader.hpp"
+#include "zoo_vision/video_db_loader.hpp"
 #include "zoo_vision/zoo_camera.hpp"
 
 #include <argparse/argparse.hpp>
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
 
   const bool useLiveStream = config["live_stream"].get<bool>();
   if (!useLiveStream) {
-    nodes.push_back(std::make_shared<VideoLoader>(options));
+    nodes.push_back(std::make_shared<VideoDBLoader>(options));
   }
 
   int index = 0;

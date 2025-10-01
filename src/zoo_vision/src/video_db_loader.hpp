@@ -22,9 +22,9 @@
 
 namespace zoo {
 
-class VideoLoader : public rclcpp::Node {
+class VideoDBLoader : public rclcpp::Node {
 public:
-  explicit VideoLoader(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+  explicit VideoDBLoader(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
 private:
   using Clock = std::chrono::system_clock;
