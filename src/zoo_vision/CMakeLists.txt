@@ -84,6 +84,8 @@ add_executable(zoo_vision
   src/image_quality.cpp
   src/video_db_loader.hpp
   src/video_db_loader.cpp
+  src/video_loader.hpp
+  src/video_loader.cpp
   src/segmenter_interface.hpp
   src/segmenter.hpp
   src/segmenter.cpp

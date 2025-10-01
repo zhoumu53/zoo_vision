@@ -54,8 +54,8 @@ std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
 
 } // namespace
 
-VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_loader", options) {
-  RCLCPP_INFO(get_logger(), "Starting video_loader");
+VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_db_loader", options) {
+  RCLCPP_INFO(get_logger(), "Starting video_db_loader");
 
   const nlohmann::json &config = getConfig();
 
