@@ -87,8 +87,11 @@ add_executable(zoo_vision
   src/video_loader.hpp
   src/video_loader.cpp
   src/segmenter_interface.hpp
+  src/segmenter_interface.cpp
   src/segmenter.hpp
   src/segmenter.cpp
+  src/segmenter_fake.hpp
+  src/segmenter_fake.cpp
   src/segmenter_yolo.hpp
   src/segmenter_yolo.cpp
   src/world_locator.hpp

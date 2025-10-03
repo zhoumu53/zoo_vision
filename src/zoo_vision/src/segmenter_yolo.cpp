@@ -35,7 +35,7 @@ using namespace at::indexing;
 
 namespace zoo {
 
-SegmenterYolo::SegmenterYolo(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream)
+SegmenterYolo::SegmenterYolo(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream)
     : name_{std::format("segmenter_yolo_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
       cameraName_{cameraName} {
   at::InferenceMode inferenceGuard;

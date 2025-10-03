@@ -74,7 +74,8 @@ private:
 
   CameraCalibration calibration_;
 
-  at::cuda::CUDAStream cudaStream_;
+  at::DeviceType device_ = at::kCPU;
+  std::optional<at::cuda::CUDAStream> cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;
   std::unique_ptr<ISegmenter> segmenter_;

@@ -1,4 +1,3 @@
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -12,32 +11,21 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#pragma once
-
-#include "zoo_vision/types.hpp"
-
-#include <ATen/Tensor.h>
-#include <ATen/TensorOperators.h>
+#include "zoo_vision/segmenter_interface.hpp"
+#include "zoo_vision/segmenter_fake.hpp"
+#include "zoo_vision/segmenter_yolo.hpp"
+#include "zoo_vision/utils.hpp"
 
 namespace zoo {
 
-class ImageNormalizer {
-public:
-  explicit ImageNormalizer();
-
-  at::Tensor normalize(const at::Tensor &image) const {
-    at::Tensor image_f32 = (image.dtype() == at::kFloat) ? image : image.to(at::kFloat);
-    at::Tensor imageNorm = (image_f32 - preprocessMean_) / preprocessStd_;
-    return imageNorm;
+std::unique_ptr<ISegmenter> makeSegmenter(int nameIndex, std::string cameraName_,
+                                          std::optional<at::cuda::CUDAStream> cudaStream_) {
+  const auto config = getConfig();
+  if (config["detection"]["model"].get<std::string>().empty()) {
+    return std::make_unique<SegmenterFake>(nameIndex);
+  } else {
+    return std::make_unique<SegmenterYolo>(nameIndex, cameraName_, cudaStream_);
   }
+}
 
-  at::Tensor denormalize(const at::Tensor &image_f32) const {
-    return (image_f32 * preprocessStd_ + preprocessMean_).to(at::kByte);
-  }
-
-private:
-  at::DeviceType device_ = at::kCPU;
-  at::Tensor preprocessMean_;
-  at::Tensor preprocessStd_;
-};
 } // namespace zoo

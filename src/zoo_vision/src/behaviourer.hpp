@@ -34,7 +34,7 @@ using float32_t = float;
 
 class Behaviourer {
 public:
-  explicit Behaviourer(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream);
+  explicit Behaviourer(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream);
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
@@ -48,7 +48,7 @@ private:
 
   std::string name_;
   rclcpp::Logger logger_;
-  at::cuda::CUDAStream cudaStream_;
+  std::optional<at::cuda::CUDAStream> cudaStream_;
   std::string cameraName_;
 
   torch::jit::script::Module model_;

@@ -36,7 +36,7 @@ using namespace at::indexing;
 
 namespace zoo {
 
-Behaviourer::Behaviourer(int nameIndex, std::string cameraName, at::cuda::CUDAStream cudaStream)
+Behaviourer::Behaviourer(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream)
     : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
       cameraName_{cameraName} {
   at::InferenceMode inferenceGuard;
@@ -129,7 +129,9 @@ void Behaviourer::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor
   }
 
   constexpr auto MS_TO_NS = 1e6f;
-  cudaStreamSynchronize(cudaStream_);
+  if (cudaStream_.has_value()) {
+    cudaStreamSynchronize(*cudaStream_);
+  }
   addRosKeyValue(msg.timings.items_ns, "beh_net", eventBeforeNetwork.elapsed_time(eventAfterNetwork) * MS_TO_NS);
 }
 

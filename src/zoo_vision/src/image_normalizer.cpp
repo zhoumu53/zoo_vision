@@ -24,10 +24,9 @@ ImageNormalizer::ImageNormalizer() {
   auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672f, 0.2239999920129776f, 0.22499999403953552f});
 
   preprocessMean_ =
-      (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-          .to(torch::kCUDA);
-  preprocessStd_ = (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-                       .to(torch::kCUDA);
+      (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f).to(device_);
+  preprocessStd_ =
+      (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f).to(device_);
 }
 
 } // namespace zoo

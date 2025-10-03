@@ -16,23 +16,17 @@
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
 
-#include <c10/cuda/CUDAStream.h>
 #include <nlohmann/json_fwd.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
 
-class YOLOv11SegDetector;
-
 namespace zoo {
 
-class SegmenterYolo : public ISegmenter {
+class SegmenterFake : public ISegmenter {
 public:
-  explicit SegmenterYolo(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream);
-  ~SegmenterYolo();
-
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
+  explicit SegmenterFake(int nameIndex);
+  ~SegmenterFake();
 
   void setImageSize(Vector2i size) override { detectionImageSize_ = size; }
   Vector2i getDetectionImageSize() const override { return detectionImageSize_; }
@@ -43,24 +37,9 @@ public:
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }
 
-  struct SegmentationResult {
-    at::Tensor masks_u8;
-    at::Tensor boxes;
-    at::Tensor scores;
-    at::Tensor labels;
-  };
-
-  SegmentationResult callYolo(const cv::Mat &image);
-
   std::string name_;
   rclcpp::Logger logger_;
-  std::optional<at::cuda::CUDAStream> cudaStream_;
 
-  std::string cameraName_;
-
-  float32_t scoreThreshold_;
-
-  std::unique_ptr<YOLOv11SegDetector> model_;
   Vector2i detectionImageSize_;
 };
 } // namespace zoo

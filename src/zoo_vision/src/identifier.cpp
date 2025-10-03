@@ -35,7 +35,7 @@ using namespace at::indexing;
 namespace zoo {
 
 Identifier::Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                       at::cuda::CUDAStream cudaStream)
+                       std::optional<at::cuda::CUDAStream> cudaStream)
     : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
       cameraName_{cameraName}, trackMatcher_{trackMatcher} {
   at::InferenceMode inferenceGuard;
@@ -60,7 +60,7 @@ void Identifier::loadModel(const std::filesystem::path &modelPath) {
     if (!std::filesystem::exists(modelPath)) {
       throw ZooVisionError("Model does not exist");
     }
-    identityNetwork_ = torch::jit::load(modelPath, torch::kCUDA);
+    identityNetwork_ = torch::jit::load(modelPath, device_);
     identityNetwork_.eval();
   } catch (const std::exception &ex) {
     std::cout << "Error loading model from " << modelPath << std::endl;
@@ -111,8 +111,8 @@ void Identifier::callStatefulModel(at::Tensor &logitsGpu, const torch::Tensor &p
   const int detectionCount = trackIds.size();
   constexpr size_t HIDDEN_LAYER_COUNT = 3;
   constexpr size_t HIDDEN_STATE_SIZE = 128;
-  auto trackState0 = at::zeros({HIDDEN_LAYER_COUNT, detectionCount, HIDDEN_STATE_SIZE},
-                               at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+  auto trackState0 =
+      at::zeros({HIDDEN_LAYER_COUNT, detectionCount, HIDDEN_STATE_SIZE}, at::TensorOptions(device_).dtype(at::kFloat));
   for (const auto &[i, trackId] : std::views::enumerate(trackIds)) {
     // Copy track state
     TrackData &track = trackMatcher_.getTrackData(trackId);
@@ -155,13 +155,15 @@ void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &p
   at::InferenceMode inferenceGuard;
   std::optional<nvtx3::scoped_range> nvtxLabel{"id_before (" + cameraName_ + ")"};
 
-  assert(patch_f32.device().is_cuda());
+  assert(patch_f32.device().type() == device_);
 
   // Send to model
   at::Tensor identityLogitsGpu;
   nvtxLabel.emplace("id_net (" + cameraName_ + ")");
   at::cuda::CUDAEvent eventBeforeNetwork{cudaEventDefault}, eventAfterNetwork{cudaEventDefault};
-  eventBeforeNetwork.record();
+  if (device_ == at::kCUDA) {
+    eventBeforeNetwork.record();
+  }
   if (isStatefulModel_) {
     // callStatefulModel(identityLogitsGpu, patches, trackIds);
     throw ZooVisionError("Stateful doesn't make sense any more");
@@ -169,7 +171,9 @@ void Identifier::onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &p
     callStatelessModel(identityLogitsGpu, patch_f32.unsqueeze(0));
     identityLogitsGpu = identityLogitsGpu.squeeze(0); // Remove dummy batch dimension
   }
-  eventAfterNetwork.record();
+  if (device_ == at::kCUDA) {
+    eventAfterNetwork.record();
+  }
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
   at::Tensor identityLogits = identityLogitsGpu.to(at::kCPU); // Dims: [identity]

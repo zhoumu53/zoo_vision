@@ -43,9 +43,8 @@ namespace zoo {
 
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
-      cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_},
-      cudaStream_{at::cuda::getStreamFromPool()}, trackMatcher_{},
-      segmenter_{std::make_unique<SegmenterYolo>(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
+      cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_}, cudaStream_{},
+      trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
       identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
@@ -121,7 +120,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
   rateSampler_.tick();
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
-  at::cuda::CUDAStreamGuard streamGuard{cudaStream_};
+  std::optional<at::cuda::CUDAStreamGuard> streamGuard;
+  if (cudaStream_.has_value()) {
+    streamGuard.emplace(*cudaStream_);
+  }
 
   if (!dynamicConfigDone_) {
     // First image received, initialized things that need to know the image size
@@ -151,7 +153,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  const at::Tensor imageTensor_f32 = imageTensorCPU.to(at::kCUDA, /*non_blocking*/ true).to(at::kFloat);
+  const at::Tensor imageTensor_f32 = imageTensorCPU.to(device_, /*non_blocking*/ true).to(at::kFloat);
   // const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////

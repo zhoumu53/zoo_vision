@@ -34,7 +34,7 @@ using float32_t = float;
 class Identifier {
 public:
   explicit Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
-                      at::cuda::CUDAStream cudaStream);
+                      std::optional<at::cuda::CUDAStream> cudaStream);
 
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
@@ -49,7 +49,8 @@ private:
 
   std::string name_;
   rclcpp::Logger logger_;
-  at::cuda::CUDAStream cudaStream_;
+  at::DeviceType device_ = at::kCPU;
+  std::optional<at::cuda::CUDAStream> cudaStream_;
   std::string cameraName_;
 
   TrackMatcher &trackMatcher_;

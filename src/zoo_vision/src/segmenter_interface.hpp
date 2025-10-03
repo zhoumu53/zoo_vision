@@ -17,6 +17,7 @@
 
 #include <ATen/core/Tensor.h>
 #include <Eigen/Dense>
+#include <c10/cuda/CUDAStream.h>
 #include <opencv2/core.hpp>
 
 namespace zoo {
@@ -35,5 +36,8 @@ public:
   virtual void onImage(SegmenterResult &result, const at::Tensor &imageGpu,
                        const cv::Mat &imageCpu /*TODO: remove imageCpu*/) = 0;
 };
+
+std::unique_ptr<ISegmenter> makeSegmenter(int nameIndex, std::string cameraName_,
+                                          std::optional<at::cuda::CUDAStream> cudaStream_);
 
 } // namespace zoo
