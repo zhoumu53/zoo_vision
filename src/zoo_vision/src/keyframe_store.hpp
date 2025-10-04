@@ -41,6 +41,8 @@ private:
                        const at::Tensor &embeddingsNorm, const TSimilaritiesVector &newSimilarities);
   void findMostSimilarKeyframe();
 
+  at::DeviceType device_ = at::kCPU;
+
   std::array<at::Tensor, MAX_KEYFRAME_COUNT> keyframeImages_;
 
   uint32_t keyframeCount_ = 0;

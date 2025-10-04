@@ -13,6 +13,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/keyframe_store.hpp"
+#include "zoo_vision/image_embedder.hpp"
 
 #include <ATen/TensorIndexing.h>
 #include <ATen/TensorOperators.h>
@@ -26,15 +27,10 @@ using namespace at::indexing;
 
 namespace zoo {
 
-namespace {
-constexpr static uint32_t EMBEDDING_FLAT_COUNT =
-    197 * 768; // ViT Embedding shape from huggingface google/vit-base-patch16-224
-} // namespace
-
 KeyframeStore::KeyframeStore()
-    : keyframeEmbeddings_{at::zeros({MAX_KEYFRAME_COUNT, EMBEDDING_FLAT_COUNT},
-                                    at::TensorOptions(at::kCUDA).dtype(at::kFloat))},
-      keyframeEmbeddingNorms_{at::zeros({MAX_KEYFRAME_COUNT}, at::TensorOptions(at::kCUDA).dtype(at::kFloat))},
+    : keyframeEmbeddings_{at::zeros({MAX_KEYFRAME_COUNT, ImageEmbedder::EMBEDDING_FLAT_COUNT},
+                                    at::TensorOptions(device_).dtype(at::kFloat))},
+      keyframeEmbeddingNorms_{at::zeros({MAX_KEYFRAME_COUNT}, at::TensorOptions(device_).dtype(at::kFloat))},
       similarities_{Eigen::MatrixXf::Ones(MAX_KEYFRAME_COUNT, MAX_KEYFRAME_COUNT)} {}
 
 std::optional<TKeyframeIndex> KeyframeStore::maybeAddKeyframe(const at::Tensor &image_u8,

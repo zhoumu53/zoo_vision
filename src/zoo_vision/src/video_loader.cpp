@@ -133,7 +133,7 @@ void VideoLoader::onTimer() {
   if (!newReplayTime.has_value()) {
     assert(framePublished == false);
     RCLCPP_INFO(get_logger(), "End of all videos");
-    std::terminate();
+    std::exit(0);
   }
 
   assert(newReplayTime.has_value());

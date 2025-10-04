@@ -36,6 +36,6 @@ public:
   std::vector<bool> check(const at::Tensor &images_f32);
 
 private:
-  torch::jit::script::Module module_;
+  std::optional<torch::jit::Module> module_;
 };
 } // namespace zoo

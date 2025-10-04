@@ -23,11 +23,7 @@
 
 namespace zoo {
 
-ImageQualityNet::ImageQualityNet() {
-  at::InferenceMode inferenceGuard;
-
-  readConfig(getConfig());
-}
+ImageQualityNet::ImageQualityNet() { readConfig(getConfig()); }
 
 void ImageQualityNet::readConfig(const nlohmann::json &config) { // Load model
   const auto configPath = config["models"]["quality"].get<std::string>();
@@ -41,8 +37,8 @@ void ImageQualityNet::loadModel(const std::filesystem::path &modelPath) {
     if (!std::filesystem::exists(modelPath)) {
       throw ZooVisionError("Model does not exist");
     }
-    module_ = torch::jit::load(modelPath, torch::kCUDA);
-    module_.eval();
+    module_.emplace(torch::jit::load(modelPath, torch::kCUDA));
+    module_->eval();
   } catch (const std::exception &ex) {
     std::cout << "Error loading model from " << modelPath << std::endl;
     std::cout << "Exception: " << ex.what() << std::endl;
@@ -51,13 +47,13 @@ void ImageQualityNet::loadModel(const std::filesystem::path &modelPath) {
 }
 
 std::vector<bool> ImageQualityNet::check(const at::Tensor &images_f32) {
-  if (module_ == torch::jit::Module()) {
+  if (!module_.has_value()) {
     // No quality check
     return std::vector<bool>(images_f32.size(0), true);
   }
 
   at::InferenceMode inferenceGuard;
-  const c10::IValue modelResult = module_.forward({images_f32});
+  const c10::IValue modelResult = module_->forward({images_f32});
   const at::Tensor logitsGpu = [&]() {
     if (modelResult.isTensor()) {
       return modelResult.toTensor();

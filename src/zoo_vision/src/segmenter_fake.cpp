@@ -49,7 +49,7 @@ void SegmenterFake::onImage(SegmenterResult &result, const at::Tensor & /*imageG
 
   cv::Mat1b maskMap = wrapCvFromTensor1b(result.masks[0]);
   const Vector2i center = ((min + max) / 2).cast<int>();
-  cv::circle(maskMap, {center.x(), center.y()}, size.minCoeff(), {1, 1, 1, 1}, cv::FILLED);
+  cv::circle(maskMap, {center.x(), center.y()}, size.minCoeff() / 2, {1, 1, 1, 1}, cv::FILLED);
 }
 
 } // namespace zoo

@@ -19,15 +19,18 @@
 
 #include <ATen/Tensor.h>
 #include <ATen/TensorOperators.h>
-#include <torch/script.h>
+#include <torch/csrc/jit/api/module.h>
 
 #include <filesystem>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace zoo {
 
 class ImageEmbedder {
 public:
+  constexpr static uint32_t EMBEDDING_FLAT_COUNT =
+      197 * 768; // ViT Embedding shape from huggingface google/vit-base-patch16-224
+
   explicit ImageEmbedder();
 
   void readConfig(const nlohmann::json &config);
@@ -36,6 +39,6 @@ public:
   at::Tensor embed(const at::Tensor &image_f32);
 
 private:
-  torch::jit::Module module_;
+  std::optional<torch::jit::Module> module_;
 };
 } // namespace zoo

@@ -18,6 +18,7 @@
 #include "zoo_vision/utils.hpp"
 
 #include <torch/torch.h>
+#include <torch/csrc/jit/serialization/import.h>
 
 namespace zoo {
 
@@ -39,8 +40,8 @@ void ImageEmbedder::loadModel(const std::filesystem::path &modelPath) {
     if (!std::filesystem::exists(modelPath)) {
       throw ZooVisionError("Model does not exist");
     }
-    module_ = torch::jit::load(modelPath, torch::kCUDA);
-    module_.eval();
+    module_.emplace(torch::jit::load(modelPath, torch::kCUDA));
+    module_->eval();
   } catch (const std::exception &ex) {
     std::cout << "Error loading model from " << modelPath << std::endl;
     std::cout << "Exception: " << ex.what() << std::endl;
@@ -49,11 +50,11 @@ void ImageEmbedder::loadModel(const std::filesystem::path &modelPath) {
 }
 
 at::Tensor ImageEmbedder::embed(const at::Tensor &images_f32) {
-  if (module_ == torch::jit::Module()) {
-    return images_f32.clone();
+  if (!module_.has_value()) {
+    return images_f32.reshape({-1}).slice(0, 0, EMBEDDING_FLAT_COUNT);
   } else {
     at::InferenceMode inferenceGuard;
-    c10::IValue modelResult = module_.forward({images_f32});
+    c10::IValue modelResult = module_->forward({images_f32});
     return modelResult.toTensor();
   }
 }

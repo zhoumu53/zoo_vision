@@ -39,7 +39,8 @@ void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &ima
   const int channels = 3;
 
   const std::array<int64_t, 2> imageSize = {/*width*/ imageGpu.size(2), /*height*/ imageGpu.size(1)};
-  patches = at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(at::kCUDA).dtype(at::kFloat));
+  patches =
+      at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(imageGpu.device()).dtype(at::kFloat));
 
   // Extract crops
   for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
