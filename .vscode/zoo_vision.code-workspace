@@ -21,7 +21,6 @@
 		"python.analysis.extraPaths": [
 			"",
 		],
-		"circuitpython.board.version": null,
 		"ros.distro": "jazzy",
 		"files.associations": {
 			"functional": "cpp",

@@ -20,7 +20,7 @@
 #include "zoo_msgs/msg/track_state.hpp"
 #include "zoo_vision/behaviourer.hpp"
 #include "zoo_vision/camera_calibration.hpp"
-#include "zoo_vision/identifier.hpp"
+#include "zoo_vision/identifier_interface.hpp"
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/image_quality.hpp"
@@ -82,7 +82,7 @@ private:
   WorldLocator locator_;
   ImageEmbedder embedder_;
   ImageQualityNet quality_;
-  Identifier identifier_;
+  std::unique_ptr<IIdentifier> identifier_;
   Behaviourer behaviourer_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;

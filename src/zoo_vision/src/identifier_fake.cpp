@@ -1,5 +1,3 @@
-
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -13,29 +11,21 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#pragma once
 
-#include "zoo_vision/types.hpp"
+#include "zoo_vision/identifier_fake.hpp"
+#include <rclcpp/rclcpp.hpp>
 
-#include <ATen/Tensor.h>
-#include <ATen/TensorOperators.h>
-#include <torch/script.h>
-
-#include <filesystem>
-#include <nlohmann/json.hpp>
+using namespace std::chrono_literals;
+using namespace at::indexing;
 
 namespace zoo {
 
-class ImageEmbedder {
-public:
-  explicit ImageEmbedder();
+IdentifierFake::IdentifierFake(int nameIndex) : name_{std::format("IdentifierFake_{}", nameIndex)} {
+  RCLCPP_INFO(rclcpp::get_logger(name_), "Starting %s", name_.c_str());
+}
 
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
+void IdentifierFake::onKeyframe(TKeyframeIndex /*keyframeIndex*/, const at::Tensor &/*patch_f32*/, TrackData &track) {
+  track.selectedIdentity = INVALID_IDENTITY;
+}
 
-  at::Tensor embed(const at::Tensor &image_f32);
-
-private:
-  torch::jit::Module module_;
-};
 } // namespace zoo

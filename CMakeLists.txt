@@ -5,6 +5,8 @@ set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 
 project(zoo_vision LANGUAGES CUDA CXX)
 
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+
 # Download dependencies
 include(FetchContent)
 FetchContent_Declare(

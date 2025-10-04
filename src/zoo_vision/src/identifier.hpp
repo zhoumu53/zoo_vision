@@ -16,6 +16,8 @@
 #include "zoo_msgs/msg/detection.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_msgs/msg/image4m.hpp"
+
+#include "zoo_vision/identifier_interface.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 
@@ -31,7 +33,7 @@ namespace zoo {
 
 using float32_t = float;
 
-class Identifier {
+class Identifier : public IIdentifier {
 public:
   explicit Identifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
                       std::optional<at::cuda::CUDAStream> cudaStream);
@@ -39,7 +41,7 @@ public:
   void readConfig(const nlohmann::json &config);
   void loadModel(const std::filesystem::path &modelPath);
 
-  void onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &track);
+  void onKeyframe(TKeyframeIndex keyframeIndex, const torch::Tensor &patch_f32, TrackData &track) override;
 
 private:
   const rclcpp::Logger &get_logger() const { return logger_; }

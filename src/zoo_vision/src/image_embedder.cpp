@@ -28,8 +28,11 @@ ImageEmbedder::ImageEmbedder() {
 }
 
 void ImageEmbedder::readConfig(const nlohmann::json &config) { // Load model
-  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["embeddings"]);
-  loadModel(modelPath);
+  const auto configPath = config["models"]["embeddings"].get<std::string>();
+  if (!configPath.empty()) {
+    const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / configPath);
+    loadModel(modelPath);
+  }
 }
 void ImageEmbedder::loadModel(const std::filesystem::path &modelPath) {
   try {
@@ -46,9 +49,13 @@ void ImageEmbedder::loadModel(const std::filesystem::path &modelPath) {
 }
 
 at::Tensor ImageEmbedder::embed(const at::Tensor &images_f32) {
-  at::InferenceMode inferenceGuard;
-  c10::IValue modelResult = module_.forward({images_f32});
-  return modelResult.toTensor();
+  if (module_ == torch::jit::Module()) {
+    return images_f32.clone();
+  } else {
+    at::InferenceMode inferenceGuard;
+    c10::IValue modelResult = module_.forward({images_f32});
+    return modelResult.toTensor();
+  }
 }
 
 } // namespace zoo

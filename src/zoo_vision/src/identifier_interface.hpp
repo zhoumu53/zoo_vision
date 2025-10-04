@@ -1,5 +1,3 @@
-
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -17,25 +15,23 @@
 
 #include "zoo_vision/types.hpp"
 
+#include "zoo_vision/keyframe_store.hpp"
+#include "zoo_vision/track_matcher.hpp"
+
 #include <ATen/Tensor.h>
-#include <ATen/TensorOperators.h>
-#include <torch/script.h>
+#include <c10/cuda/CUDAStream.h>
 
 #include <filesystem>
-#include <nlohmann/json.hpp>
 
 namespace zoo {
 
-class ImageEmbedder {
+class IIdentifier {
 public:
-  explicit ImageEmbedder();
+  virtual ~IIdentifier() = default;
 
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-
-  at::Tensor embed(const at::Tensor &image_f32);
-
-private:
-  torch::jit::Module module_;
+  virtual void onKeyframe(TKeyframeIndex keyframeIndex, const at::Tensor &patch_f32, TrackData &track) = 0;
 };
+
+std::unique_ptr<IIdentifier> makeIdentifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
+                                            std::optional<at::cuda::CUDAStream> cudaStream);
 } // namespace zoo

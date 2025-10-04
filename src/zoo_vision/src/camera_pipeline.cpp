@@ -15,8 +15,6 @@
 #include "zoo_vision/camera_pipeline.hpp"
 
 #include "zoo_vision/json_eigen.hpp"
-#include "zoo_vision/segmenter.hpp"
-#include "zoo_vision/segmenter_yolo.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/utils.hpp"
 
@@ -45,7 +43,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_}, cudaStream_{},
       trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      identifier_{nameIndex, cameraName_, trackMatcher_, cudaStream_},
+      identifier_{makeIdentifier(nameIndex, cameraName_, trackMatcher_, cudaStream_)},
       behaviourer_{nameIndex, cameraName_, cudaStream_} {
   readConfig(getConfig());
 
@@ -239,7 +237,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
         const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_f32, embeddings[i]);
         if (newKeyframeIdx.has_value()) {
           // New keyframe has been added, execute id net
-          identifier_.onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
+          identifier_->onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
 
           publishTrackState(imageMsg.header, *newKeyframeIdx, track);
         }

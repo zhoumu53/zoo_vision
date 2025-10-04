@@ -1,5 +1,3 @@
-
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -13,29 +11,20 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#pragma once
-
-#include "zoo_vision/types.hpp"
-
-#include <ATen/Tensor.h>
-#include <ATen/TensorOperators.h>
-#include <torch/script.h>
-
-#include <filesystem>
-#include <nlohmann/json.hpp>
+#include "zoo_vision/identifier_interface.hpp"
+#include "zoo_vision/identifier.hpp"
+#include "zoo_vision/identifier_fake.hpp"
+#include "zoo_vision/utils.hpp"
 
 namespace zoo {
 
-class ImageEmbedder {
-public:
-  explicit ImageEmbedder();
-
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-
-  at::Tensor embed(const at::Tensor &image_f32);
-
-private:
-  torch::jit::Module module_;
-};
+std::unique_ptr<IIdentifier> makeIdentifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
+                                            std::optional<at::cuda::CUDAStream> cudaStream) {
+  const auto config = getConfig();
+  if (config["detection"]["model"].get<std::string>().empty()) {
+    return std::make_unique<IdentifierFake>(nameIndex);
+  } else {
+    return std::make_unique<Identifier>(nameIndex, cameraName, trackMatcher, cudaStream);
+  }
+}
 } // namespace zoo

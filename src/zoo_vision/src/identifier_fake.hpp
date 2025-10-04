@@ -1,5 +1,3 @@
-
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -15,27 +13,17 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/types.hpp"
-
-#include <ATen/Tensor.h>
-#include <ATen/TensorOperators.h>
-#include <torch/script.h>
-
-#include <filesystem>
-#include <nlohmann/json.hpp>
+#include "zoo_vision/identifier_interface.hpp"
 
 namespace zoo {
 
-class ImageEmbedder {
+class IdentifierFake : public IIdentifier {
 public:
-  explicit ImageEmbedder();
+  explicit IdentifierFake(int nameIndex);
 
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-
-  at::Tensor embed(const at::Tensor &image_f32);
+  void onKeyframe(TKeyframeIndex keyframeIndex, const at::Tensor &patch_f32, TrackData &track);
 
 private:
-  torch::jit::Module module_;
+  std::string name_;
 };
 } // namespace zoo

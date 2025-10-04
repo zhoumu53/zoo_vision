@@ -100,6 +100,10 @@ add_executable(zoo_vision
   src/patch_cropper.cpp
   src/vote_histogram.hpp
   src/vote_histogram.cpp
+  src/identifier_interface.hpp
+  src/identifier_interface.cpp
+  src/identifier_fake.hpp
+  src/identifier_fake.cpp
   src/identifier.hpp
   src/identifier.cpp
   src/behaviourer.hpp
