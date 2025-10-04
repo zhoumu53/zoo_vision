@@ -26,6 +26,7 @@
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
 #include <torch/torch.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -37,7 +38,7 @@ using namespace at::indexing;
 namespace zoo {
 
 Behaviourer::Behaviourer(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream)
-    : name_{std::format("identifier_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
+    : name_{std::format("behaviourer_{}", nameIndex)}, logger_{rclcpp::get_logger(name_)}, cudaStream_{cudaStream},
       cameraName_{cameraName} {
   at::InferenceMode inferenceGuard;
 

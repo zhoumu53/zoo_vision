@@ -44,7 +44,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_}, cudaStream_{},
       trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
       identifier_{makeIdentifier(nameIndex, cameraName_, trackMatcher_, cudaStream_)},
-      behaviourer_{nameIndex, cameraName_, cudaStream_} {
+      behaviourer_{makeBehaviourer(nameIndex, cameraName_, cudaStream_)} {
   readConfig(getConfig());
 
   // Set up paths to store improvement images
@@ -248,7 +248,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     }
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Behaviour
-    behaviourer_.onDetection(detectionMsg, patchesNorm);
+    behaviourer_->onDetection(detectionMsg, patchesNorm);
     for (const auto [i, trackId, behaviourId] :
          std::views::zip(std::views::iota(0), trackIds, detectionMsg.behaviour_ids)) {
       TrackData &track = trackMatcher_.getTrackData(trackId);

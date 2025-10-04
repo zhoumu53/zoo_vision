@@ -15,35 +15,15 @@
 
 #include "zoo_vision/behaviourer_interface.hpp"
 
-#include <c10/cuda/CUDAStream.h>
-#include <nlohmann/json_fwd.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include <torch/script.h>
-
-#include <filesystem>
-#include <string>
-
 namespace zoo {
 
-class Behaviourer : public IBehaviourer {
+class BehaviourerFake : public IBehaviourer {
 public:
-  explicit Behaviourer(int nameIndex, std::string cameraName, std::optional<at::cuda::CUDAStream> cudaStream);
+  explicit BehaviourerFake(int nameIndex);
 
-  void readConfig(const nlohmann::json &config);
-  void loadModel(const std::filesystem::path &modelPath);
-
-  void onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor &patches) override;
+  void onDetection(zoo_msgs::msg::Detection &msg, const at::Tensor &patches) override;
 
 private:
-  const rclcpp::Logger &get_logger() const { return logger_; }
-
-  void callStatelessModel(at::Tensor &logitsGpu, const torch::Tensor &patches);
-
   std::string name_;
-  rclcpp::Logger logger_;
-  std::optional<at::cuda::CUDAStream> cudaStream_;
-  std::string cameraName_;
-
-  torch::jit::Module model_;
 };
 } // namespace zoo

@@ -30,8 +30,11 @@ ImageQualityNet::ImageQualityNet() {
 }
 
 void ImageQualityNet::readConfig(const nlohmann::json &config) { // Load model
-  const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / config["models"]["quality"]);
-  loadModel(modelPath);
+  const auto configPath = config["models"]["quality"].get<std::string>();
+  if (!configPath.empty()) {
+    const std::filesystem::path modelPath = std::filesystem::canonical(getDataPath() / configPath);
+    loadModel(modelPath);
+  }
 }
 void ImageQualityNet::loadModel(const std::filesystem::path &modelPath) {
   try {
@@ -48,6 +51,11 @@ void ImageQualityNet::loadModel(const std::filesystem::path &modelPath) {
 }
 
 std::vector<bool> ImageQualityNet::check(const at::Tensor &images_f32) {
+  if (module_ == torch::jit::Module()) {
+    // No quality check
+    return std::vector<bool>(images_f32.size(0), true);
+  }
+
   at::InferenceMode inferenceGuard;
   const c10::IValue modelResult = module_.forward({images_f32});
   const at::Tensor logitsGpu = [&]() {

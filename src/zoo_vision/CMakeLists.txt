@@ -106,6 +106,10 @@ add_executable(zoo_vision
   src/identifier_fake.cpp
   src/identifier.hpp
   src/identifier.cpp
+  src/behaviourer_interface.hpp
+  src/behaviourer_interface.cpp
+  src/behaviourer_fake.hpp
+  src/behaviourer_fake.cpp
   src/behaviourer.hpp
   src/behaviourer.cpp
   src/keyframe_store.hpp

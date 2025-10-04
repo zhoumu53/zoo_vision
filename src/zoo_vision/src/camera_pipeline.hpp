@@ -18,7 +18,7 @@
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/track_closed.hpp"
 #include "zoo_msgs/msg/track_state.hpp"
-#include "zoo_vision/behaviourer.hpp"
+#include "zoo_vision/behaviourer_interface.hpp"
 #include "zoo_vision/camera_calibration.hpp"
 #include "zoo_vision/identifier_interface.hpp"
 #include "zoo_vision/image_embedder.hpp"
@@ -83,7 +83,7 @@ private:
   ImageEmbedder embedder_;
   ImageQualityNet quality_;
   std::unique_ptr<IIdentifier> identifier_;
-  Behaviourer behaviourer_;
+  std::unique_ptr<IBehaviourer> behaviourer_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
