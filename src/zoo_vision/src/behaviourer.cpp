@@ -15,6 +15,7 @@
 #include "zoo_vision/behaviourer.hpp"
 
 #include "zoo_vision/json_eigen.hpp"
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
@@ -96,7 +97,7 @@ void Behaviourer::onDetection(zoo_msgs::msg::Detection &msg, const torch::Tensor
   eventAfterNetwork.record();
   nvtxLabel.emplace("id_after (" + cameraName_ + ")");
 
-  at::Tensor logits = logitsGpu.to(at::kCPU); // Dims: [track, identity]
+  at::Tensor logits = logitsGpu.to(g_computeDevice); // Dims: [track, identity]
   at::Tensor probabilities = torch::nn::functional::softmax(logits, torch::nn::functional::SoftmaxFuncOptions(1));
 
   const size_t patchCount = logits.size(0);

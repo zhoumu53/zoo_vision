@@ -21,7 +21,7 @@ namespace zoo {
 std::unique_ptr<IIdentifier> makeIdentifier(int nameIndex, std::string cameraName, TrackMatcher &trackMatcher,
                                             std::optional<at::cuda::CUDAStream> cudaStream) {
   const auto config = getConfig();
-  if (config["detection"]["model"].get<std::string>().empty()) {
+  if (config["models"]["identity"].get<std::string>().empty()) {
     return std::make_unique<IdentifierFake>(nameIndex);
   } else {
     return std::make_unique<Identifier>(nameIndex, cameraName, trackMatcher, cudaStream);

@@ -58,6 +58,9 @@ void VideoLoader::loadVideos(const std::span<const std::string> videoFiles,
     cv::VideoCapture cvVideo;
     const bool ok = cvVideo.open(videoFile);
     if (ok) {
+      if (!gCameraLimiters.empty()) {
+        cameraData.rateLimiter = gCameraLimiters[cameraName].get();
+      }
       cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", 10);
       cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
                                         static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
@@ -125,6 +128,10 @@ void VideoLoader::onTimer() {
     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     cameraData.publisher_->publish(std::move(msg));
     framePublished = true;
+
+    if (cameraData.rateLimiter != nullptr) {
+      cameraData.rateLimiter->waitForProcessing();
+    }
   }
   if (framePublished) {
     frameIndex_ += 1;

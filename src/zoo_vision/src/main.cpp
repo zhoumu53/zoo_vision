@@ -13,7 +13,9 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/camera_pipeline.hpp"
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/db_forwarder.hpp"
+#include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/rerun_forwarder.hpp"
 #include "zoo_vision/utils.hpp"
 #include "zoo_vision/video_db_loader.hpp"
@@ -63,6 +65,8 @@ int main(int argc, char *argv[]) {
 
   rclcpp::init(argc, argv);
 
+  setComputeDevice();
+
   // Load config once before initializing all nodes
   loadConfig();
   const auto args = parse_args(argc, argv);
@@ -85,6 +89,13 @@ int main(int argc, char *argv[]) {
 
   // Start rerun first so we can connect right away
   nodes.push_back(std::make_shared<RerunForwarder>(options));
+
+  // Camera rate limiters
+  if (config["rate_limiter"].get<bool>()) {
+    for (const auto &cameraName : cameraNames) {
+      gCameraLimiters.emplace(std::string{cameraName}, std::make_unique<ImageRateLimiter>());
+    }
+  }
 
   // Start db node
   if (config["db"]["enabled"].get<bool>()) {

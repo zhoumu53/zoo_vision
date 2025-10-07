@@ -51,7 +51,6 @@ private:
 
   std::string name_;
   rclcpp::Logger logger_;
-  at::DeviceType device_ = at::kCPU;
   std::optional<at::cuda::CUDAStream> cudaStream_;
   std::string cameraName_;
 

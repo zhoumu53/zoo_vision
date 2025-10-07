@@ -16,6 +16,7 @@
 
 #include "zoo_vision/json_eigen.hpp"
 #include "zoo_vision/timings.hpp"
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
@@ -46,6 +47,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       identifier_{makeIdentifier(nameIndex, cameraName_, trackMatcher_, cudaStream_)},
       behaviourer_{makeBehaviourer(nameIndex, cameraName_, cudaStream_)} {
   readConfig(getConfig());
+
+  rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
 
   // Set up paths to store improvement images
   if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_) {
@@ -107,15 +110,11 @@ void CameraPipeline::dynamicConfig(Vector2i imageSize) {
   locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 }
 
-// std::mutex globalMutex;
-
 void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
   const auto &imageMsg = *imageMsgPtr;
-  // std::optional<std::lock_guard<std::mutex>> lock;
-  // if (imageMsg.header.frame_id.data[0] == '7' && imageMsg.header.frame_id.data[1] == '3') {
-  //   lock.emplace(globalMutex);
-  // }
+
   // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
+
   rateSampler_.tick();
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
   std::optional<at::cuda::CUDAStreamGuard> streamGuard;
@@ -139,7 +138,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   CHECK_EQ(imageMsg.step, imageMsg.width * 3 * sizeof(char));
 
   ////////////////////////////////////////////////////////////
-  // Black out mased areas
+  // Black out masked areas
   for (const auto &poly : calibration_.maskPolygons_) {
     cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
   }
@@ -151,7 +150,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  const at::Tensor imageTensor_f32 = imageTensorCPU.to(device_, /*non_blocking*/ true).to(at::kFloat);
+  const at::Tensor imageTensor_f32 = imageTensorCPU.to(g_computeDevice, /*non_blocking*/ true).to(at::kFloat);
   // const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -266,6 +265,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsgPtr));
+
+  if(rateLimiter_) {
+    rateLimiter_->signalProcessingComplete();
+  }
 }
 
 void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, TKeyframeIndex newKeyframeIndex,

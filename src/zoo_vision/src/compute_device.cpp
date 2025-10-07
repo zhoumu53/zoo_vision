@@ -13,22 +13,17 @@
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
-#include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/compute_device.hpp"
-
 #include <torch/torch.h>
 
 namespace zoo {
+c10::DeviceType g_computeDevice;
 
-ImageNormalizer::ImageNormalizer() {
-  auto preprocessMeanData = std::array<float32_t, 3>({0.48500001430511475f, 0.4560000002384186f, 0.4059999883174896f});
-  auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672f, 0.2239999920129776f, 0.22499999403953552f});
-
-  preprocessMean_ =
-      (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-          .to(g_computeDevice);
-  preprocessStd_ = (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-                       .to(g_computeDevice);
+void setComputeDevice() {
+  if (torch::cuda::is_available()) {
+    g_computeDevice = c10::kCUDA;
+  } else {
+    g_computeDevice = c10::kCPU;
+  }
 }
-
 } // namespace zoo

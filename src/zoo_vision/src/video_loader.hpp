@@ -15,6 +15,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
+#include "zoo_vision/image_rate_limiter.hpp"
 #include <opencv2/highgui/highgui.hpp>
 
 #include <filesystem>
@@ -31,6 +32,7 @@ private:
 
   struct CameraData {
     std::filesystem::path videoFile;
+    ImageRateLimiter *rateLimiter;
 
     cv::Size2i frameSize;
     std::optional<cv::VideoCapture> videoStream_;

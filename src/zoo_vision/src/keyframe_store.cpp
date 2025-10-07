@@ -13,6 +13,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/keyframe_store.hpp"
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/image_embedder.hpp"
 
 #include <ATen/TensorIndexing.h>
@@ -29,8 +30,8 @@ namespace zoo {
 
 KeyframeStore::KeyframeStore()
     : keyframeEmbeddings_{at::zeros({MAX_KEYFRAME_COUNT, ImageEmbedder::EMBEDDING_FLAT_COUNT},
-                                    at::TensorOptions(device_).dtype(at::kFloat))},
-      keyframeEmbeddingNorms_{at::zeros({MAX_KEYFRAME_COUNT}, at::TensorOptions(device_).dtype(at::kFloat))},
+                                    at::TensorOptions(g_computeDevice).dtype(at::kFloat))},
+      keyframeEmbeddingNorms_{at::zeros({MAX_KEYFRAME_COUNT}, at::TensorOptions(g_computeDevice).dtype(at::kFloat))},
       similarities_{Eigen::MatrixXf::Ones(MAX_KEYFRAME_COUNT, MAX_KEYFRAME_COUNT)} {}
 
 std::optional<TKeyframeIndex> KeyframeStore::maybeAddKeyframe(const at::Tensor &image_u8,

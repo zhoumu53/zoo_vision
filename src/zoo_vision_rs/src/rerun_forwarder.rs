@@ -428,8 +428,8 @@ impl RerunForwarder {
         msg: &zoo_msgs::msg::rmw::Detection,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let ros_time_ns = nanosec_from_ros(&msg.header.stamp);
-        const DROP_SAMPLE_DURATION: i64 = 2 * 1e9 as i64;
-        if DROP_SAMPLE_DURATION > 0 {
+        const DROP_SAMPLE_DURATION_NS: i64 = 0 * 1e9 as i64;
+        if DROP_SAMPLE_DURATION_NS > 0 {
             match self.first_ros_time_ns {
                 Some(t) => {
                     if ros_time_ns < t {
@@ -437,7 +437,7 @@ impl RerunForwarder {
                     }
                 }
                 None => {
-                    self.first_ros_time_ns = Some(ros_time_ns + DROP_SAMPLE_DURATION);
+                    self.first_ros_time_ns = Some(ros_time_ns + DROP_SAMPLE_DURATION_NS);
                     return Ok(());
                 }
             }

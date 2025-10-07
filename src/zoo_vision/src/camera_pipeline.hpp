@@ -24,6 +24,7 @@
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/image_quality.hpp"
+#include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
@@ -61,6 +62,7 @@ private:
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
   std::string cameraName_;
 
+  ImageRateLimiter *rateLimiter_;
   RateSampler rateSampler_;
 
   bool recordDetectionLoss_;
@@ -74,7 +76,6 @@ private:
 
   CameraCalibration calibration_;
 
-  at::DeviceType device_ = at::kCPU;
   std::optional<at::cuda::CUDAStream> cudaStream_;
   TrackMatcher trackMatcher_;
   PatchCropper cropper_;

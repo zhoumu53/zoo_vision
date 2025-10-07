@@ -1,4 +1,3 @@
-
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -12,23 +11,30 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
+#include "zoo_vision/image_rate_limiter.hpp"
+#include <thread>
 
-#include "zoo_vision/image_normalizer.hpp"
-#include "zoo_vision/compute_device.hpp"
-
-#include <torch/torch.h>
+#include <iostream>
 
 namespace zoo {
+void ImageRateLimiter::waitForProcessing() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  std::cout << "Waiting..." << std::endl;
+  count++;
 
-ImageNormalizer::ImageNormalizer() {
-  auto preprocessMeanData = std::array<float32_t, 3>({0.48500001430511475f, 0.4560000002384186f, 0.4059999883174896f});
-  auto preprocessStdData = std::array<float32_t, 3>({0.2290000021457672f, 0.2239999920129776f, 0.22499999403953552f});
-
-  preprocessMean_ =
-      (at::from_blob(preprocessMeanData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-          .to(g_computeDevice);
-  preprocessStd_ = (at::from_blob(preprocessStdData.data(), {3, 1, 1}, at::TensorOptions().dtype(at::kFloat)) * 255.0f)
-                       .to(g_computeDevice);
+  condition_.wait(lock, [this] { return count == 0; }); // Wait all images are processed
+  std::cout << "Wait done" << std::endl;
 }
+
+void ImageRateLimiter::signalProcessingComplete() {
+  std::cout << "Signal process complete..." << std::endl;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    count--;
+  }
+  condition_.notify_one(); // Notify one waiting consumer
+}
+
+std::unordered_map<std::string, std::unique_ptr<ImageRateLimiter>> gCameraLimiters;
 
 } // namespace zoo

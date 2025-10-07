@@ -36,7 +36,6 @@ public:
   }
 
 private:
-  at::DeviceType device_ = at::kCPU;
   at::Tensor preprocessMean_;
   at::Tensor preprocessStd_;
 };

@@ -14,6 +14,7 @@
 
 #include "zoo_vision/segmenter_yolo.hpp"
 
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/json_eigen.hpp"
 #include "zoo_vision/utils.hpp"
 
@@ -62,7 +63,8 @@ void SegmenterYolo::loadModel(const std::filesystem::path &modelPath) {
     if (!std::filesystem::exists(modelPath)) {
       throw ZooVisionError("Model does not exist");
     }
-    model_ = std::make_unique<YOLOv11SegDetector>(modelPath.string(), namesPath.string(), /*useGPU*/ true);
+    model_ = std::make_unique<YOLOv11SegDetector>(modelPath.string(), namesPath.string(),
+                                                  /*useGPU*/ g_computeDevice == c10::kCUDA);
   } catch (const std::exception &ex) {
     std::cout << "Error loading model from " << modelPath << std::endl;
     std::cout << "Exception: " << ex.what() << std::endl;
@@ -88,9 +90,13 @@ void SegmenterYolo::onImage(SegmenterResult &result, const at::Tensor & /*imageG
   {
     nvtxLabel.emplace("seg_network (" + cameraName_ + ")");
 
-    eventBeforeNetwork.record();
+    if (g_computeDevice == at::kCUDA) {
+      eventBeforeNetwork.record();
+    }
     resultsYolo = model_->segment(imageCpu);
-    eventAfterNetwork.record();
+    if (g_computeDevice == at::kCUDA) {
+      eventAfterNetwork.record();
+    }
   }
 
   ////////////////////////////////////////////////////////////

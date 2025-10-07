@@ -64,6 +64,8 @@ include("${nvtx3_SOURCE_DIR}/c/nvtxImportedTargets.cmake")
 # zoo_vision package
 add_executable(zoo_vision 
   src/types.hpp
+  src/compute_device.hpp
+  src/compute_device.cpp
   src/utils.hpp
   src/utils.cpp
   src/timings.hpp
@@ -82,6 +84,8 @@ add_executable(zoo_vision
   src/image_embedder.cpp
   src/image_quality.hpp
   src/image_quality.cpp
+  src/image_rate_limiter.hpp
+  src/image_rate_limiter.cpp
   src/video_db_loader.hpp
   src/video_db_loader.cpp
   src/video_loader.hpp
