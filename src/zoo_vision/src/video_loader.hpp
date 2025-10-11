@@ -46,7 +46,7 @@ private:
 
   Clock::time_point replayStart_;
   Clock::time_point replayNow_;
-  size_t frameIndex_;
+  size_t frameIndex_ = 0;
 
   std::unordered_map<std::string, CameraData> cameras_;
   rclcpp::TimerBase::SharedPtr timer_;

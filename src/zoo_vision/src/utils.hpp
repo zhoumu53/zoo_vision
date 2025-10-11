@@ -57,6 +57,8 @@ nlohmann::json &getConfig();
 
 bool saveTensorImage(const at::Tensor &imgTensor, const std::string &name);
 
+int parseInt(std::string_view data);
+
 } // namespace zoo
 
 /////////////////////////////////////////

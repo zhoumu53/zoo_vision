@@ -37,6 +37,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
+#include <string_view>
 
 namespace zoo {
 
@@ -60,6 +61,8 @@ private:
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
+  void recordMasks(std::string_view frameId, std::span<TrackId> trackIds, const at::Tensor &masks);
+
   std::string cameraName_;
 
   ImageRateLimiter *rateLimiter_;
@@ -69,6 +72,7 @@ private:
   bool recordTracks_;
   bool recordKeyframes_;
   bool recordBehaviourChange_;
+  bool recordMasks_;
 
   bool dynamicConfigDone_ = false;
   Vector2i detectionImageSize_{0, 0};

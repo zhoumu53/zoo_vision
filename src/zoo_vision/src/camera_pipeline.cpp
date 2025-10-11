@@ -14,9 +14,9 @@
 
 #include "zoo_vision/camera_pipeline.hpp"
 
+#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/json_eigen.hpp"
 #include "zoo_vision/timings.hpp"
-#include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/core/List.h>
@@ -51,7 +51,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
 
   // Set up paths to store improvement images
-  if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_) {
+  if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_ || recordMasks_) {
     rootPathImprove_ = "/media/dherrera/ElephantsWD/elephants/improve";
     std::filesystem::create_directories(rootPathImprove_);
   }
@@ -98,6 +98,7 @@ void CameraPipeline::readConfig(const nlohmann::json &config) {
   recordKeyframes_ = config["record_keyframes"].get<bool>();
   recordTracks_ = config["record_tracks"].get<bool>();
   recordBehaviourChange_ = config["record_behaviour_change"].get<bool>();
+  recordMasks_ = config["record_masks"].get<bool>();
 
   const auto detectionImageJson = config["detection"]["image"];
   detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
@@ -197,6 +198,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       saveImageToImproveDetection(sysTime, img);
     }
   }
+  if (recordMasks_) {
+    const auto frameId = getMsgString(imageMsg.header.frame_id);
+    recordMasks(frameId, trackIds, segmenterResult.masks);
+  }
   for (const auto &ptrack : trackUpdateStats.closedTracks) {
     const auto &track = *ptrack;
     publishTrackClosed(imageMsg.header, track);
@@ -266,7 +271,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsgPtr));
 
-  if(rateLimiter_) {
+  if (rateLimiter_) {
     rateLimiter_->signalProcessingComplete();
   }
 }
@@ -442,4 +447,19 @@ void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
     RCLCPP_ERROR(get_logger(), "Error moving track: ???");
   }
 }
+
+void CameraPipeline::recordMasks(std::string_view frameId, std::span<TrackId> trackIds, const at::Tensor &masks) {
+  int frameId2 = parseInt(frameId);
+
+  for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
+    const std::filesystem::path dir = rootPathImprove_ / "masks" / cameraName_ / std::format("track_{:04}", trackId);
+    const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId2) + ".png");
+
+    const cv::Mat1b mask = wrapCvFromTensor1b(masks.index({index}));
+
+    std::filesystem::create_directories(dir);
+    cv::imwrite(filename.string(), mask);
+  }
+}
+
 } // namespace zoo

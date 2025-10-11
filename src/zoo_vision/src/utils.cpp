@@ -148,4 +148,14 @@ cv::Mat1b wrapCvFromTensor1b(const at::Tensor img) {
   CHECK_EQ(img.stride(1), 1);
   return cv::Mat1b(img.size(0), img.size(1), reinterpret_cast<uchar *>(img.data_ptr()), img.stride(0));
 }
+
+int parseInt(std::string_view data) {
+  int out;
+  const auto result = std::from_chars(data.data(), data.data() + data.size(), out);
+  if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+    throw std::invalid_argument(std::format("parseInt cannot parse: {}", data));
+  }
+  return out;
+}
+
 } // namespace zoo

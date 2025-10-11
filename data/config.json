@@ -93,6 +93,7 @@
   "record_keyframes": false,
   "record_tracks": false,
   "record_behaviour_change": false,
+  "record_masks": false,
   "live_stream": false,
   "rate_limiter": false,
   "video_db": "/media/dherrera/ElephantsWD/elephants/videos/video_db.json",
