@@ -57,3 +57,6 @@ enlighten # Progress bar
 git+https://github.com/XuehaiPan/nvitop.git#egg=nvitop # Check gpu usage in real-time
 pytesseract # To read video time, also requires apt install of tesseract-ocr
 psycopg2-binary # Postgresql adapter for python
+
+cvat-sdk
+cvat-cli
