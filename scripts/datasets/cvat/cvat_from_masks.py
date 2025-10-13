@@ -111,6 +111,16 @@ def main():
                 outside="0",
                 points=";".join([",".join([str(x) for x in p]) for p in poly]),
             )
+        # Write a final polygon marking it as outside
+        ET.SubElement(
+            track_xml,
+            "polygon",
+            frame=str(frame_id + 1),
+            keyframe="1",
+            occluded="0",
+            outside="1",
+            points="0,0;1,1;0,1",
+        )
     ET.indent(root)
     root.write("dataset.xml")
 
