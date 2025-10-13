@@ -52,7 +52,6 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   // Set up paths to store improvement images
   if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_ || recordMasks_) {
-    rootPathImprove_ = "/media/dherrera/ElephantsWD/elephants/improve";
     std::filesystem::create_directories(rootPathImprove_);
   }
 
@@ -102,6 +101,8 @@ void CameraPipeline::readConfig(const nlohmann::json &config) {
 
   const auto detectionImageJson = config["detection"]["image"];
   detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
+
+  rootPathImprove_ = config["record_root"].get<std::string>();
 }
 
 void CameraPipeline::dynamicConfig(Vector2i imageSize) {
