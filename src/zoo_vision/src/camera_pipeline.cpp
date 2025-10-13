@@ -200,8 +200,9 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     }
   }
   if (recordMasks_) {
+    const auto videoFile = getMsgString(imageMsg.header.video_filename);
     const auto frameId = getMsgString(imageMsg.header.frame_id);
-    recordMasks(frameId, trackIds, segmenterResult.masks);
+    recordMasks(videoFile, frameId, trackIds, segmenterResult.masks);
   }
   for (const auto &ptrack : trackUpdateStats.closedTracks) {
     const auto &track = *ptrack;
@@ -449,11 +450,12 @@ void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
   }
 }
 
-void CameraPipeline::recordMasks(std::string_view frameId, std::span<TrackId> trackIds, const at::Tensor &masks) {
+void CameraPipeline::recordMasks(std::string_view videoFile, std::string_view frameId, std::span<TrackId> trackIds,
+                                 const at::Tensor &masks) {
   int frameId2 = parseInt(frameId);
 
   for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
-    const std::filesystem::path dir = rootPathImprove_ / "masks" / cameraName_ / std::format("track_{:04}", trackId);
+    const std::filesystem::path dir = rootPathImprove_ / "masks" / videoFile / std::format("track_{:04}", trackId);
     const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId2) + ".png");
 
     const cv::Mat1b mask = wrapCvFromTensor1b(masks.index({index}));

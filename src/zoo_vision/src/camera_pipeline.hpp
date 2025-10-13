@@ -61,7 +61,8 @@ private:
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
-  void recordMasks(std::string_view frameId, std::span<TrackId> trackIds, const at::Tensor &masks);
+  void recordMasks(std::string_view videoFile, std::string_view frameId, std::span<TrackId> trackIds,
+                   const at::Tensor &masks);
 
   std::string cameraName_;
 

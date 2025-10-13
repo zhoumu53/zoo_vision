@@ -204,7 +204,6 @@ auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time
 
 void VideoDBLoader::onTimer() {
   std::optional<Clock::time_point> newReplayTime;
-  bool framePublished = false;
 
   for (auto &[cameraName, cameraData] : cameras_) {
     // Try to load the next video if we are not at the end of the list
@@ -219,7 +218,6 @@ void VideoDBLoader::onTimer() {
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
     msg->header.stamp =
         rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
-    setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
     setMsgString(msg->encoding, "rgb8");
     msg->width = cameraData.frameSize.width;
     msg->height = cameraData.frameSize.height;
@@ -239,6 +237,14 @@ void VideoDBLoader::onTimer() {
       continue;
     }
 
+    {
+      const auto frameIndex = cameraData.videoStream_->get(cv::CAP_PROP_POS_FRAMES) - 1;
+      const std::filesystem::path videoFile = cameraData.currentVideo_->videoFile;
+      const std::string videoName = videoFile.stem();
+      setMsgString(msg->header.video_filename, videoName);
+      setMsgString(msg->header.frame_id, std::to_string(frameIndex).c_str());
+    }
+
     if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {
       // Calculate replay time based on how much we've advanced in the video
       const auto offsetMs = cameraData.videoStream_->get(cv::CAP_PROP_POS_MSEC);
@@ -249,10 +255,6 @@ void VideoDBLoader::onTimer() {
     // TODO: converting BGR->RGB like this is inefficient!
     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     cameraData.publisher_->publish(std::move(msg));
-    framePublished = true;
-  }
-  if (framePublished) {
-    frameIndex_ += 1;
   }
 
   if (!newReplayTime.has_value()) {

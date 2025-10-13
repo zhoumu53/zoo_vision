@@ -104,6 +104,7 @@ void VideoLoader::onTimer() {
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
     msg->header.stamp =
         rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
+    setMsgString(msg->header.video_filename, cameraData.videoFile.stem().c_str());
     setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
     setMsgString(msg->encoding, "rgb8");
     msg->width = cameraData.frameSize.width;
