@@ -65,7 +65,7 @@ def main():
             root.getroot(),
             "track",
             id=str(track_id),
-            label=f"elephant {track_id}",
+            label="elephant",
             source="auto",
         )
 
