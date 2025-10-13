@@ -16,14 +16,18 @@
 #include "zoo_vision/compute_device.hpp"
 #include <torch/torch.h>
 
+#include <iostream>
+
 namespace zoo {
 c10::DeviceType g_computeDevice;
 
 void setComputeDevice() {
   if (torch::cuda::is_available()) {
     g_computeDevice = c10::kCUDA;
+    std::cout << "Using CUDA for compute" << std::endl;
   } else {
     g_computeDevice = c10::kCPU;
+    std::cout << "CUDA not found, fallback to CPU for compute" << std::endl;
   }
 }
 } // namespace zoo
