@@ -1,0 +1,84 @@
+_wandb:
+    value:
+        cli_version: 0.23.0
+        e:
+            trpa1vox40dov9nxfw8zvyl8zlvdwt8d:
+                args:
+                    - --config_file
+                    - /media/mu/zoo_vision/training/PoseGuidedReID/configs/elephant_resnet.yml
+                    - --do_training
+                    - --notes
+                    - Elephant ReID with ResNet50 backbone, triplet + softmax loss
+                    - SOLVER.IMS_PER_BATCH
+                    - "64"
+                    - SOLVER.MAX_EPOCHS
+                    - "120"
+                    - SOLVER.BASE_LR
+                    - "0.00035"
+                    - OUTPUT_DIR
+                    - /media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet50
+                codePath: training/PoseGuidedReID/tools/train.py
+                codePathLocal: tools/train.py
+                email: jassica.zm53@gmail.com
+                executable: /media/mu/zoo_vision/training/PoseGuidedReID/venv/bin/python3
+                git:
+                    commit: 02380ce9fb364fee303027631a1582318cd67aec
+                    remote: git@github.com:zhoumu53/zoo_vision.git
+                host: forschung-zoo
+                os: Linux-6.14.0-35-generic-x86_64-with-glibc2.39
+                program: /media/mu/zoo_vision/training/PoseGuidedReID/tools/train.py
+                python: CPython 3.12.3
+                root: /media/mu/zoo_vision/training/PoseGuidedReID
+                startedAt: "2025-11-20T15:14:06.745525Z"
+                writerId: trpa1vox40dov9nxfw8zvyl8zlvdwt8d
+        m: []
+        python_version: 3.12.3
+        t:
+            "1":
+                - 1
+                - 41
+                - 49
+                - 63
+                - 80
+            "2":
+                - 1
+                - 41
+                - 49
+                - 63
+                - 80
+            "3":
+                - 13
+                - 16
+            "4": 3.12.3
+            "5": 0.23.0
+            "12": 0.23.0
+            "13": linux-x86_64
+batch_size:
+    value: 64
+checkpoint:
+    value: /media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet50/net_last.pth
+config_file:
+    value: /media/mu/zoo_vision/training/PoseGuidedReID/configs/elephant_resnet.yml
+epochs:
+    value: 120
+exp_name:
+    value: elephant_resnet50_train
+gamma:
+    value: 0.1
+learning_rate:
+    value: 0.00035
+momentum:
+    value: 0.9
+num_gpus:
+    value:
+        - 0
+optimizer:
+    value: Adam
+output_dir:
+    value: /media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet50
+project_name:
+    value: elephant_elephant_resnet50
+weight_decay:
+    value: 0.0005
+with_pose:
+    value: true

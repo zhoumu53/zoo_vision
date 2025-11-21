@@ -1,0 +1,698 @@
+nohup: ignoring input
+======================================
+Elephant ReID Training - ResNet50
+======================================
+Config: /media/mu/zoo_vision/training/PoseGuidedReID/configs/elephant_resnet.yml
+Output: /media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16
+Batch Size: 16
+Epochs: 120
+Learning Rate: 0.01
+======================================
+/media/mu/zoo_vision/training/PoseGuidedReID/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+wandb: Currently logged in as: muz to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run w4j279iq
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /media/mu/zoo_vision/training/PoseGuidedReID/wandb/run-20251121_133431-w4j279iq
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run lr001_bs16_train_inf
+wandb: ⭐️ View project at https://wandb.ai/muz/elephant_resnet
+wandb: 🚀 View run at https://wandb.ai/muz/elephant_resnet/runs/w4j279iq
+[Warning] Fused window process have not been installed. Please refer to get_started.md for installation.
+Project Name: elephant_resnet
+Experiment Name: lr001_bs16
+WandB Run ID: None
+Initializing new WandB run with name: lr001_bs16_train_inf
+Initializing WandB run with name: lr001_bs16_train_inf
+WandB Run Name: lr001_bs16_train_inf, Run ID: w4j279iq
+2025-11-21 13:34:32,900 project INFO: Saving model in the path :/media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16
+2025-11-21 13:34:32,900 project INFO: Namespace(config_file='/media/mu/zoo_vision/training/PoseGuidedReID/configs/elephant_resnet.yml', opts=['SOLVER.IMS_PER_BATCH', '16', 'SOLVER.MAX_EPOCHS', '120', 'SOLVER.BASE_LR', '0.01', 'SOLVER.STEPS', '(20, 40, 70)', 'SOLVER.OPTIMIZER_NAME', 'SGD', 'SOLVER.CHECKPOINT_PERIOD', '10', 'SOLVER.LOG_PERIOD', '100', 'SOLVER.WARMUP_EPOCHS', '5', 'MODEL.DIST_TRAIN', 'False', 'MODEL.AGG_POSE_FEATURE', 'False', 'DATALOADER.SAMPLER', 'softmax', 'OUTPUT_DIR', '/media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16', 'TEST.MAX_RANK', '20', 'TEST.MAP_MAX_RANK', 'True'], local_rank=0, notes='Elephant ReID with ResNet50 backbone, triplet + softmax loss', out_dim=512, do_inference=True, do_evaluation=False, do_prediction=False, do_training=True, data_type=None, model_name='', wb_run_id=None)
+2025-11-21 13:34:32,900 project INFO: Running with config:
+DATALOADER:
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+  SAMPLER: softmax
+DATASETS:
+  BODY_INPUT: False
+  IDWISE_PERT: None
+  IMAGEWISE_PERT: None
+  IMG_DIR: /media/mu/zoo_vision/data/reid_time_split
+  NAMES: elephant
+  OVERFITTING: False
+  ROOT_DIR: /media/mu/zoo_vision/data/reid_time_split
+  SUB_TRAIN_YEAR: []
+  TEST_IMG_DIR: None
+  TEST_ROOT_DIR: None
+  UPDATE_TRAIN_CSV: None
+FUSED_LAYERNORM: False
+FUSED_WINDOW_PROCESS: False
+INPUT:
+  IMG_SIZE: [256, 256]
+  PADDING: 10
+  PIXEL_MEAN: [0.485, 0.456, 0.406]
+  PIXEL_STD: [0.229, 0.224, 0.225]
+  PRE_SCALING: 0
+  PROB: 0.5
+  RE_PROB: 0.5
+MODEL:
+  AGG_POSE_FEATURE: False
+  ATT_DROP_RATE: 0.0
+  COS_LAYER: False
+  DEVICE: cuda
+  DEVICE_ID: (0,)
+  DEVIDE_LENGTH: 4
+  DIST_TRAIN: False
+  DROP_OUT: 0.0
+  DROP_PATH: 0.1
+  DROP_PATH_RATE: 0.1
+  DROP_RATE: 0.0
+  EXTRACTED_POSE_FEATURE: False
+  ID_LOSS_TYPE: softmax
+  ID_LOSS_WEIGHT: 1.0
+  IF_LABELSMOOTH: on
+  IF_WITH_CENTER: no
+  JPM: False
+  LABEL_SMOOTHING: 0.1
+  LAST_STRIDE: 1
+  METRIC_LOSS_TYPE: triplet
+  NAME: resnet50
+  NECK: bnneck
+  NO_MARGIN: True
+  NUM_JOINTS: 13
+  POSE_HRNET: hrnet_w48
+  POSE_WEIGHT: ./checkpoints/pose/pose_hrnet_w32_bear_256x256_13kpts.pth
+  PRETRAIN_CHOICE: imagenet
+  PRETRAIN_PATH: 
+  RESNET_EMBED_DIM: 2048
+  RESUME: False
+  RE_ARRANGE: True
+  SHIFT_NUM: 5
+  SHUFFLE_GROUP: 2
+  SIE_CAMERA: False
+  SIE_COE: 3.0
+  SIE_VIEW: False
+  STACKED_HEATMAP: True
+  STRIDE_SIZE: [16, 16]
+  SWIN:
+    APE: False
+    DEPTHS: [2, 2, 6, 2]
+    EMBED_DIM: 512
+    IN_CHANS: 3
+    MLP_RATIO: 4.0
+    NUM_HEADS: [3, 6, 12, 24]
+    PATCH_NORM: True
+    PATCH_SIZE: 4
+    QKV_BIAS: True
+    QK_SCALE: None
+    WINDOW_SIZE: 7
+  SWINV2:
+    APE: False
+    DEPTHS: [2, 2, 6, 2]
+    EMBED_DIM: 96
+    IN_CHANS: 3
+    MLP_RATIO: 4.0
+    NUM_HEADS: [3, 6, 12, 24]
+    PATCH_NORM: True
+    PATCH_SIZE: 4
+    PRETRAINED_WINDOW_SIZES: [0, 0, 0, 0]
+    QKV_BIAS: True
+    USE_CHECKPOINT: False
+    WINDOW_SIZE: 7
+  TRIPLET_LOSS_WEIGHT: 1.0
+  TYPE: resnet
+  USE_CHECKPOINT: True
+  VIT_EMBED_DIM: 768
+OUTPUT_DIR: /media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16
+SOLVER:
+  BASE_LR: 0.01
+  BIAS_LR_FACTOR: 2
+  CENTER_LOSS_WEIGHT: 0.0005
+  CENTER_LR: 0.5
+  CHECKPOINT_PERIOD: 10
+  COSINE_MARGIN: 0.5
+  COSINE_SCALE: 30
+  EVAL_PERIOD: 20
+  GAMMA: 0.1
+  IMS_PER_BATCH: 16
+  LARGE_FC_LR: False
+  LOG_PERIOD: 100
+  MARGIN: 0.3
+  MAX_EPOCHS: 120
+  MIN_LR: 5e-06
+  MOMENTUM: 0.9
+  OPTIMIZER_NAME: SGD
+  SEED: 1234
+  STEPS: (20, 40, 70)
+  WARMUP_EPOCHS: 5
+  WARMUP_FACTOR: 0.01
+  WARMUP_LR: 1.25e-07
+  WARMUP_METHOD: linear
+  WEIGHT_DECAY: 0.0005
+  WEIGHT_DECAY_BIAS: 0.0005
+TEST:
+  DIST_MAT: dist_mat.npy
+  EVAL: True
+  FEAT_NORM: yes
+  FILTER_DATE: True
+  IMS_PER_BATCH: 128
+  MAP_MAX_RANK: True
+  MAX_RANK: 20
+  NECK_FEAT: after
+  RE_RANKING: False
+  WEIGHT: 
+/media/mu/zoo_vision/training/PoseGuidedReID/venv/lib/python3.12/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/media/mu/zoo_vision/training/PoseGuidedReID/venv/lib/python3.12/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet50_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet50_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+Processing elephant directory: /media/mu/zoo_vision/data/reid_time_split/train
+Processing elephant directory: /media/mu/zoo_vision/data/reid_time_split/val
+=> Elephant ReID data loaded
+Dataset statistics:
+  --------------------------------------------------------------------
+  subset    | year(min-max) | #ids| #cameras| #images 
+  --------------------------------------------------------------------
+  ==== Time period: 2025-2025 ==== 
+  train     | 2025-2025     | 5  |  4  |  62385
+  test      | 2025-2025     | 5  |  4  |  11143
+  --------------------------------------------------------------------
+using softmax sampler
+Loading pretrained ImageNet model from torchvision
+===========building ResNet-50 ===========
+2025-11-21 13:34:33,587 project.train INFO: start training
+2025-11-21 13:34:35,194 project.train INFO: [Epoch1-iter0/3899]: Loss: 0.1896 Acc: 0.3750
+2025-11-21 13:34:44,407 project.train INFO: [Epoch1-iter100/3899]: Loss: 0.1568 Acc: 0.5062
+2025-11-21 13:34:58,269 project.train INFO: [Epoch1-iter200/3899]: Loss: 0.1465 Acc: 0.5790
+2025-11-21 13:35:11,691 project.train INFO: [Epoch1-iter300/3899]: Loss: 0.1372 Acc: 0.6242
+2025-11-21 13:35:26,088 project.train INFO: [Epoch1-iter400/3899]: Loss: 0.1318 Acc: 0.6573
+2025-11-21 13:35:39,756 project.train INFO: [Epoch1-iter500/3899]: Loss: 0.1264 Acc: 0.6861
+2025-11-21 13:35:54,255 project.train INFO: [Epoch1-iter600/3899]: Loss: 0.1227 Acc: 0.7061
+2025-11-21 13:36:08,094 project.train INFO: [Epoch1-iter700/3899]: Loss: 0.1200 Acc: 0.7226
+2025-11-21 13:36:22,117 project.train INFO: [Epoch1-iter800/3899]: Loss: 0.1173 Acc: 0.7382
+2025-11-21 13:36:35,847 project.train INFO: [Epoch1-iter900/3899]: Loss: 0.1161 Acc: 0.7497
+2025-11-21 13:36:50,987 project.train INFO: [Epoch1-iter1000/3899]: Loss: 0.1148 Acc: 0.7594
+2025-11-21 13:37:06,724 project.train INFO: [Epoch1-iter1100/3899]: Loss: 0.1131 Acc: 0.7706
+2025-11-21 13:37:22,342 project.train INFO: [Epoch1-iter1200/3899]: Loss: 0.1124 Acc: 0.7778
+2025-11-21 13:37:38,335 project.train INFO: [Epoch1-iter1300/3899]: Loss: 0.1112 Acc: 0.7863
+2025-11-21 13:37:54,149 project.train INFO: [Epoch1-iter1400/3899]: Loss: 0.1109 Acc: 0.7927
+2025-11-21 13:38:10,286 project.train INFO: [Epoch1-iter1500/3899]: Loss: 0.1104 Acc: 0.7989
+2025-11-21 13:38:26,180 project.train INFO: [Epoch1-iter1600/3899]: Loss: 0.1101 Acc: 0.8042
+2025-11-21 13:38:39,980 project.train INFO: [Epoch1-iter1700/3899]: Loss: 0.1097 Acc: 0.8091
+2025-11-21 13:38:48,052 project.train INFO: [Epoch1-iter1800/3899]: Loss: 0.1095 Acc: 0.8135
+2025-11-21 13:38:57,249 project.train INFO: [Epoch1-iter1900/3899]: Loss: 0.1098 Acc: 0.8171
+2025-11-21 13:39:06,423 project.train INFO: [Epoch1-iter2000/3899]: Loss: 0.1096 Acc: 0.8210
+2025-11-21 13:39:15,727 project.train INFO: [Epoch1-iter2100/3899]: Loss: 0.1091 Acc: 0.8252
+2025-11-21 13:39:25,227 project.train INFO: [Epoch1-iter2200/3899]: Loss: 0.1093 Acc: 0.8281
+2025-11-21 13:39:34,594 project.train INFO: [Epoch1-iter2300/3899]: Loss: 0.1093 Acc: 0.8314
+2025-11-21 13:39:43,883 project.train INFO: [Epoch1-iter2400/3899]: Loss: 0.1093 Acc: 0.8345
+2025-11-21 13:39:53,089 project.train INFO: [Epoch1-iter2500/3899]: Loss: 0.1095 Acc: 0.8372
+2025-11-21 13:40:02,648 project.train INFO: [Epoch1-iter2600/3899]: Loss: 0.1091 Acc: 0.8404
+2025-11-21 13:40:12,080 project.train INFO: [Epoch1-iter2700/3899]: Loss: 0.1096 Acc: 0.8427
+2025-11-21 13:40:21,765 project.train INFO: [Epoch1-iter2800/3899]: Loss: 0.1096 Acc: 0.8451
+2025-11-21 13:40:31,261 project.train INFO: [Epoch1-iter2900/3899]: Loss: 0.1100 Acc: 0.8472
+2025-11-21 13:40:40,553 project.train INFO: [Epoch1-iter3000/3899]: Loss: 0.1101 Acc: 0.8497
+2025-11-21 13:40:49,746 project.train INFO: [Epoch1-iter3100/3899]: Loss: 0.1101 Acc: 0.8521
+2025-11-21 13:40:58,944 project.train INFO: [Epoch1-iter3200/3899]: Loss: 0.1101 Acc: 0.8548
+2025-11-21 13:41:08,496 project.train INFO: [Epoch1-iter3300/3899]: Loss: 0.1102 Acc: 0.8568
+2025-11-21 13:41:17,825 project.train INFO: [Epoch1-iter3400/3899]: Loss: 0.1107 Acc: 0.8586
+2025-11-21 13:41:27,559 project.train INFO: [Epoch1-iter3500/3899]: Loss: 0.1109 Acc: 0.8600
+2025-11-21 13:41:36,740 project.train INFO: [Epoch1-iter3600/3899]: Loss: 0.1112 Acc: 0.8618
+2025-11-21 13:41:46,099 project.train INFO: [Epoch1-iter3700/3899]: Loss: 0.1114 Acc: 0.8635
+2025-11-21 13:41:55,431 project.train INFO: [Epoch1-iter3800/3899]: Loss: 0.1116 Acc: 0.8652
+2025-11-21 13:42:04,717 project.train INFO: [Epoch1-iter3898/3899]: Loss: 0.1119 Acc: 0.8667
+2025-11-21 13:42:04,737 project.train INFO: [Epoch1]: Loss: 0.1119 Acc: 0.8667
+2025-11-21 13:42:05,517 project.train INFO: [Epoch2-iter0/3899]: Loss: 0.0870 Acc: 0.9375
+2025-11-21 13:42:14,750 project.train INFO: [Epoch2-iter100/3899]: Loss: 0.1267 Acc: 0.9233
+2025-11-21 13:42:24,546 project.train INFO: [Epoch2-iter200/3899]: Loss: 0.1229 Acc: 0.9279
+2025-11-21 13:42:33,903 project.train INFO: [Epoch2-iter300/3899]: Loss: 0.1181 Acc: 0.9327
+2025-11-21 13:42:43,119 project.train INFO: [Epoch2-iter400/3899]: Loss: 0.1189 Acc: 0.9325
+2025-11-21 13:42:51,783 project.train INFO: [Epoch2-iter500/3899]: Loss: 0.1210 Acc: 0.9311
+2025-11-21 13:43:01,161 project.train INFO: [Epoch2-iter600/3899]: Loss: 0.1252 Acc: 0.9302
+2025-11-21 13:43:10,663 project.train INFO: [Epoch2-iter700/3899]: Loss: 0.1263 Acc: 0.9297
+2025-11-21 13:43:20,080 project.train INFO: [Epoch2-iter800/3899]: Loss: 0.1253 Acc: 0.9317
+2025-11-21 13:43:29,420 project.train INFO: [Epoch2-iter900/3899]: Loss: 0.1258 Acc: 0.9325
+2025-11-21 13:43:38,720 project.train INFO: [Epoch2-iter1000/3899]: Loss: 0.1276 Acc: 0.9318
+2025-11-21 13:43:48,051 project.train INFO: [Epoch2-iter1100/3899]: Loss: 0.1273 Acc: 0.9331
+2025-11-21 13:43:57,262 project.train INFO: [Epoch2-iter1200/3899]: Loss: 0.1275 Acc: 0.9340
+2025-11-21 13:44:06,534 project.train INFO: [Epoch2-iter1300/3899]: Loss: 0.1287 Acc: 0.9340
+2025-11-21 13:44:15,850 project.train INFO: [Epoch2-iter1400/3899]: Loss: 0.1285 Acc: 0.9350
+2025-11-21 13:44:25,053 project.train INFO: [Epoch2-iter1500/3899]: Loss: 0.1310 Acc: 0.9339
+2025-11-21 13:44:34,276 project.train INFO: [Epoch2-iter1600/3899]: Loss: 0.1310 Acc: 0.9346
+2025-11-21 13:44:43,963 project.train INFO: [Epoch2-iter1700/3899]: Loss: 0.1325 Acc: 0.9345
+2025-11-21 13:44:53,614 project.train INFO: [Epoch2-iter1800/3899]: Loss: 0.1326 Acc: 0.9351
+2025-11-21 13:45:02,890 project.train INFO: [Epoch2-iter1900/3899]: Loss: 0.1329 Acc: 0.9353
+2025-11-21 13:45:12,289 project.train INFO: [Epoch2-iter2000/3899]: Loss: 0.1333 Acc: 0.9357
+2025-11-21 13:45:21,970 project.train INFO: [Epoch2-iter2100/3899]: Loss: 0.1345 Acc: 0.9357
+2025-11-21 13:45:31,824 project.train INFO: [Epoch2-iter2200/3899]: Loss: 0.1361 Acc: 0.9357
+2025-11-21 13:45:41,381 project.train INFO: [Epoch2-iter2300/3899]: Loss: 0.1366 Acc: 0.9362
+2025-11-21 13:45:50,661 project.train INFO: [Epoch2-iter2400/3899]: Loss: 0.1377 Acc: 0.9364
+2025-11-21 13:46:00,075 project.train INFO: [Epoch2-iter2500/3899]: Loss: 0.1383 Acc: 0.9369
+2025-11-21 13:46:09,619 project.train INFO: [Epoch2-iter2600/3899]: Loss: 0.1391 Acc: 0.9367
+2025-11-21 13:46:19,099 project.train INFO: [Epoch2-iter2700/3899]: Loss: 0.1407 Acc: 0.9364
+2025-11-21 13:46:28,796 project.train INFO: [Epoch2-iter2800/3899]: Loss: 0.1422 Acc: 0.9362
+2025-11-21 13:46:38,486 project.train INFO: [Epoch2-iter2900/3899]: Loss: 0.1427 Acc: 0.9366
+2025-11-21 13:46:48,632 project.train INFO: [Epoch2-iter3000/3899]: Loss: 0.1435 Acc: 0.9368
+2025-11-21 13:47:02,280 project.train INFO: [Epoch2-iter3100/3899]: Loss: 0.1437 Acc: 0.9372
+2025-11-21 13:47:17,209 project.train INFO: [Epoch2-iter3200/3899]: Loss: 0.1443 Acc: 0.9375
+2025-11-21 13:47:31,707 project.train INFO: [Epoch2-iter3300/3899]: Loss: 0.1454 Acc: 0.9376
+2025-11-21 13:47:46,806 project.train INFO: [Epoch2-iter3400/3899]: Loss: 0.1465 Acc: 0.9377
+2025-11-21 13:48:02,038 project.train INFO: [Epoch2-iter3500/3899]: Loss: 0.1472 Acc: 0.9379
+2025-11-21 13:48:17,245 project.train INFO: [Epoch2-iter3600/3899]: Loss: 0.1479 Acc: 0.9382
+2025-11-21 13:48:32,446 project.train INFO: [Epoch2-iter3700/3899]: Loss: 0.1478 Acc: 0.9386
+2025-11-21 13:48:47,556 project.train INFO: [Epoch2-iter3800/3899]: Loss: 0.1481 Acc: 0.9391
+2025-11-21 13:49:02,965 project.train INFO: [Epoch2-iter3898/3899]: Loss: 0.1485 Acc: 0.9393
+2025-11-21 13:49:03,005 project.train INFO: [Epoch2]: Loss: 0.1485 Acc: 0.9393
+2025-11-21 13:49:03,611 project.train INFO: [Epoch3-iter0/3899]: Loss: 0.2537 Acc: 0.8750
+2025-11-21 13:49:19,730 project.train INFO: [Epoch3-iter100/3899]: Loss: 0.1721 Acc: 0.9431
+2025-11-21 13:49:34,436 project.train INFO: [Epoch3-iter200/3899]: Loss: 0.1661 Acc: 0.9496
+2025-11-21 13:49:49,691 project.train INFO: [Epoch3-iter300/3899]: Loss: 0.1721 Acc: 0.9477
+2025-11-21 13:50:04,675 project.train INFO: [Epoch3-iter400/3899]: Loss: 0.1761 Acc: 0.9465
+2025-11-21 13:50:20,229 project.train INFO: [Epoch3-iter500/3899]: Loss: 0.1826 Acc: 0.9442
+2025-11-21 13:50:34,949 project.train INFO: [Epoch3-iter600/3899]: Loss: 0.1796 Acc: 0.9455
+2025-11-21 13:50:49,699 project.train INFO: [Epoch3-iter700/3899]: Loss: 0.1811 Acc: 0.9456
+2025-11-21 13:51:04,318 project.train INFO: [Epoch3-iter800/3899]: Loss: 0.1838 Acc: 0.9452
+2025-11-21 13:51:19,923 project.train INFO: [Epoch3-iter900/3899]: Loss: 0.1810 Acc: 0.9464
+2025-11-21 13:51:35,185 project.train INFO: [Epoch3-iter1000/3899]: Loss: 0.1809 Acc: 0.9471
+2025-11-21 13:51:50,392 project.train INFO: [Epoch3-iter1100/3899]: Loss: 0.1807 Acc: 0.9473
+2025-11-21 13:52:05,293 project.train INFO: [Epoch3-iter1200/3899]: Loss: 0.1826 Acc: 0.9468
+2025-11-21 13:52:20,291 project.train INFO: [Epoch3-iter1300/3899]: Loss: 0.1851 Acc: 0.9462
+2025-11-21 13:52:35,654 project.train INFO: [Epoch3-iter1400/3899]: Loss: 0.1861 Acc: 0.9468
+2025-11-21 13:52:51,239 project.train INFO: [Epoch3-iter1500/3899]: Loss: 0.1868 Acc: 0.9470
+2025-11-21 13:53:06,148 project.train INFO: [Epoch3-iter1600/3899]: Loss: 0.1881 Acc: 0.9471
+2025-11-21 13:53:21,206 project.train INFO: [Epoch3-iter1700/3899]: Loss: 0.1879 Acc: 0.9476
+2025-11-21 13:53:35,987 project.train INFO: [Epoch3-iter1800/3899]: Loss: 0.1864 Acc: 0.9482
+2025-11-21 13:53:51,183 project.train INFO: [Epoch3-iter1900/3899]: Loss: 0.1867 Acc: 0.9484
+2025-11-21 13:54:06,344 project.train INFO: [Epoch3-iter2000/3899]: Loss: 0.1871 Acc: 0.9486
+2025-11-21 13:54:21,449 project.train INFO: [Epoch3-iter2100/3899]: Loss: 0.1874 Acc: 0.9488
+2025-11-21 13:54:36,282 project.train INFO: [Epoch3-iter2200/3899]: Loss: 0.1877 Acc: 0.9492
+2025-11-21 13:54:51,306 project.train INFO: [Epoch3-iter2300/3899]: Loss: 0.1878 Acc: 0.9496
+2025-11-21 13:55:06,473 project.train INFO: [Epoch3-iter2400/3899]: Loss: 0.1887 Acc: 0.9496
+2025-11-21 13:55:22,055 project.train INFO: [Epoch3-iter2500/3899]: Loss: 0.1898 Acc: 0.9495
+2025-11-21 13:55:36,983 project.train INFO: [Epoch3-iter2600/3899]: Loss: 0.1903 Acc: 0.9497
+2025-11-21 13:55:52,669 project.train INFO: [Epoch3-iter2700/3899]: Loss: 0.1922 Acc: 0.9496
+2025-11-21 13:56:07,899 project.train INFO: [Epoch3-iter2800/3899]: Loss: 0.1923 Acc: 0.9499
+2025-11-21 13:56:22,455 project.train INFO: [Epoch3-iter2900/3899]: Loss: 0.1924 Acc: 0.9502
+2025-11-21 13:56:36,795 project.train INFO: [Epoch3-iter3000/3899]: Loss: 0.1929 Acc: 0.9503
+2025-11-21 13:56:52,955 project.train INFO: [Epoch3-iter3100/3899]: Loss: 0.1954 Acc: 0.9500
+2025-11-21 13:57:07,973 project.train INFO: [Epoch3-iter3200/3899]: Loss: 0.1958 Acc: 0.9502
+2025-11-21 13:57:23,795 project.train INFO: [Epoch3-iter3300/3899]: Loss: 0.1970 Acc: 0.9503
+2025-11-21 13:57:39,340 project.train INFO: [Epoch3-iter3400/3899]: Loss: 0.1976 Acc: 0.9505
+2025-11-21 13:57:55,016 project.train INFO: [Epoch3-iter3500/3899]: Loss: 0.1997 Acc: 0.9503
+2025-11-21 13:58:10,467 project.train INFO: [Epoch3-iter3600/3899]: Loss: 0.1993 Acc: 0.9507
+2025-11-21 13:58:25,955 project.train INFO: [Epoch3-iter3700/3899]: Loss: 0.2006 Acc: 0.9506
+2025-11-21 13:58:41,186 project.train INFO: [Epoch3-iter3800/3899]: Loss: 0.2023 Acc: 0.9505
+2025-11-21 13:58:56,654 project.train INFO: [Epoch3-iter3898/3899]: Loss: 0.2023 Acc: 0.9508
+2025-11-21 13:58:56,690 project.train INFO: [Epoch3]: Loss: 0.2023 Acc: 0.9508
+2025-11-21 13:58:57,364 project.train INFO: [Epoch4-iter0/3899]: Loss: 0.1592 Acc: 1.0000
+2025-11-21 13:59:13,554 project.train INFO: [Epoch4-iter100/3899]: Loss: 0.2331 Acc: 0.9542
+2025-11-21 13:59:29,759 project.train INFO: [Epoch4-iter200/3899]: Loss: 0.2360 Acc: 0.9521
+2025-11-21 13:59:45,128 project.train INFO: [Epoch4-iter300/3899]: Loss: 0.2204 Acc: 0.9554
+2025-11-21 14:00:00,023 project.train INFO: [Epoch4-iter400/3899]: Loss: 0.2246 Acc: 0.9559
+2025-11-21 14:00:16,359 project.train INFO: [Epoch4-iter500/3899]: Loss: 0.2307 Acc: 0.9546
+2025-11-21 14:00:31,803 project.train INFO: [Epoch4-iter600/3899]: Loss: 0.2258 Acc: 0.9558
+2025-11-21 14:00:47,699 project.train INFO: [Epoch4-iter700/3899]: Loss: 0.2274 Acc: 0.9553
+2025-11-21 14:01:02,689 project.train INFO: [Epoch4-iter800/3899]: Loss: 0.2249 Acc: 0.9559
+2025-11-21 14:01:18,136 project.train INFO: [Epoch4-iter900/3899]: Loss: 0.2223 Acc: 0.9563
+2025-11-21 14:01:33,376 project.train INFO: [Epoch4-iter1000/3899]: Loss: 0.2276 Acc: 0.9549
+2025-11-21 14:01:48,526 project.train INFO: [Epoch4-iter1100/3899]: Loss: 0.2323 Acc: 0.9535
+2025-11-21 14:02:04,626 project.train INFO: [Epoch4-iter1200/3899]: Loss: 0.2344 Acc: 0.9531
+2025-11-21 14:02:19,745 project.train INFO: [Epoch4-iter1300/3899]: Loss: 0.2339 Acc: 0.9542
+2025-11-21 14:02:34,445 project.train INFO: [Epoch4-iter1400/3899]: Loss: 0.2333 Acc: 0.9545
+2025-11-21 14:02:48,769 project.train INFO: [Epoch4-iter1500/3899]: Loss: 0.2355 Acc: 0.9543
+2025-11-21 14:03:03,928 project.train INFO: [Epoch4-iter1600/3899]: Loss: 0.2357 Acc: 0.9547
+2025-11-21 14:03:19,463 project.train INFO: [Epoch4-iter1700/3899]: Loss: 0.2398 Acc: 0.9544
+2025-11-21 14:03:34,252 project.train INFO: [Epoch4-iter1800/3899]: Loss: 0.2436 Acc: 0.9538
+2025-11-21 14:03:49,841 project.train INFO: [Epoch4-iter1900/3899]: Loss: 0.2440 Acc: 0.9541
+2025-11-21 14:04:05,082 project.train INFO: [Epoch4-iter2000/3899]: Loss: 0.2469 Acc: 0.9539
+2025-11-21 14:04:20,556 project.train INFO: [Epoch4-iter2100/3899]: Loss: 0.2480 Acc: 0.9539
+2025-11-21 14:04:35,511 project.train INFO: [Epoch4-iter2200/3899]: Loss: 0.2518 Acc: 0.9534
+2025-11-21 14:04:50,459 project.train INFO: [Epoch4-iter2300/3899]: Loss: 0.2543 Acc: 0.9531
+2025-11-21 14:05:05,506 project.train INFO: [Epoch4-iter2400/3899]: Loss: 0.2560 Acc: 0.9530
+2025-11-21 14:05:20,183 project.train INFO: [Epoch4-iter2500/3899]: Loss: 0.2592 Acc: 0.9524
+2025-11-21 14:05:34,776 project.train INFO: [Epoch4-iter2600/3899]: Loss: 0.2599 Acc: 0.9528
+2025-11-21 14:05:50,348 project.train INFO: [Epoch4-iter2700/3899]: Loss: 0.2604 Acc: 0.9528
+2025-11-21 14:06:05,008 project.train INFO: [Epoch4-iter2800/3899]: Loss: 0.2592 Acc: 0.9532
+2025-11-21 14:06:20,509 project.train INFO: [Epoch4-iter2900/3899]: Loss: 0.2590 Acc: 0.9534
+2025-11-21 14:06:35,031 project.train INFO: [Epoch4-iter3000/3899]: Loss: 0.2590 Acc: 0.9537
+2025-11-21 14:06:50,329 project.train INFO: [Epoch4-iter3100/3899]: Loss: 0.2598 Acc: 0.9537
+2025-11-21 14:07:05,027 project.train INFO: [Epoch4-iter3200/3899]: Loss: 0.2595 Acc: 0.9541
+2025-11-21 14:07:20,067 project.train INFO: [Epoch4-iter3300/3899]: Loss: 0.2584 Acc: 0.9544
+2025-11-21 14:07:34,925 project.train INFO: [Epoch4-iter3400/3899]: Loss: 0.2607 Acc: 0.9539
+2025-11-21 14:07:49,337 project.train INFO: [Epoch4-iter3500/3899]: Loss: 0.2595 Acc: 0.9543
+2025-11-21 14:08:04,538 project.train INFO: [Epoch4-iter3600/3899]: Loss: 0.2595 Acc: 0.9544
+2025-11-21 14:08:19,481 project.train INFO: [Epoch4-iter3700/3899]: Loss: 0.2612 Acc: 0.9542
+2025-11-21 14:08:35,071 project.train INFO: [Epoch4-iter3800/3899]: Loss: 0.2620 Acc: 0.9541
+2025-11-21 14:08:50,003 project.train INFO: [Epoch4-iter3898/3899]: Loss: 0.2623 Acc: 0.9542
+2025-11-21 14:08:50,067 project.train INFO: [Epoch4]: Loss: 0.2623 Acc: 0.9542
+2025-11-21 14:08:50,719 project.train INFO: [Epoch5-iter0/3899]: Loss: 0.2845 Acc: 0.9375
+2025-11-21 14:09:05,826 project.train INFO: [Epoch5-iter100/3899]: Loss: 0.3926 Acc: 0.9517
+2025-11-21 14:09:20,316 project.train INFO: [Epoch5-iter200/3899]: Loss: 0.4144 Acc: 0.9478
+2025-11-21 14:09:36,075 project.train INFO: [Epoch5-iter300/3899]: Loss: 0.4320 Acc: 0.9477
+2025-11-21 14:09:50,994 project.train INFO: [Epoch5-iter400/3899]: Loss: 0.4500 Acc: 0.9445
+2025-11-21 14:10:05,463 project.train INFO: [Epoch5-iter500/3899]: Loss: 0.4572 Acc: 0.9437
+2025-11-21 14:10:20,558 project.train INFO: [Epoch5-iter600/3899]: Loss: 0.4870 Acc: 0.9389
+2025-11-21 14:10:35,782 project.train INFO: [Epoch5-iter700/3899]: Loss: 0.5021 Acc: 0.9366
+2025-11-21 14:10:50,850 project.train INFO: [Epoch5-iter800/3899]: Loss: 0.4957 Acc: 0.9372
+2025-11-21 14:11:06,240 project.train INFO: [Epoch5-iter900/3899]: Loss: 0.5058 Acc: 0.9363
+2025-11-21 14:11:21,291 project.train INFO: [Epoch5-iter1000/3899]: Loss: 0.5111 Acc: 0.9346
+2025-11-21 14:11:36,413 project.train INFO: [Epoch5-iter1100/3899]: Loss: 0.5121 Acc: 0.9349
+2025-11-21 14:11:51,773 project.train INFO: [Epoch5-iter1200/3899]: Loss: 0.5051 Acc: 0.9353
+2025-11-21 14:12:07,244 project.train INFO: [Epoch5-iter1300/3899]: Loss: 0.5064 Acc: 0.9351
+2025-11-21 14:12:23,105 project.train INFO: [Epoch5-iter1400/3899]: Loss: 0.5068 Acc: 0.9353
+2025-11-21 14:12:38,612 project.train INFO: [Epoch5-iter1500/3899]: Loss: 0.5075 Acc: 0.9355
+2025-11-21 14:12:54,794 project.train INFO: [Epoch5-iter1600/3899]: Loss: 0.5064 Acc: 0.9353
+2025-11-21 14:13:12,404 project.train INFO: [Epoch5-iter1700/3899]: Loss: 0.5097 Acc: 0.9352
+2025-11-21 14:13:29,733 project.train INFO: [Epoch5-iter1800/3899]: Loss: 0.5089 Acc: 0.9354
+2025-11-21 14:13:45,629 project.train INFO: [Epoch5-iter1900/3899]: Loss: 0.5080 Acc: 0.9357
+2025-11-21 14:14:02,145 project.train INFO: [Epoch5-iter2000/3899]: Loss: 0.5036 Acc: 0.9366
+2025-11-21 14:14:17,788 project.train INFO: [Epoch5-iter2100/3899]: Loss: 0.4974 Acc: 0.9372
+2025-11-21 14:14:33,987 project.train INFO: [Epoch5-iter2200/3899]: Loss: 0.4972 Acc: 0.9372
+2025-11-21 14:14:50,251 project.train INFO: [Epoch5-iter2300/3899]: Loss: 0.4939 Acc: 0.9376
+2025-11-21 14:15:06,940 project.train INFO: [Epoch5-iter2400/3899]: Loss: 0.4904 Acc: 0.9382
+2025-11-21 14:15:23,026 project.train INFO: [Epoch5-iter2500/3899]: Loss: 0.4868 Acc: 0.9386
+2025-11-21 14:15:39,560 project.train INFO: [Epoch5-iter2600/3899]: Loss: 0.4823 Acc: 0.9390
+2025-11-21 14:15:55,828 project.train INFO: [Epoch5-iter2700/3899]: Loss: 0.4810 Acc: 0.9394
+2025-11-21 14:16:11,428 project.train INFO: [Epoch5-iter2800/3899]: Loss: 0.4784 Acc: 0.9398
+2025-11-21 14:16:27,689 project.train INFO: [Epoch5-iter2900/3899]: Loss: 0.4747 Acc: 0.9402
+2025-11-21 14:16:42,275 project.train INFO: [Epoch5-iter3000/3899]: Loss: 0.4710 Acc: 0.9408
+2025-11-21 14:16:58,252 project.train INFO: [Epoch5-iter3100/3899]: Loss: 0.4681 Acc: 0.9412
+2025-11-21 14:17:13,543 project.train INFO: [Epoch5-iter3200/3899]: Loss: 0.4640 Acc: 0.9419
+2025-11-21 14:17:29,140 project.train INFO: [Epoch5-iter3300/3899]: Loss: 0.4619 Acc: 0.9422
+2025-11-21 14:17:44,922 project.train INFO: [Epoch5-iter3400/3899]: Loss: 0.4576 Acc: 0.9428
+2025-11-21 14:18:00,576 project.train INFO: [Epoch5-iter3500/3899]: Loss: 0.4551 Acc: 0.9432
+2025-11-21 14:18:17,115 project.train INFO: [Epoch5-iter3600/3899]: Loss: 0.4556 Acc: 0.9433
+2025-11-21 14:18:32,800 project.train INFO: [Epoch5-iter3700/3899]: Loss: 0.4537 Acc: 0.9436
+2025-11-21 14:18:48,809 project.train INFO: [Epoch5-iter3800/3899]: Loss: 0.4524 Acc: 0.9438
+2025-11-21 14:19:04,080 project.train INFO: [Epoch5-iter3898/3899]: Loss: 0.4506 Acc: 0.9440
+2025-11-21 14:19:04,126 project.train INFO: [Epoch5]: Loss: 0.4506 Acc: 0.9440
+2025-11-21 14:19:04,714 project.train INFO: [Epoch6-iter0/3899]: Loss: 0.7597 Acc: 0.9375
+2025-11-21 14:19:20,052 project.train INFO: [Epoch6-iter100/3899]: Loss: 0.3306 Acc: 0.9647
+2025-11-21 14:19:35,373 project.train INFO: [Epoch6-iter200/3899]: Loss: 0.3380 Acc: 0.9627
+2025-11-21 14:19:51,080 project.train INFO: [Epoch6-iter300/3899]: Loss: 0.3282 Acc: 0.9637
+2025-11-21 14:20:06,752 project.train INFO: [Epoch6-iter400/3899]: Loss: 0.3419 Acc: 0.9629
+2025-11-21 14:20:22,675 project.train INFO: [Epoch6-iter500/3899]: Loss: 0.3359 Acc: 0.9639
+2025-11-21 14:20:37,343 project.train INFO: [Epoch6-iter600/3899]: Loss: 0.3321 Acc: 0.9631
+2025-11-21 14:20:52,787 project.train INFO: [Epoch6-iter700/3899]: Loss: 0.3196 Acc: 0.9646
+2025-11-21 14:21:07,905 project.train INFO: [Epoch6-iter800/3899]: Loss: 0.3223 Acc: 0.9643
+2025-11-21 14:21:23,612 project.train INFO: [Epoch6-iter900/3899]: Loss: 0.3237 Acc: 0.9637
+2025-11-21 14:21:39,335 project.train INFO: [Epoch6-iter1000/3899]: Loss: 0.3211 Acc: 0.9637
+2025-11-21 14:21:54,069 project.train INFO: [Epoch6-iter1100/3899]: Loss: 0.3206 Acc: 0.9638
+2025-11-21 14:22:11,374 project.train INFO: [Epoch6-iter1200/3899]: Loss: 0.3206 Acc: 0.9639
+2025-11-21 14:22:28,016 project.train INFO: [Epoch6-iter1300/3899]: Loss: 0.3201 Acc: 0.9639
+2025-11-21 14:22:43,571 project.train INFO: [Epoch6-iter1400/3899]: Loss: 0.3211 Acc: 0.9636
+2025-11-21 14:22:59,400 project.train INFO: [Epoch6-iter1500/3899]: Loss: 0.3206 Acc: 0.9637
+2025-11-21 14:23:14,839 project.train INFO: [Epoch6-iter1600/3899]: Loss: 0.3198 Acc: 0.9639
+2025-11-21 14:23:30,225 project.train INFO: [Epoch6-iter1700/3899]: Loss: 0.3196 Acc: 0.9638
+2025-11-21 14:23:45,033 project.train INFO: [Epoch6-iter1800/3899]: Loss: 0.3182 Acc: 0.9640
+2025-11-21 14:24:00,891 project.train INFO: [Epoch6-iter1900/3899]: Loss: 0.3285 Acc: 0.9634
+2025-11-21 14:24:16,293 project.train INFO: [Epoch6-iter2000/3899]: Loss: 0.3323 Acc: 0.9628
+2025-11-21 14:24:31,830 project.train INFO: [Epoch6-iter2100/3899]: Loss: 0.3301 Acc: 0.9630
+2025-11-21 14:24:46,851 project.train INFO: [Epoch6-iter2200/3899]: Loss: 0.3298 Acc: 0.9632
+2025-11-21 14:25:02,545 project.train INFO: [Epoch6-iter2300/3899]: Loss: 0.3293 Acc: 0.9633
+2025-11-21 14:25:18,268 project.train INFO: [Epoch6-iter2400/3899]: Loss: 0.3289 Acc: 0.9632
+2025-11-21 14:25:33,513 project.train INFO: [Epoch6-iter2500/3899]: Loss: 0.3312 Acc: 0.9629
+2025-11-21 14:25:48,885 project.train INFO: [Epoch6-iter2600/3899]: Loss: 0.3266 Acc: 0.9635
+2025-11-21 14:26:03,320 project.train INFO: [Epoch6-iter2700/3899]: Loss: 0.3262 Acc: 0.9632
+2025-11-21 14:26:18,078 project.train INFO: [Epoch6-iter2800/3899]: Loss: 0.3255 Acc: 0.9634
+2025-11-21 14:26:33,503 project.train INFO: [Epoch6-iter2900/3899]: Loss: 0.3252 Acc: 0.9634
+2025-11-21 14:26:48,885 project.train INFO: [Epoch6-iter3000/3899]: Loss: 0.3234 Acc: 0.9636
+2025-11-21 14:27:03,668 project.train INFO: [Epoch6-iter3100/3899]: Loss: 0.3236 Acc: 0.9636
+2025-11-21 14:27:20,591 project.train INFO: [Epoch6-iter3200/3899]: Loss: 0.3233 Acc: 0.9638
+2025-11-21 14:27:35,407 project.train INFO: [Epoch6-iter3300/3899]: Loss: 0.3234 Acc: 0.9637
+2025-11-21 14:27:50,275 project.train INFO: [Epoch6-iter3400/3899]: Loss: 0.3235 Acc: 0.9638
+2025-11-21 14:28:11,747 project.train INFO: [Epoch6-iter3500/3899]: Loss: 0.3228 Acc: 0.9638
+2025-11-21 14:28:28,219 project.train INFO: [Epoch6-iter3600/3899]: Loss: 0.3242 Acc: 0.9634
+2025-11-21 14:28:43,925 project.train INFO: [Epoch6-iter3700/3899]: Loss: 0.3245 Acc: 0.9633
+2025-11-21 14:28:59,116 project.train INFO: [Epoch6-iter3800/3899]: Loss: 0.3249 Acc: 0.9633
+2025-11-21 14:29:13,556 project.train INFO: [Epoch6-iter3898/3899]: Loss: 0.3253 Acc: 0.9632
+2025-11-21 14:29:13,647 project.train INFO: [Epoch6]: Loss: 0.3253 Acc: 0.9632
+2025-11-21 14:29:14,404 project.train INFO: [Epoch7-iter0/3899]: Loss: 0.0165 Acc: 1.0000
+2025-11-21 14:29:29,703 project.train INFO: [Epoch7-iter100/3899]: Loss: 0.3356 Acc: 0.9604
+2025-11-21 14:29:47,719 project.train INFO: [Epoch7-iter200/3899]: Loss: 0.2967 Acc: 0.9677
+2025-11-21 14:30:02,772 project.train INFO: [Epoch7-iter300/3899]: Loss: 0.3029 Acc: 0.9680
+2025-11-21 14:30:19,314 project.train INFO: [Epoch7-iter400/3899]: Loss: 0.3295 Acc: 0.9648
+2025-11-21 14:30:34,895 project.train INFO: [Epoch7-iter500/3899]: Loss: 0.3247 Acc: 0.9642
+2025-11-21 14:30:49,793 project.train INFO: [Epoch7-iter600/3899]: Loss: 0.3245 Acc: 0.9640
+2025-11-21 14:31:05,596 project.train INFO: [Epoch7-iter700/3899]: Loss: 0.3223 Acc: 0.9640
+2025-11-21 14:31:20,668 project.train INFO: [Epoch7-iter800/3899]: Loss: 0.3195 Acc: 0.9642
+2025-11-21 14:31:36,941 project.train INFO: [Epoch7-iter900/3899]: Loss: 0.3170 Acc: 0.9643
+2025-11-21 14:31:51,919 project.train INFO: [Epoch7-iter1000/3899]: Loss: 0.3180 Acc: 0.9643
+2025-11-21 14:32:07,358 project.train INFO: [Epoch7-iter1100/3899]: Loss: 0.3172 Acc: 0.9646
+2025-11-21 14:32:24,493 project.train INFO: [Epoch7-iter1200/3899]: Loss: 0.3082 Acc: 0.9658
+2025-11-21 14:32:39,770 project.train INFO: [Epoch7-iter1300/3899]: Loss: 0.3087 Acc: 0.9658
+2025-11-21 14:32:55,412 project.train INFO: [Epoch7-iter1400/3899]: Loss: 0.3014 Acc: 0.9666
+2025-11-21 14:33:11,321 project.train INFO: [Epoch7-iter1500/3899]: Loss: 0.3003 Acc: 0.9666
+2025-11-21 14:33:27,245 project.train INFO: [Epoch7-iter1600/3899]: Loss: 0.3001 Acc: 0.9666
+2025-11-21 14:33:42,370 project.train INFO: [Epoch7-iter1700/3899]: Loss: 0.2964 Acc: 0.9671
+2025-11-21 14:34:00,149 project.train INFO: [Epoch7-iter1800/3899]: Loss: 0.2969 Acc: 0.9669
+2025-11-21 14:34:17,004 project.train INFO: [Epoch7-iter1900/3899]: Loss: 0.2980 Acc: 0.9669
+2025-11-21 14:34:32,608 project.train INFO: [Epoch7-iter2000/3899]: Loss: 0.3003 Acc: 0.9663
+2025-11-21 14:34:49,069 project.train INFO: [Epoch7-iter2100/3899]: Loss: 0.3010 Acc: 0.9662
+2025-11-21 14:35:06,171 project.train INFO: [Epoch7-iter2200/3899]: Loss: 0.3032 Acc: 0.9659
+2025-11-21 14:35:21,914 project.train INFO: [Epoch7-iter2300/3899]: Loss: 0.3004 Acc: 0.9661
+2025-11-21 14:35:38,164 project.train INFO: [Epoch7-iter2400/3899]: Loss: 0.2987 Acc: 0.9661
+2025-11-21 14:35:54,122 project.train INFO: [Epoch7-iter2500/3899]: Loss: 0.2971 Acc: 0.9664
+2025-11-21 14:36:10,159 project.train INFO: [Epoch7-iter2600/3899]: Loss: 0.2922 Acc: 0.9670
+2025-11-21 14:36:28,704 project.train INFO: [Epoch7-iter2700/3899]: Loss: 0.2917 Acc: 0.9671
+2025-11-21 14:36:46,278 project.train INFO: [Epoch7-iter2800/3899]: Loss: 0.2897 Acc: 0.9673
+2025-11-21 14:37:02,140 project.train INFO: [Epoch7-iter2900/3899]: Loss: 0.2875 Acc: 0.9676
+2025-11-21 14:37:19,049 project.train INFO: [Epoch7-iter3000/3899]: Loss: 0.2843 Acc: 0.9679
+2025-11-21 14:37:36,587 project.train INFO: [Epoch7-iter3100/3899]: Loss: 0.2832 Acc: 0.9682
+2025-11-21 14:37:52,246 project.train INFO: [Epoch7-iter3200/3899]: Loss: 0.2812 Acc: 0.9685
+2025-11-21 14:38:07,271 project.train INFO: [Epoch7-iter3300/3899]: Loss: 0.2830 Acc: 0.9683
+2025-11-21 14:38:22,814 project.train INFO: [Epoch7-iter3400/3899]: Loss: 0.2822 Acc: 0.9685
+2025-11-21 14:38:39,173 project.train INFO: [Epoch7-iter3500/3899]: Loss: 0.2799 Acc: 0.9688
+2025-11-21 14:38:57,793 project.train INFO: [Epoch7-iter3600/3899]: Loss: 0.2804 Acc: 0.9688
+2025-11-21 14:39:14,282 project.train INFO: [Epoch7-iter3700/3899]: Loss: 0.2801 Acc: 0.9688
+2025-11-21 14:39:30,021 project.train INFO: [Epoch7-iter3800/3899]: Loss: 0.2813 Acc: 0.9688
+2025-11-21 14:39:46,556 project.train INFO: [Epoch7-iter3898/3899]: Loss: 0.2792 Acc: 0.9690
+2025-11-21 14:39:46,676 project.train INFO: [Epoch7]: Loss: 0.2792 Acc: 0.9690
+2025-11-21 14:39:47,341 project.train INFO: [Epoch8-iter0/3899]: Loss: 0.3427 Acc: 0.9375
+2025-11-21 14:40:03,969 project.train INFO: [Epoch8-iter100/3899]: Loss: 0.2520 Acc: 0.9691
+2025-11-21 14:40:18,903 project.train INFO: [Epoch8-iter200/3899]: Loss: 0.2326 Acc: 0.9720
+2025-11-21 14:40:35,456 project.train INFO: [Epoch8-iter300/3899]: Loss: 0.2528 Acc: 0.9705
+2025-11-21 14:40:50,963 project.train INFO: [Epoch8-iter400/3899]: Loss: 0.2364 Acc: 0.9724
+2025-11-21 14:41:07,383 project.train INFO: [Epoch8-iter500/3899]: Loss: 0.2255 Acc: 0.9753
+2025-11-21 14:41:23,551 project.train INFO: [Epoch8-iter600/3899]: Loss: 0.2263 Acc: 0.9760
+2025-11-21 14:41:40,742 project.train INFO: [Epoch8-iter700/3899]: Loss: 0.2276 Acc: 0.9761
+2025-11-21 14:41:56,611 project.train INFO: [Epoch8-iter800/3899]: Loss: 0.2291 Acc: 0.9758
+2025-11-21 14:42:12,474 project.train INFO: [Epoch8-iter900/3899]: Loss: 0.2273 Acc: 0.9755
+2025-11-21 14:42:29,167 project.train INFO: [Epoch8-iter1000/3899]: Loss: 0.2270 Acc: 0.9753
+2025-11-21 14:42:46,117 project.train INFO: [Epoch8-iter1100/3899]: Loss: 0.2261 Acc: 0.9754
+2025-11-21 14:43:01,837 project.train INFO: [Epoch8-iter1200/3899]: Loss: 0.2287 Acc: 0.9752
+2025-11-21 14:43:17,238 project.train INFO: [Epoch8-iter1300/3899]: Loss: 0.2277 Acc: 0.9755
+2025-11-21 14:43:32,933 project.train INFO: [Epoch8-iter1400/3899]: Loss: 0.2292 Acc: 0.9753
+2025-11-21 14:43:49,577 project.train INFO: [Epoch8-iter1500/3899]: Loss: 0.2292 Acc: 0.9752
+2025-11-21 14:44:06,945 project.train INFO: [Epoch8-iter1600/3899]: Loss: 0.2304 Acc: 0.9749
+2025-11-21 14:44:23,238 project.train INFO: [Epoch8-iter1700/3899]: Loss: 0.2299 Acc: 0.9748
+2025-11-21 14:44:38,175 project.train INFO: [Epoch8-iter1800/3899]: Loss: 0.2304 Acc: 0.9751
+2025-11-21 14:44:54,471 project.train INFO: [Epoch8-iter1900/3899]: Loss: 0.2294 Acc: 0.9752
+2025-11-21 14:45:09,816 project.train INFO: [Epoch8-iter2000/3899]: Loss: 0.2311 Acc: 0.9750
+2025-11-21 14:45:26,330 project.train INFO: [Epoch8-iter2100/3899]: Loss: 0.2306 Acc: 0.9750
+2025-11-21 14:45:44,716 project.train INFO: [Epoch8-iter2200/3899]: Loss: 0.2340 Acc: 0.9746
+2025-11-21 14:46:00,542 project.train INFO: [Epoch8-iter2300/3899]: Loss: 0.2333 Acc: 0.9748
+2025-11-21 14:46:16,143 project.train INFO: [Epoch8-iter2400/3899]: Loss: 0.2350 Acc: 0.9745
+2025-11-21 14:46:31,833 project.train INFO: [Epoch8-iter2500/3899]: Loss: 0.2361 Acc: 0.9742
+2025-11-21 14:46:47,636 project.train INFO: [Epoch8-iter2600/3899]: Loss: 0.2353 Acc: 0.9741
+2025-11-21 14:47:02,831 project.train INFO: [Epoch8-iter2700/3899]: Loss: 0.2369 Acc: 0.9738
+2025-11-21 14:47:18,012 project.train INFO: [Epoch8-iter2800/3899]: Loss: 0.2372 Acc: 0.9736
+2025-11-21 14:47:33,883 project.train INFO: [Epoch8-iter2900/3899]: Loss: 0.2370 Acc: 0.9737
+2025-11-21 14:47:49,191 project.train INFO: [Epoch8-iter3000/3899]: Loss: 0.2351 Acc: 0.9740
+2025-11-21 14:48:08,328 project.train INFO: [Epoch8-iter3100/3899]: Loss: 0.2376 Acc: 0.9736
+2025-11-21 14:48:24,908 project.train INFO: [Epoch8-iter3200/3899]: Loss: 0.2383 Acc: 0.9735
+2025-11-21 14:48:40,753 project.train INFO: [Epoch8-iter3300/3899]: Loss: 0.2385 Acc: 0.9736
+2025-11-21 14:48:56,352 project.train INFO: [Epoch8-iter3400/3899]: Loss: 0.2394 Acc: 0.9734
+2025-11-21 14:49:12,186 project.train INFO: [Epoch8-iter3500/3899]: Loss: 0.2384 Acc: 0.9735
+2025-11-21 14:49:27,925 project.train INFO: [Epoch8-iter3600/3899]: Loss: 0.2380 Acc: 0.9735
+2025-11-21 14:49:42,920 project.train INFO: [Epoch8-iter3700/3899]: Loss: 0.2374 Acc: 0.9736
+2025-11-21 14:49:58,435 project.train INFO: [Epoch8-iter3800/3899]: Loss: 0.2369 Acc: 0.9736
+2025-11-21 14:50:13,208 project.train INFO: [Epoch8-iter3898/3899]: Loss: 0.2357 Acc: 0.9738
+2025-11-21 14:50:13,295 project.train INFO: [Epoch8]: Loss: 0.2357 Acc: 0.9738
+2025-11-21 14:50:13,952 project.train INFO: [Epoch9-iter0/3899]: Loss: 0.0001 Acc: 1.0000
+2025-11-21 14:50:29,179 project.train INFO: [Epoch9-iter100/3899]: Loss: 0.2370 Acc: 0.9746
+2025-11-21 14:50:44,695 project.train INFO: [Epoch9-iter200/3899]: Loss: 0.2170 Acc: 0.9770
+2025-11-21 14:50:59,481 project.train INFO: [Epoch9-iter300/3899]: Loss: 0.2299 Acc: 0.9761
+2025-11-21 14:51:14,253 project.train INFO: [Epoch9-iter400/3899]: Loss: 0.2377 Acc: 0.9744
+2025-11-21 14:51:29,906 project.train INFO: [Epoch9-iter500/3899]: Loss: 0.2314 Acc: 0.9750
+2025-11-21 14:51:44,977 project.train INFO: [Epoch9-iter600/3899]: Loss: 0.2340 Acc: 0.9742
+2025-11-21 14:52:00,500 project.train INFO: [Epoch9-iter700/3899]: Loss: 0.2312 Acc: 0.9747
+2025-11-21 14:52:15,753 project.train INFO: [Epoch9-iter800/3899]: Loss: 0.2340 Acc: 0.9746
+2025-11-21 14:52:31,652 project.train INFO: [Epoch9-iter900/3899]: Loss: 0.2347 Acc: 0.9745
+2025-11-21 14:52:47,539 project.train INFO: [Epoch9-iter1000/3899]: Loss: 0.2313 Acc: 0.9750
+2025-11-21 14:53:03,714 project.train INFO: [Epoch9-iter1100/3899]: Loss: 0.2367 Acc: 0.9744
+2025-11-21 14:53:19,967 project.train INFO: [Epoch9-iter1200/3899]: Loss: 0.2301 Acc: 0.9749
+2025-11-21 14:53:35,953 project.train INFO: [Epoch9-iter1300/3899]: Loss: 0.2287 Acc: 0.9754
+2025-11-21 14:53:54,219 project.train INFO: [Epoch9-iter1400/3899]: Loss: 0.2237 Acc: 0.9758
+2025-11-21 14:54:10,076 project.train INFO: [Epoch9-iter1500/3899]: Loss: 0.2199 Acc: 0.9765
+2025-11-21 14:54:25,394 project.train INFO: [Epoch9-iter1600/3899]: Loss: 0.2191 Acc: 0.9767
+2025-11-21 14:54:40,997 project.train INFO: [Epoch9-iter1700/3899]: Loss: 0.2195 Acc: 0.9767
+2025-11-21 14:54:57,747 project.train INFO: [Epoch9-iter1800/3899]: Loss: 0.2192 Acc: 0.9767
+2025-11-21 14:55:14,513 project.train INFO: [Epoch9-iter1900/3899]: Loss: 0.2197 Acc: 0.9767
+2025-11-21 14:55:30,836 project.train INFO: [Epoch9-iter2000/3899]: Loss: 0.2203 Acc: 0.9766
+2025-11-21 14:55:49,770 project.train INFO: [Epoch9-iter2100/3899]: Loss: 0.2198 Acc: 0.9766
+2025-11-21 14:56:07,285 project.train INFO: [Epoch9-iter2200/3899]: Loss: 0.2156 Acc: 0.9770
+2025-11-21 14:56:24,459 project.train INFO: [Epoch9-iter2300/3899]: Loss: 0.2144 Acc: 0.9772
+2025-11-21 14:56:40,807 project.train INFO: [Epoch9-iter2400/3899]: Loss: 0.2128 Acc: 0.9774
+2025-11-21 14:57:00,231 project.train INFO: [Epoch9-iter2500/3899]: Loss: 0.2140 Acc: 0.9773
+2025-11-21 14:57:16,825 project.train INFO: [Epoch9-iter2600/3899]: Loss: 0.2126 Acc: 0.9773
+2025-11-21 14:57:33,483 project.train INFO: [Epoch9-iter2700/3899]: Loss: 0.2123 Acc: 0.9772
+2025-11-21 14:57:50,144 project.train INFO: [Epoch9-iter2800/3899]: Loss: 0.2121 Acc: 0.9772
+2025-11-21 14:58:06,409 project.train INFO: [Epoch9-iter2900/3899]: Loss: 0.2112 Acc: 0.9772
+2025-11-21 14:58:22,182 project.train INFO: [Epoch9-iter3000/3899]: Loss: 0.2100 Acc: 0.9772
+2025-11-21 14:58:37,333 project.train INFO: [Epoch9-iter3100/3899]: Loss: 0.2104 Acc: 0.9773
+2025-11-21 14:58:53,136 project.train INFO: [Epoch9-iter3200/3899]: Loss: 0.2097 Acc: 0.9774
+2025-11-21 14:59:10,232 project.train INFO: [Epoch9-iter3300/3899]: Loss: 0.2086 Acc: 0.9775
+2025-11-21 14:59:28,648 project.train INFO: [Epoch9-iter3400/3899]: Loss: 0.2079 Acc: 0.9775
+2025-11-21 14:59:44,981 project.train INFO: [Epoch9-iter3500/3899]: Loss: 0.2075 Acc: 0.9775
+2025-11-21 15:00:03,448 project.train INFO: [Epoch9-iter3600/3899]: Loss: 0.2066 Acc: 0.9777
+2025-11-21 15:00:19,394 project.train INFO: [Epoch9-iter3700/3899]: Loss: 0.2062 Acc: 0.9778
+2025-11-21 15:00:35,523 project.train INFO: [Epoch9-iter3800/3899]: Loss: 0.2062 Acc: 0.9777
+2025-11-21 15:00:51,495 project.train INFO: [Epoch9-iter3898/3899]: Loss: 0.2050 Acc: 0.9778
+2025-11-21 15:00:51,524 project.train INFO: [Epoch9]: Loss: 0.2050 Acc: 0.9778
+2025-11-21 15:00:52,307 project.train INFO: [Epoch10-iter0/3899]: Loss: 0.0008 Acc: 1.0000
+2025-11-21 15:01:08,363 project.train INFO: [Epoch10-iter100/3899]: Loss: 0.1110 Acc: 0.9907
+2025-11-21 15:01:24,223 project.train INFO: [Epoch10-iter200/3899]: Loss: 0.1653 Acc: 0.9826
+2025-11-21 15:01:40,189 project.train INFO: [Epoch10-iter300/3899]: Loss: 0.1862 Acc: 0.9792
+2025-11-21 15:01:55,855 project.train INFO: [Epoch10-iter400/3899]: Loss: 0.2094 Acc: 0.9774
+2025-11-21 15:02:12,056 project.train INFO: [Epoch10-iter500/3899]: Loss: 0.1995 Acc: 0.9789
+2025-11-21 15:02:27,583 project.train INFO: [Epoch10-iter600/3899]: Loss: 0.1921 Acc: 0.9798
+2025-11-21 15:02:43,594 project.train INFO: [Epoch10-iter700/3899]: Loss: 0.1884 Acc: 0.9793
+2025-11-21 15:02:59,857 project.train INFO: [Epoch10-iter800/3899]: Loss: 0.1801 Acc: 0.9806
+2025-11-21 15:03:15,747 project.train INFO: [Epoch10-iter900/3899]: Loss: 0.1807 Acc: 0.9812
+2025-11-21 15:03:31,232 project.train INFO: [Epoch10-iter1000/3899]: Loss: 0.1783 Acc: 0.9816
+2025-11-21 15:03:46,604 project.train INFO: [Epoch10-iter1100/3899]: Loss: 0.1780 Acc: 0.9817
+2025-11-21 15:04:02,827 project.train INFO: [Epoch10-iter1200/3899]: Loss: 0.1820 Acc: 0.9813
+2025-11-21 15:04:18,876 project.train INFO: [Epoch10-iter1300/3899]: Loss: 0.1810 Acc: 0.9811
+2025-11-21 15:04:34,100 project.train INFO: [Epoch10-iter1400/3899]: Loss: 0.1838 Acc: 0.9806
+2025-11-21 15:04:54,473 project.train INFO: [Epoch10-iter1500/3899]: Loss: 0.1824 Acc: 0.9809
+2025-11-21 15:05:10,442 project.train INFO: [Epoch10-iter1600/3899]: Loss: 0.1844 Acc: 0.9806
+2025-11-21 15:05:25,954 project.train INFO: [Epoch10-iter1700/3899]: Loss: 0.1840 Acc: 0.9806
+2025-11-21 15:05:42,185 project.train INFO: [Epoch10-iter1800/3899]: Loss: 0.1843 Acc: 0.9805
+2025-11-21 15:05:58,284 project.train INFO: [Epoch10-iter1900/3899]: Loss: 0.1866 Acc: 0.9803
+2025-11-21 15:06:13,808 project.train INFO: [Epoch10-iter2000/3899]: Loss: 0.1864 Acc: 0.9803
+2025-11-21 15:06:29,516 project.train INFO: [Epoch10-iter2100/3899]: Loss: 0.1875 Acc: 0.9802
+2025-11-21 15:06:44,769 project.train INFO: [Epoch10-iter2200/3899]: Loss: 0.1895 Acc: 0.9799
+2025-11-21 15:06:59,573 project.train INFO: [Epoch10-iter2300/3899]: Loss: 0.1914 Acc: 0.9797
+2025-11-21 15:07:14,919 project.train INFO: [Epoch10-iter2400/3899]: Loss: 0.1913 Acc: 0.9798
+2025-11-21 15:07:30,378 project.train INFO: [Epoch10-iter2500/3899]: Loss: 0.1920 Acc: 0.9796
+2025-11-21 15:07:45,516 project.train INFO: [Epoch10-iter2600/3899]: Loss: 0.1920 Acc: 0.9796
+2025-11-21 15:08:01,531 project.train INFO: [Epoch10-iter2700/3899]: Loss: 0.1911 Acc: 0.9798
+2025-11-21 15:08:17,097 project.train INFO: [Epoch10-iter2800/3899]: Loss: 0.1921 Acc: 0.9798
+2025-11-21 15:08:34,259 project.train INFO: [Epoch10-iter2900/3899]: Loss: 0.1916 Acc: 0.9798
+2025-11-21 15:08:49,766 project.train INFO: [Epoch10-iter3000/3899]: Loss: 0.1924 Acc: 0.9797
+2025-11-21 15:09:05,778 project.train INFO: [Epoch10-iter3100/3899]: Loss: 0.1925 Acc: 0.9797
+2025-11-21 15:09:21,149 project.train INFO: [Epoch10-iter3200/3899]: Loss: 0.1923 Acc: 0.9797
+2025-11-21 15:09:36,925 project.train INFO: [Epoch10-iter3300/3899]: Loss: 0.1927 Acc: 0.9796
+2025-11-21 15:09:51,427 project.train INFO: [Epoch10-iter3400/3899]: Loss: 0.1921 Acc: 0.9798
+2025-11-21 15:10:06,314 project.train INFO: [Epoch10-iter3500/3899]: Loss: 0.1915 Acc: 0.9799
+2025-11-21 15:10:22,876 project.train INFO: [Epoch10-iter3600/3899]: Loss: 0.1898 Acc: 0.9802
+2025-11-21 15:10:39,736 project.train INFO: [Epoch10-iter3700/3899]: Loss: 0.1894 Acc: 0.9802
+2025-11-21 15:10:57,303 project.train INFO: [Epoch10-iter3800/3899]: Loss: 0.1887 Acc: 0.9804
+2025-11-21 15:11:12,731 project.train INFO: [Epoch10-iter3898/3899]: Loss: 0.1880 Acc: 0.9805
+2025-11-21 15:11:12,764 project.train INFO: [Epoch10]: Loss: 0.1880 Acc: 0.9805
+2025-11-21 15:11:13,533 project.train INFO: [Epoch11-iter0/3899]: Loss: 0.0000 Acc: 1.0000
+2025-11-21 15:11:29,858 project.train INFO: [Epoch11-iter100/3899]: Loss: 0.1972 Acc: 0.9777
+2025-11-21 15:11:45,926 project.train INFO: [Epoch11-iter200/3899]: Loss: 0.1737 Acc: 0.9798
+2025-11-21 15:12:02,611 project.train INFO: [Epoch11-iter300/3899]: Loss: 0.1723 Acc: 0.9809
+2025-11-21 15:12:18,568 project.train INFO: [Epoch11-iter400/3899]: Loss: 0.1551 Acc: 0.9824
+2025-11-21 15:12:34,151 project.train INFO: [Epoch11-iter500/3899]: Loss: 0.1552 Acc: 0.9823
+2025-11-21 15:12:49,566 project.train INFO: [Epoch11-iter600/3899]: Loss: 0.1558 Acc: 0.9817
+2025-11-21 15:13:05,277 project.train INFO: [Epoch11-iter700/3899]: Loss: 0.1545 Acc: 0.9819
+2025-11-21 15:13:21,519 project.train INFO: [Epoch11-iter800/3899]: Loss: 0.1540 Acc: 0.9818
+2025-11-21 15:13:36,595 project.train INFO: [Epoch11-iter900/3899]: Loss: 0.1562 Acc: 0.9815
+2025-11-21 15:13:53,032 project.train INFO: [Epoch11-iter1000/3899]: Loss: 0.1570 Acc: 0.9815
+2025-11-21 15:14:08,301 project.train INFO: [Epoch11-iter1100/3899]: Loss: 0.1621 Acc: 0.9806
+2025-11-21 15:14:23,287 project.train INFO: [Epoch11-iter1200/3899]: Loss: 0.1652 Acc: 0.9801
+2025-11-21 15:14:38,265 project.train INFO: [Epoch11-iter1300/3899]: Loss: 0.1668 Acc: 0.9803
+2025-11-21 15:14:54,506 project.train INFO: [Epoch11-iter1400/3899]: Loss: 0.1663 Acc: 0.9803
+2025-11-21 15:15:10,188 project.train INFO: [Epoch11-iter1500/3899]: Loss: 0.1705 Acc: 0.9800
+2025-11-21 15:15:27,089 project.train INFO: [Epoch11-iter1600/3899]: Loss: 0.1711 Acc: 0.9798
+2025-11-21 15:15:44,455 project.train INFO: [Epoch11-iter1700/3899]: Loss: 0.1711 Acc: 0.9799
+2025-11-21 15:16:00,930 project.train INFO: [Epoch11-iter1800/3899]: Loss: 0.1739 Acc: 0.9796
+2025-11-21 15:16:17,924 project.train INFO: [Epoch11-iter1900/3899]: Loss: 0.1755 Acc: 0.9795
+2025-11-21 15:16:34,177 project.train INFO: [Epoch11-iter2000/3899]: Loss: 0.1759 Acc: 0.9795
+2025-11-21 15:16:49,902 project.train INFO: [Epoch11-iter2100/3899]: Loss: 0.1757 Acc: 0.9796
+2025-11-21 15:17:05,318 project.train INFO: [Epoch11-iter2200/3899]: Loss: 0.1721 Acc: 0.9800
+2025-11-21 15:17:21,782 project.train INFO: [Epoch11-iter2300/3899]: Loss: 0.1734 Acc: 0.9800
+2025-11-21 15:17:37,630 project.train INFO: [Epoch11-iter2400/3899]: Loss: 0.1746 Acc: 0.9799
+2025-11-21 15:17:53,175 project.train INFO: [Epoch11-iter2500/3899]: Loss: 0.1755 Acc: 0.9798
+2025-11-21 15:18:09,155 project.train INFO: [Epoch11-iter2600/3899]: Loss: 0.1741 Acc: 0.9801
+2025-11-21 15:18:25,267 project.train INFO: [Epoch11-iter2700/3899]: Loss: 0.1745 Acc: 0.9802
+2025-11-21 15:18:40,960 project.train INFO: [Epoch11-iter2800/3899]: Loss: 0.1738 Acc: 0.9803
+2025-11-21 15:18:56,128 project.train INFO: [Epoch11-iter2900/3899]: Loss: 0.1734 Acc: 0.9805
+2025-11-21 15:19:12,047 project.train INFO: [Epoch11-iter3000/3899]: Loss: 0.1728 Acc: 0.9806
+2025-11-21 15:19:29,532 project.train INFO: [Epoch11-iter3100/3899]: Loss: 0.1719 Acc: 0.9807
+2025-11-21 15:19:44,540 project.train INFO: [Epoch11-iter3200/3899]: Loss: 0.1721 Acc: 0.9807
+2025-11-21 15:20:00,813 project.train INFO: [Epoch11-iter3300/3899]: Loss: 0.1720 Acc: 0.9808
+2025-11-21 15:20:16,243 project.train INFO: [Epoch11-iter3400/3899]: Loss: 0.1726 Acc: 0.9807
+2025-11-21 15:20:32,905 project.train INFO: [Epoch11-iter3500/3899]: Loss: 0.1725 Acc: 0.9808
+2025-11-21 15:20:48,592 project.train INFO: [Epoch11-iter3600/3899]: Loss: 0.1739 Acc: 0.9806
+2025-11-21 15:21:04,750 project.train INFO: [Epoch11-iter3700/3899]: Loss: 0.1730 Acc: 0.9808
+2025-11-21 15:21:20,665 project.train INFO: [Epoch11-iter3800/3899]: Loss: 0.1729 Acc: 0.9808
+2025-11-21 15:21:36,071 project.train INFO: [Epoch11-iter3898/3899]: Loss: 0.1728 Acc: 0.9808
+2025-11-21 15:21:36,162 project.train INFO: [Epoch11]: Loss: 0.1728 Acc: 0.9808
+2025-11-21 15:21:36,989 project.train INFO: [Epoch12-iter0/3899]: Loss: 0.0001 Acc: 1.0000
+2025-11-21 15:21:52,300 project.train INFO: [Epoch12-iter100/3899]: Loss: 0.1371 Acc: 0.9864
+2025-11-21 15:22:07,497 project.train INFO: [Epoch12-iter200/3899]: Loss: 0.1537 Acc: 0.9826
+2025-11-21 15:22:24,160 project.train INFO: [Epoch12-iter300/3899]: Loss: 0.1580 Acc: 0.9828
+2025-11-21 15:22:38,929 project.train INFO: [Epoch12-iter400/3899]: Loss: 0.1517 Acc: 0.9839
+2025-11-21 15:22:54,734 project.train INFO: [Epoch12-iter500/3899]: Loss: 0.1423 Acc: 0.9855
+2025-11-21 15:23:10,902 project.train INFO: [Epoch12-iter600/3899]: Loss: 0.1477 Acc: 0.9849
+2025-11-21 15:23:26,430 project.train INFO: [Epoch12-iter700/3899]: Loss: 0.1487 Acc: 0.9848
+2025-11-21 15:23:41,398 project.train INFO: [Epoch12-iter800/3899]: Loss: 0.1476 Acc: 0.9847
+2025-11-21 15:23:56,049 project.train INFO: [Epoch12-iter900/3899]: Loss: 0.1578 Acc: 0.9834
+2025-11-21 15:24:11,053 project.train INFO: [Epoch12-iter1000/3899]: Loss: 0.1577 Acc: 0.9835
+2025-11-21 15:24:25,709 project.train INFO: [Epoch12-iter1100/3899]: Loss: 0.1542 Acc: 0.9838
+2025-11-21 15:24:40,817 project.train INFO: [Epoch12-iter1200/3899]: Loss: 0.1546 Acc: 0.9836
+2025-11-21 15:24:57,178 project.train INFO: [Epoch12-iter1300/3899]: Loss: 0.1553 Acc: 0.9836
+2025-11-21 15:25:13,721 project.train INFO: [Epoch12-iter1400/3899]: Loss: 0.1560 Acc: 0.9835
+2025-11-21 15:25:30,256 project.train INFO: [Epoch12-iter1500/3899]: Loss: 0.1574 Acc: 0.9836
+2025-11-21 15:25:46,491 project.train INFO: [Epoch12-iter1600/3899]: Loss: 0.1572 Acc: 0.9834
+2025-11-21 15:26:02,541 project.train INFO: [Epoch12-iter1700/3899]: Loss: 0.1554 Acc: 0.9838
+2025-11-21 15:26:18,770 project.train INFO: [Epoch12-iter1800/3899]: Loss: 0.1544 Acc: 0.9837
+2025-11-21 15:26:34,757 project.train INFO: [Epoch12-iter1900/3899]: Loss: 0.1551 Acc: 0.9837
+2025-11-21 15:26:51,309 project.train INFO: [Epoch12-iter2000/3899]: Loss: 0.1569 Acc: 0.9834
+2025-11-21 15:27:06,958 project.train INFO: [Epoch12-iter2100/3899]: Loss: 0.1575 Acc: 0.9833
+2025-11-21 15:27:22,542 project.train INFO: [Epoch12-iter2200/3899]: Loss: 0.1594 Acc: 0.9832
+2025-11-21 15:27:38,841 project.train INFO: [Epoch12-iter2300/3899]: Loss: 0.1592 Acc: 0.9833
+2025-11-21 15:27:53,910 project.train INFO: [Epoch12-iter2400/3899]: Loss: 0.1567 Acc: 0.9836
+2025-11-21 15:28:10,561 project.train INFO: [Epoch12-iter2500/3899]: Loss: 0.1576 Acc: 0.9833
+2025-11-21 15:28:25,714 project.train INFO: [Epoch12-iter2600/3899]: Loss: 0.1566 Acc: 0.9835
+2025-11-21 15:28:41,435 project.train INFO: [Epoch12-iter2700/3899]: Loss: 0.1575 Acc: 0.9835
+2025-11-21 15:28:57,326 project.train INFO: [Epoch12-iter2800/3899]: Loss: 0.1564 Acc: 0.9837
+2025-11-21 15:29:12,512 project.train INFO: [Epoch12-iter2900/3899]: Loss: 0.1569 Acc: 0.9836
+2025-11-21 15:29:28,639 project.train INFO: [Epoch12-iter3000/3899]: Loss: 0.1577 Acc: 0.9834
+2025-11-21 15:29:44,056 project.train INFO: [Epoch12-iter3100/3899]: Loss: 0.1580 Acc: 0.9835
+2025-11-21 15:29:59,654 project.train INFO: [Epoch12-iter3200/3899]: Loss: 0.1586 Acc: 0.9833
+2025-11-21 15:30:15,107 project.train INFO: [Epoch12-iter3300/3899]: Loss: 0.1596 Acc: 0.9833
+2025-11-21 15:30:30,745 project.train INFO: [Epoch12-iter3400/3899]: Loss: 0.1613 Acc: 0.9831
+2025-11-21 15:30:47,134 project.train INFO: [Epoch12-iter3500/3899]: Loss: 0.1608 Acc: 0.9832
+2025-11-21 15:31:03,515 project.train INFO: [Epoch12-iter3600/3899]: Loss: 0.1609 Acc: 0.9832
+2025-11-21 15:31:19,409 project.train INFO: [Epoch12-iter3700/3899]: Loss: 0.1616 Acc: 0.9831
+2025-11-21 15:31:34,734 project.train INFO: [Epoch12-iter3800/3899]: Loss: 0.1600 Acc: 0.9832
+2025-11-21 15:31:50,383 project.train INFO: [Epoch12-iter3898/3899]: Loss: 0.1616 Acc: 0.9831
+2025-11-21 15:31:50,414 project.train INFO: [Epoch12]: Loss: 0.1616 Acc: 0.9831
+2025-11-21 15:31:51,140 project.train INFO: [Epoch13-iter0/3899]: Loss: 0.5691 Acc: 0.9375
+2025-11-21 15:32:08,082 project.train INFO: [Epoch13-iter100/3899]: Loss: 0.1470 Acc: 0.9827
+2025-11-21 15:32:24,375 project.train INFO: [Epoch13-iter200/3899]: Loss: 0.1490 Acc: 0.9835
+2025-11-21 15:32:40,608 project.train INFO: [Epoch13-iter300/3899]: Loss: 0.1522 Acc: 0.9840
+2025-11-21 15:32:56,307 project.train INFO: [Epoch13-iter400/3899]: Loss: 0.1518 Acc: 0.9835
+2025-11-21 15:33:12,545 project.train INFO: [Epoch13-iter500/3899]: Loss: 0.1521 Acc: 0.9832
+2025-11-21 15:33:30,273 project.train INFO: [Epoch13-iter600/3899]: Loss: 0.1550 Acc: 0.9826
+2025-11-21 15:33:48,175 project.train INFO: [Epoch13-iter700/3899]: Loss: 0.1587 Acc: 0.9826
+2025-11-21 15:34:04,119 project.train INFO: [Epoch13-iter800/3899]: Loss: 0.1553 Acc: 0.9830
+2025-11-21 15:34:20,187 project.train INFO: [Epoch13-iter900/3899]: Loss: 0.1540 Acc: 0.9831
+2025-11-21 15:34:39,626 project.train INFO: [Epoch13-iter1000/3899]: Loss: 0.1521 Acc: 0.9836
+2025-11-21 15:34:58,051 project.train INFO: [Epoch13-iter1100/3899]: Loss: 0.1517 Acc: 0.9837
+2025-11-21 15:35:14,982 project.train INFO: [Epoch13-iter1200/3899]: Loss: 0.1469 Acc: 0.9843
+2025-11-21 15:35:32,524 project.train INFO: [Epoch13-iter1300/3899]: Loss: 0.1437 Acc: 0.9847
+2025-11-21 15:35:49,901 project.train INFO: [Epoch13-iter1400/3899]: Loss: 0.1448 Acc: 0.9847
+2025-11-21 15:36:06,714 project.train INFO: [Epoch13-iter1500/3899]: Loss: 0.1416 Acc: 0.9850
+2025-11-21 15:36:21,784 project.train INFO: [Epoch13-iter1600/3899]: Loss: 0.1395 Acc: 0.9853
+2025-11-21 15:36:37,461 project.train INFO: [Epoch13-iter1700/3899]: Loss: 0.1401 Acc: 0.9857
+2025-11-21 15:36:53,015 project.train INFO: [Epoch13-iter1800/3899]: Loss: 0.1398 Acc: 0.9857
+2025-11-21 15:37:07,665 project.train INFO: [Epoch13-iter1900/3899]: Loss: 0.1404 Acc: 0.9858
+2025-11-21 15:37:22,317 project.train INFO: [Epoch13-iter2000/3899]: Loss: 0.1416 Acc: 0.9856
+2025-11-21 15:37:36,568 project.train INFO: [Epoch13-iter2100/3899]: Loss: 0.1398 Acc: 0.9858
+2025-11-21 15:37:52,375 project.train INFO: [Epoch13-iter2200/3899]: Loss: 0.1388 Acc: 0.9859
+2025-11-21 15:38:08,110 project.train INFO: [Epoch13-iter2300/3899]: Loss: 0.1387 Acc: 0.9860
+2025-11-21 15:38:23,357 project.train INFO: [Epoch13-iter2400/3899]: Loss: 0.1391 Acc: 0.9860
