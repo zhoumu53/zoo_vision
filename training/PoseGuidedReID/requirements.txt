@@ -1,0 +1,21 @@
+# Core dependencies
+yacs
+timm
+opencv-python
+albumentations
+scikit-learn
+scipy
+matplotlib
+Pillow
+tqdm
+
+# Metric learning
+pytorch_metric_learning
+
+# Logging and monitoring
+tensorboard
+wandb
+
+# Optional: already installed in your main env
+# torch==2.5.1
+# torchvision==0.20.1

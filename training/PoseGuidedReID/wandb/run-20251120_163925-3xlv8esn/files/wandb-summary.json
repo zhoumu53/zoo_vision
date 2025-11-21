@@ -1,0 +1,1 @@
+{"_wandb":{"runtime":32590},"_runtime":32590,"Train samples":{"format":"png","count":1,"filenames":["media/images/Train samples_119_3b93f26267630963185e.png"],"captions":["Pred:4 Truth:4"],"_type":"images/separated","width":256,"height":256},"Acc":99.59113648024628,"loss":0.0903676490438442,"_timestamp":1.7636857555782464e+09,"_step":119}
