@@ -27,15 +27,7 @@ import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
 from decord import VideoReader, cpu, gpu
-
-ID2NAMES = {
-    '01': 'Chandra',
-    '02': 'Indi',
-    '03': 'Fahra',
-    '04': 'Panang',
-    '05': 'Thai',
-    '06': 'Zali',
-}
+from utils import *
 
 try:
     from ultralytics import YOLO
@@ -44,22 +36,8 @@ except ImportError as exc:  # pragma: no cover - guard for missing dependency
         "Ultralytics is required for visualization. Install via `pip install ultralytics`."
     ) from exc
 
-# Allow importing PoseGuidedReID modules when running from repo root
-THIS_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = THIS_DIR.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from training.identity.model import get_model  # noqa: E402
-
-DEFAULT_IDENTITY_NAMES = [
-    "01_Chandra",
-    "02_Indi",
-    "03_Fahra",
-    "04_Panang",
-    "05_Thai",
-    "06_Zali",
-]
 
 
 def build_default_identity_names(num_classes: int) -> List[str]:
@@ -69,16 +47,6 @@ def build_default_identity_names(num_classes: int) -> List[str]:
     extra = [f"id_{idx+1}" for idx in range(len(names), num_classes)]
     return names + extra
 
-
-@dataclass
-class DetectionResult:
-    """Structure storing a single detection + reid match information."""
-
-    bbox: Tuple[int, int, int, int]
-    score: float
-    cls_id: int
-    cls_name: str
-    predictions: List[Tuple[str, float]]
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,60 +122,6 @@ def setup_logger(level: str) -> logging.Logger:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
     return logging.getLogger("visualize")
-
-
-def load_class_names(path: str) -> List[str]:
-    with open(path, "r", encoding="utf-8") as f:
-        names = [line.strip() for line in f if line.strip()]
-    if not names:
-        raise ValueError(f"No class names found in {path}")
-    return names
-
-
-COLOR_PALETTE: List[Tuple[int, int, int]] = [
-    (231, 76, 60),
-    (46, 205, 113),
-    (52, 152, 219),
-    (155, 89, 182),
-    (241, 196, 15),
-]
-
-
-def bgr_from_palette_index(idx: int) -> Tuple[int, int, int]:
-    r, g, b = COLOR_PALETTE[idx % len(COLOR_PALETTE)]
-    return int(b), int(g), int(r)
-
-
-def build_label_color_map(labels: Sequence[str]) -> Dict[str, Tuple[int, int, int]]:
-    mapping: Dict[str, Tuple[int, int, int]] = {}
-    for idx, label in enumerate(sorted(set(labels))):
-        mapping[label] = bgr_from_palette_index(idx)
-    return mapping
-
-
-def resolve_checkpoint_path(path_str: str) -> Path:
-    """Resolve checkpoint path allowing relative references to repo root."""
-    candidates = []
-    input_path = Path(path_str)
-    if input_path.is_absolute():
-        candidates.append(input_path)
-    else:
-        candidates.extend(
-            [
-                (Path.cwd() / input_path),
-                (PROJECT_ROOT / input_path),
-                (THIS_DIR / input_path),
-            ]
-        )
-    seen = set()
-    for cand in candidates:
-        cand = cand.resolve()
-        if cand in seen:
-            continue
-        seen.add(cand)
-        if cand.exists():
-            return cand
-    raise FileNotFoundError(f"Identity checkpoint not found at {path_str}")
 
 
 def build_identity_model(
@@ -555,6 +469,11 @@ def main() -> None:
                             cls_id=cls_id,
                             cls_name=cls_name,
                             predictions=preds,
+                            track_id=None,
+                            display_track_id=None,
+                            identity_label=None,
+                            identity_score=None,
+                            matches=[],
                         )
                     )
 
