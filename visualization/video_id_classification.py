@@ -14,10 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
-import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 import cv2
@@ -79,6 +75,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=224,
         help="Input resolution for identity classifier (square).",
+    )
+    parser.add_argument(
+        "--yolo-device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device for YOLO inference (cuda / cuda:0 / cpu).",
     )
     parser.add_argument(
         "--device",
@@ -190,99 +191,6 @@ def build_identity_model(
     return model, transform, is_temporal
 
 
-def identity_forward(
-    model: torch.nn.Module,
-    batch: torch.Tensor,
-    is_temporal: bool,
-) -> torch.Tensor:
-    if is_temporal:
-        outputs = model(batch.unsqueeze(1))
-        logits = outputs["logits"]
-        if logits.dim() == 3:
-            logits = logits.squeeze(1)
-    else:
-        outputs = model(batch)
-        if isinstance(outputs, dict):
-            if "logits" not in outputs:
-                raise ValueError("Model output dictionary does not contain 'logits'")
-            logits = outputs["logits"]
-        else:
-            logits = outputs
-    return logits
-
-
-def infer_classifier_dim(
-    model: torch.nn.Module,
-    input_size: int,
-    device: torch.device,
-    is_temporal: bool,
-) -> int:
-    with torch.no_grad():
-        dummy = torch.zeros(1, 3, input_size, input_size, device=device)
-        logits = identity_forward(model, dummy, is_temporal)
-        if logits.dim() == 1:
-            return logits.numel()
-        return logits.shape[-1]
-
-
-def run_yolo(
-    model: YOLO,
-    frame: np.ndarray,
-    conf_thres: float,
-    iou_thres: float,
-    max_dets: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run YOLO inference on a frame and return xyxy boxes, scores, class ids."""
-    results = model.predict(
-        source=frame,
-        conf=conf_thres,
-        iou=iou_thres,
-        retina_masks=False,
-        verbose=False,
-        max_det=max_dets,
-    )
-    if not results:
-        return np.empty((0, 4)), np.empty((0,)), np.empty((0,), dtype=int)
-    res = results[0]
-    if res.boxes is None or res.boxes.data.shape[0] == 0:
-        return np.empty((0, 4)), np.empty((0,)), np.empty((0,), dtype=int)
-
-    boxes = res.boxes.xyxy.cpu().numpy()
-    scores = res.boxes.conf.cpu().numpy()
-    cls_ids = res.boxes.cls.cpu().numpy().astype(int)
-    return boxes, scores, cls_ids
-
-
-def preprocess_patches(
-    frame: np.ndarray,
-    boxes: np.ndarray,
-    transform: T.Compose,
-) -> Tuple[List[torch.Tensor], List[Tuple[int, int, int, int]], List[int]]:
-    patches = []
-    kept_boxes = []
-    kept_indices: List[int] = []
-    h, w = frame.shape[:2]
-
-    for det_idx, box in enumerate(boxes):
-        x1, y1, x2, y2 = [int(v) for v in box]
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(w - 1, x2)
-        y2 = min(h - 1, y2)
-        if x2 <= x1 or y2 <= y1:
-            continue
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            continue
-        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb)
-        tensor = transform(pil_img)
-        patches.append(tensor)
-        kept_boxes.append((x1, y1, x2, y2))
-        kept_indices.append(det_idx)
-    return patches, kept_boxes, kept_indices
-
-
 def annotate_frame(
     frame: np.ndarray,
     detections: Sequence[DetectionResult],
@@ -320,17 +228,6 @@ def annotate_frame(
     return frame
 
 
-def maybe_resize(frame: np.ndarray, target_width: int | None) -> np.ndarray:
-    if target_width is None:
-        return frame
-    h, w = frame.shape[:2]
-    if w == target_width:
-        return frame
-    scale = target_width / float(w)
-    new_h = int(h * scale)
-    return cv2.resize(frame, (target_width, new_h), interpolation=cv2.INTER_LINEAR)
-
-
 def main() -> None:
     args = parse_args()
     logger = setup_logger(args.log_level)
@@ -340,7 +237,9 @@ def main() -> None:
 
     class_names = load_class_names(args.class_names)
     yolo_model = YOLO(args.yolo_model)
-    logger.info("Loaded YOLO model from %s", args.yolo_model)
+    if args.yolo_device:
+        yolo_model.to(args.yolo_device)
+    logger.info("Loaded YOLO model from %s on %s", args.yolo_model, args.yolo_device)
 
     classifier, transform, is_temporal = build_identity_model(
         checkpoint_path=args.id_checkpoint,
@@ -402,6 +301,7 @@ def main() -> None:
     else:
         max_frame_idx = total_frames
 
+
     with torch.no_grad():
         with tqdm(total=total_frames if total_frames > 0 else None, desc="Frames") as pbar:
             for frame_idx in range(0, max_frame_idx):
@@ -432,6 +332,7 @@ def main() -> None:
                     conf_thres=args.conf_thres,
                     iou_thres=args.iou_thres,
                     max_dets=args.max_dets,
+                    device=args.yolo_device,
                 )
                 if boxes.size == 0:
                     writer.write(frame)

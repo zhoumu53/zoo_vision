@@ -19,6 +19,7 @@ from typing import List
 import cv2
 import numpy as np
 from tqdm import tqdm
+from utils import *
 
 THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = THIS_DIR.parent
@@ -35,17 +36,13 @@ def setup_logger(level: str) -> logging.Logger:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare multiple visualization pipelines.")
     parser.add_argument("--video", required=True, help="Input video path.")
-    parser.add_argument("--output", required=True, help="Path to save the combined comparison video.")
-    parser.add_argument("--reid-output", default="runs/reid_vis.mp4", help="Output path for pure ReID pipeline.")
-    parser.add_argument("--track-output", default="runs/reid_track_vis.mp4", help="Output path for tracking+ReID pipeline.")
-    parser.add_argument("--id-output", default="runs/id_vis.mp4", help="Output path for ID classification pipeline.")
+    parser.add_argument("--track-outdir", default="/home/mu/Desktop/comparison_videos", help="Output path for tracking+ReID pipeline.")
     parser.add_argument("--class-names", required=True, help="Path to YOLO class names file.")
     parser.add_argument("--yolo-model", required=True, help="Path to YOLO checkpoint.")
     parser.add_argument("--reid-config", required=True, help="Path to PoseGuidedReID config.")
     parser.add_argument("--reid-checkpoint", required=True, help="Path to PoseGuidedReID checkpoint.")
     parser.add_argument("--gallery", required=True, help="Path to gallery npz.")
     parser.add_argument("--id-checkpoint", required=True, help="Identity classifier checkpoint (.pth or .ptc).")
-    parser.add_argument("--titles", nargs=3, default=["ReID", "ReID+Track", "ID Classifier"], help="Titles for each pipeline.")
     parser.add_argument("--yolo-device", default="cuda", help="Device for YOLO inference (cuda / cuda:0 / cpu).")
     parser.add_argument("--device", default="cuda", help="Device to run ReID/ID models on.")
     parser.add_argument("--gallery-device", default="cpu", help="Device to store gallery features on.")
@@ -93,7 +90,11 @@ def pad_title(frame: np.ndarray, title: str, height=40) -> np.ndarray:
 
 def stream_and_write(outputs: List[str], titles: List[str], output_path: str) -> None:
     if len(outputs) != len(titles):
-        raise ValueError("Number of titles must match the number of outputs.")
+
+        raise ValueError(f"Number of titles {len(titles)} must match the number of outputs "
+                         f"={len(outputs)}.")
+    if len(outputs) != 4:
+        raise ValueError("run_multi_camera expects exactly 4 camera outputs for a 2x2 grid.")
 
     captures = []
     writer = None
@@ -124,8 +125,10 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
             if not frames:
                 break
 
-            padded_rows = [pad_title(frame, titles[idx]) for idx, frame in enumerate(frames)]
-            combined = np.vstack(padded_rows)
+            padded = [pad_title(frame, titles[idx]) for idx, frame in enumerate(frames)]
+            top_row = np.hstack(padded[:2])
+            bottom_row = np.hstack(padded[2:])
+            combined = np.vstack([top_row, bottom_row])
 
             if writer is None:
                 h, w = combined.shape[:2]
@@ -148,102 +151,70 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
             writer.release()
 
 
+
+def get_output_filename(video_path, track_outdir, max_frames) -> str:
+    filename = os.path.basename(video_path)
+    filename = filename.replace('.mp4', f'_{max_frames}.mp4')
+    return os.path.join(track_outdir, filename)
+
+
+
 def main() -> None:
     args = parse_args()
     logger = setup_logger(args.log_level)
 
+    camera_id, date, time, ampm = extract_metadata_from_video_path(args.video)
+    other_camera_ids = set(CAMERA_PARIS) - {camera_id}
+
+    print("other camera ids:", other_camera_ids)
+
+    other_video_paths = [extract_other_cameras(camera_id, date, time, ampm, raw_video_dir='/mnt/camera_nas') for camera_id in other_camera_ids]    
+    all_video_paths = [args.video] + other_video_paths
+    all_output_paths = [get_output_filename(path, args.track_outdir, args.max_frames) for path in all_video_paths]
+    print("all video paths:", all_output_paths)
 
     ### only run the commands if the output files do not exist yet
-    if all(os.path.exists(p) for p in [args.reid_output, args.track_output, args.id_output]):
+    if all(os.path.exists(p) for p in all_output_paths):
         logger.info("All output videos already exist. Skipping pipeline execution.")
     else:
-        comparison_commands: List[List[str]] = []
 
-        reid_cmd = [
-            sys.executable,
-            str(THIS_DIR / "video_reid.py"),
-            "--video",
-            args.video,
-            "--output",
-            args.reid_output,
-            "--yolo-model",
-            args.yolo_model,
-            "--class-names",
-            args.class_names,
-            "--reid-config",
-            args.reid_config,
-            "--reid-checkpoint",
-            args.reid_checkpoint,
-            "--gallery",
-            args.gallery,
-            "--yolo-device",
-            args.yolo_device,
-            "--device",
-            args.device,
-            "--gallery-device",
-            args.gallery_device,
-        ]
-        add_runtime_flags(reid_cmd, args)
-        comparison_commands.append(reid_cmd)
+        for idx, (video_path, track_output) in enumerate(zip(all_video_paths, all_output_paths)):
 
-        track_cmd = [
-            sys.executable,
-            str(THIS_DIR / "video_tracks_reid.py"),
-            "--video",
-            args.video,
-            "--output",
-            args.track_output,
-            "--yolo-model",
-            args.yolo_model,
-            "--class-names",
-            args.class_names,
-            "--reid-config",
-            args.reid_config,
-            "--reid-checkpoint",
-            args.reid_checkpoint,
-            "--gallery",
-            args.gallery,
-            "--yolo-device",
-            args.yolo_device,
-            "--device",
-            args.device,
-            "--gallery-device",
-            args.gallery_device,
-            "--tracker-config",
-            args.tracker_config,
-            "--min-similarity",
-            str(args.min_similarity),
-        ]
-        add_runtime_flags(track_cmd, args)
-        comparison_commands.append(track_cmd)
+            track_cmd = [
+                sys.executable,
+                str(THIS_DIR / "video_tracks_reid.py"),
+                "--video",
+                video_path,
+                "--output",
+                track_output,
+                "--yolo-model",
+                args.yolo_model,
+                "--class-names",
+                args.class_names,
+                "--reid-config",
+                args.reid_config,
+                "--reid-checkpoint",
+                args.reid_checkpoint,
+                "--gallery",
+                args.gallery,
+                "--yolo-device",
+                args.yolo_device,
+                "--device",
+                args.device,
+                "--gallery-device",
+                args.gallery_device,
+                "--tracker-config",
+                args.tracker_config,
+                "--min-similarity",
+                str(args.min_similarity),
+            ]
+            add_runtime_flags(track_cmd, args)
+            run_pipeline(track_cmd, logger)
 
-        id_cmd = [
-            sys.executable,
-            str(THIS_DIR / "video_id_classification.py"),
-            "--video",
-            args.video,
-            "--output",
-            args.id_output,
-            "--yolo-model",
-            args.yolo_model,
-            "--class-names",
-            args.class_names,
-            "--id-checkpoint",
-            args.id_checkpoint,
-            "--yolo-device",
-            args.yolo_device,
-            "--device",
-            args.device,
-        ]
-        add_runtime_flags(id_cmd, args)
-        comparison_commands.append(id_cmd)
-
-        for cmd in comparison_commands:
-            run_pipeline(cmd, logger)
-
-    outputs = [args.reid_output, args.track_output, args.id_output]
-    stream_and_write(outputs, args.titles, args.output)
-    logger.info("Comparison video saved to %s", args.output)
+    ### titles
+    all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
+    stream_and_write(all_output_paths, all_titles, os.path.join(args.track_outdir, 'comparison_video.mp4'))
+    logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, 'comparison_video.mp4'))
 
 
 if __name__ == "__main__":

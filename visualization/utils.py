@@ -7,8 +7,9 @@ import torchvision.transforms as T
 from PIL import Image
 
 import cv2
-
+import os
 import numpy as np
+import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 from project.config import cfg as base_cfg  # noqa: E402
@@ -30,6 +31,9 @@ THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = THIS_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+GT_IMAGES_DIR = '/media/dherrera/ElephantsWD/elephants/reid_gt_cleaned_data'
 
 
 COLOR_PALETTE: List[Tuple[int, int, int]] = [
@@ -59,6 +63,83 @@ DEFAULT_IDENTITY_NAMES = [
     "05_Thai",
     "06_Zali",
 ]
+
+
+CAMERA_PARIS = {
+    '016': '019',
+    '019': '016',
+    '017': '018',
+    '018': '017',
+}
+
+
+def load_data(csv_file='/media/dherrera/ElephantsWD/elephants/reid_gt_cleaned_data/train_val_split/full_reid_data.csv'):
+    df = pd.read_csv(csv_file)
+    return df
+
+def time2ampm(time_str: str) -> str:
+    """
+    Convert time in 'HHMMSS' format to 'AM/PM' format.
+    e.g. '063510' -> 'AM'
+    """
+    hour = int(time_str[0:2])
+    ampm = 'AM' if hour < 12 else 'PM'
+    return ampm
+
+
+def extract_metadata_from_video_path(videopath) -> Tuple[str, str, str, str]:
+    """
+    e.g. '/home/mu/Desktop/gt_videos/train/ZAG-ELP-CAM-018-20250830-025815-1756515495749-7.mp4' -> ('018', '20250830', '025815')
+    """
+    parts = videopath.split('/')
+    
+    filename = parts[-1]
+    
+    print("Filename extracted:", filename)
+    camera_id = filename.split('-')[3]
+    date = filename.split('-')[4]
+    time = filename.split('-')[5]
+    ampm = time2ampm(time)
+    return camera_id, date, time, ampm
+
+
+def extract_other_cameras(camera_id, date, time, ampm, raw_video_dir='/mnt/camera_nas') -> str | None:
+    """
+    Match the given time string to find the corresponding videos from other cameras.
+    Arguments:
+        raw_video_dir: str, base directory where raw videos are stored
+        camera_id: str, camera ID extracted from the filename
+        date: str, date extracted from the filename in 'YYYYMMDD' format
+        time: str, time extracted from the filename in 'HHMMSS' format
+        ampm: str, 'AM' or 'PM' based on the time
+        find_opposite: bool, if True, find video from opposite camera (016<->019, 017<->018)
+    Returns:
+        matched_video_file: str or None, path to the matched video file or None if not found
+    """
+
+    video_dir = f'{raw_video_dir}/ZAG-ELP-CAM-{camera_id}/{date}{ampm}'
+
+    video_files = [f for f in os.listdir(video_dir) if f.startswith(f'ZAG-ELP-CAM-{camera_id}-{date}')]
+
+
+    is_matched = False
+    matched_video_file = None
+    for video_file in video_files:
+        video_starting_time = video_file.split('-')[5]  # Extract time part from filename
+        
+        video_start_hour = int(video_starting_time[0:2])
+        video_start_minute = int(video_starting_time[2:4])
+        video_start_second = int(video_starting_time[4:6])
+        given_hour = int(time[0:2])
+        given_minute = int(time[2:4])
+        given_second = int(time[4:6])
+        time_diff = (given_hour - video_start_hour) * 3600 + (given_minute - video_start_minute) * 60 + (given_second - video_start_second)
+        if -1800 <= time_diff <= 1800:  # within 30 minutes
+            is_matched = True
+            matched_video_file = os.path.join(video_dir, video_file)
+            break
+
+    return matched_video_file if is_matched else None
 
 
 @dataclass
@@ -199,6 +280,7 @@ def run_yolo(
     conf_thres: float,
     iou_thres: float,
     max_dets: int,
+    device: str | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run YOLO inference on a frame and return xyxy boxes, scores, class ids."""
     results = model.predict(
@@ -208,6 +290,7 @@ def run_yolo(
         retina_masks=False,
         verbose=False,
         max_det=max_dets,
+        device=device,
     )
     if not results:
         return np.empty((0, 4)), np.empty((0,)), np.empty((0,), dtype=int)
@@ -228,6 +311,7 @@ def run_yolo_byteTrack(
     iou_thres: float,
     max_dets: int,
     tracker_cfg: str | None,
+    device: str | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Run YOLO detection + ByteTrack, returning boxes, scores, classes, and track IDs."""
     results = model.track(
@@ -239,6 +323,7 @@ def run_yolo_byteTrack(
         max_det=max_dets,
         tracker=tracker_cfg,
         persist=True,
+        device=device,
     )
     if not results:
         return (
@@ -374,3 +459,104 @@ def maybe_resize(frame: np.ndarray, target_width: int | None) -> np.ndarray:
     new_h = int(h * scale)
     return cv2.resize(frame, (target_width, new_h), interpolation=cv2.INTER_LINEAR)
 
+
+
+def build_identity_model(
+    checkpoint_path: str,
+    model_name: str | None,
+    device: torch.device,
+    input_size: int,
+    logger: logging.Logger,
+) -> Tuple[torch.nn.Module, T.Compose, bool]:
+    checkpoint_path = resolve_checkpoint_path(checkpoint_path)
+    suffix = checkpoint_path.suffix.lower()
+
+    if suffix == ".ptc":
+        logger.info("Loading TorchScript identity model from %s", checkpoint_path)
+        model = torch.jit.load(checkpoint_path, map_location=device)
+        model.eval()
+        model.to(device)
+        transform = T.Compose(
+            [
+                T.Resize((input_size, input_size)),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ]
+        )
+        return model, transform, False
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint.get("model", checkpoint)
+    checkpoint_args = checkpoint.get("args")
+
+    if model_name is None:
+        if isinstance(checkpoint_args, dict):
+            model_name = checkpoint_args.get("model")
+        elif checkpoint_args is not None:
+            model_name = getattr(checkpoint_args, "model", None)
+
+    if model_name is None:
+        if any("gru" in k for k in state_dict.keys()):
+            model_name = "zoo_id_gru"
+        else:
+            model_name = "densenet121"
+        logger.info("Inferred identity model type: %s", model_name)
+
+    classifier_weight_key = None
+    for key in state_dict.keys():
+        if key.endswith("classifier.weight"):
+            classifier_weight_key = key
+            break
+    if classifier_weight_key is None:
+        raise RuntimeError("Checkpoint does not contain classifier weights.")
+
+    num_classes = state_dict[classifier_weight_key].shape[0]
+    model = get_model(model_name, num_classes=num_classes, weights=None)
+    model.load_state_dict(state_dict, strict=True)
+    model.eval()
+    model.to(device)
+
+    transform = T.Compose(
+        [
+            T.Resize((input_size, input_size)),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    is_temporal = hasattr(model, "gru")
+    return model, transform, is_temporal
+
+
+def identity_forward(
+    model: torch.nn.Module,
+    batch: torch.Tensor,
+    is_temporal: bool,
+) -> torch.Tensor:
+    if is_temporal:
+        outputs = model(batch.unsqueeze(1))
+        logits = outputs["logits"]
+        if logits.dim() == 3:
+            logits = logits.squeeze(1)
+    else:
+        outputs = model(batch)
+        if isinstance(outputs, dict):
+            if "logits" not in outputs:
+                raise ValueError("Model output dictionary does not contain 'logits'")
+            logits = outputs["logits"]
+        else:
+            logits = outputs
+    return logits
+
+
+def infer_classifier_dim(
+    model: torch.nn.Module,
+    input_size: int,
+    device: torch.device,
+    is_temporal: bool,
+) -> int:
+    with torch.no_grad():
+        dummy = torch.zeros(1, 3, input_size, input_size, device=device)
+        logits = identity_forward(model, dummy, is_temporal)
+        if logits.dim() == 1:
+            return logits.numel()
+        return logits.shape[-1]
