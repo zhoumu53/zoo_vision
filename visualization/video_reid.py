@@ -70,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         help="Gallery features npz (generated via PoseGuidedReID inference).",
     )
     parser.add_argument(
+        "--yolo-device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device for YOLO inference (cuda / cuda:0 / cpu).",
+    )
+    parser.add_argument(
         "--device",
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device for ReID model inference.",
@@ -128,7 +133,9 @@ def main() -> None:
 
     class_names = load_class_names(args.class_names)
     yolo_model = YOLO(args.yolo_model)
-    logger.info("Loaded YOLO model from %s", args.yolo_model)
+    if args.yolo_device:
+        yolo_model.to(args.yolo_device)
+    logger.info("Loaded YOLO model from %s on %s", args.yolo_model, args.yolo_device)
 
     gallery = load_gallery_database(args.gallery, gallery_device)
     num_classes = len(set(gallery.ids.tolist()))
@@ -191,9 +198,6 @@ def main() -> None:
                 if args.frame_skip > 1 and frame_idx % args.frame_skip != 0:
                     continue
 
-                if args.max_frames is not None and processed >= args.max_frames:
-                    break
-
                 try:
                     frame = vr[frame_idx].asnumpy()
                 except Exception as e:
@@ -214,6 +218,7 @@ def main() -> None:
                     conf_thres=args.conf_thres,
                     iou_thres=args.iou_thres,
                     max_dets=args.max_dets,
+                    device=args.yolo_device,
                 )
                 if boxes.size == 0:
                     writer.write(frame)

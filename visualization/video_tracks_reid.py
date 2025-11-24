@@ -17,14 +17,110 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import time
+from functools import lru_cache
 from pathlib import Path
+from typing import Dict, List
 
 import cv2
+import numpy as np
 import torch
-from tqdm import tqdm
 from decord import VideoReader, cpu, gpu
+from tqdm import tqdm
 from utils import *
+
+LABEL_TO_FOLDER: Dict[str, str] = {}
+for identity in DEFAULT_IDENTITY_NAMES:
+    parts = identity.split("_", 1)
+    if len(parts) == 2:
+        LABEL_TO_FOLDER[parts[1]] = identity
+    LABEL_TO_FOLDER[identity] = identity
+
+MATCH_THUMB_SIZE = 140
+MATCH_PANEL_PADDING = 14
+
+
+def _file2date(file_path: str) -> str:
+    """Extract YYYY_MM portion from gallery file name."""
+    segments = file_path.split("_")
+    token = segments[4] if len(segments) > 4 else segments[-1]
+    token = token.split(".")[0]
+    if len(token) < 6:
+        return token
+    return f"{token[:4]}_{token[4:6]}"
+
+
+@lru_cache(maxsize=512)
+def _load_gallery_thumbnail(path: str, size: int) -> np.ndarray:
+    """Load and resize a gallery image for visualization."""
+    img = cv2.imread(path)
+    if img is None:
+        return np.zeros((size, size, 3), dtype=np.uint8)
+    return cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+
+
+def annotate_frame_with_matches(
+    frame: np.ndarray,
+    detections: List[DetectionResult],
+    matched_paths: List[List[str]],
+    gallery: GalleryDB,
+    top_k: int,
+    thumb_size: int,
+    padding: int,
+) -> np.ndarray:
+    """
+    Append a right-hand panel that visualizes the top-K gallery matches per detection.
+    """
+    effective_top_k = max(top_k, max((len(row) for row in matched_paths), default=0))
+    if effective_top_k <= 0:
+        return frame
+
+    panel_width = effective_top_k * thumb_size + (effective_top_k + 1) * padding
+    panel = np.full((frame.shape[0], panel_width, 3), 25, dtype=np.uint8)
+    y = padding
+    block_height = thumb_size + padding + 24
+
+    if not detections or not matched_paths:
+        return np.hstack([frame, panel])
+
+    for det_idx, detection in enumerate(detections):
+        if det_idx >= len(matched_paths):
+            break
+        matches = detection.matches or []
+        row_paths = matched_paths[det_idx]
+        if not row_paths or not matches:
+            continue
+
+        for rank, path in enumerate(row_paths[:top_k]):
+            label = matches[rank][0] if rank < len(matches) else "Unknown"
+            display_label = LABEL_TO_FOLDER.get(label, label)
+            color = gallery.label_to_color.get(label, (0, 255, 0))
+            abs_path = str(path)
+            thumb = _load_gallery_thumbnail(abs_path, thumb_size)
+            x = padding + rank * (thumb_size + padding)
+            if y + thumb_size > panel.shape[0]:
+                break
+            panel[y : y + thumb_size, x : x + thumb_size] = thumb
+            cv2.rectangle(panel, (x, y), (x + thumb_size, y + thumb_size), color, 2)
+            text_y = max(y + 20, 18)
+            cv2.putText(
+                panel,
+                display_label,
+                (x + 6, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+
+        y += block_height
+        if y + thumb_size > panel.shape[0]:
+            break
+
+    return np.hstack([frame, panel])
 
 try:
     from ultralytics import YOLO
@@ -68,6 +164,11 @@ def parse_args() -> argparse.Namespace:
         "--gallery",
         required=True,
         help="Gallery features npz (generated via PoseGuidedReID inference).",
+    )
+    parser.add_argument(
+        "--yolo-device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device for YOLO inference (cuda / cuda:0 / cpu).",
     )
     parser.add_argument(
         "--device",
@@ -129,6 +230,46 @@ def setup_logger(level: str) -> logging.Logger:
     return logging.getLogger("visualize")
 
 
+
+def annotate_frame(
+    frame: np.ndarray,
+    detections: Sequence[DetectionResult],
+    gallery: GalleryDB,
+) -> np.ndarray:
+    for det in detections:
+        label = det.identity_label or (det.matches[0][0] if det.matches else "Unknown")
+        score = det.identity_score if det.identity_score is not None else (det.matches[0][1] if det.matches else 0.0)
+        color = gallery.label_to_color.get(label, (0, 255, 0))
+        x1, y1, x2, y2 = det.bbox
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness=2)
+        track_text = f"T{det.display_track_id}" if det.display_track_id >= 0 else "T?"
+        identity_text = f"{label} ({score:.2f})" if label else "Unknown"
+        text = f"{track_text} | {identity_text} | det {det.score:.2f}"
+        cv2.putText(
+            frame,
+            text,
+            (x1, max(20, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+        for idx, (match_label, match_score) in enumerate(det.matches[1:], start=1):
+            caption = f"{idx+1}. {match_label} {match_score:.2f}"
+            cv2.putText(
+                frame,
+                caption,
+                (x1, y1 + 18 + idx * 16),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
+    return frame
+
+
 def main() -> None:
     args = parse_args()
     logger = setup_logger(args.log_level)
@@ -139,7 +280,9 @@ def main() -> None:
 
     class_names = load_class_names(args.class_names)
     yolo_model = YOLO(args.yolo_model)
-    logger.info("Loaded YOLO model from %s", args.yolo_model)
+    if args.yolo_device:
+        yolo_model.to(args.yolo_device)
+    logger.info("Loaded YOLO model from %s on %s", args.yolo_model, args.yolo_device)
 
     gallery = load_gallery_database(args.gallery, gallery_device)
     num_classes = len(set(gallery.ids.tolist()))
@@ -179,7 +322,9 @@ def main() -> None:
     else:
         writer_width, writer_height = width, height
 
-    writer_size = (writer_width, writer_height)
+    panel_top_k = max(args.top_k, 1)
+    match_panel_width = panel_top_k * MATCH_THUMB_SIZE + (panel_top_k + 1) * MATCH_PANEL_PADDING
+    writer_size = (writer_width + match_panel_width, writer_height)
     writer = cv2.VideoWriter(
         args.output,
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -192,6 +337,7 @@ def main() -> None:
     track_id_to_identity: Dict[int, str] = {}
     identity_to_track: Dict[str, int] = {}
     track_id_alias: Dict[int, int] = {}
+    start_time = time.perf_counter()
 
     if args.max_frames is not None:
         max_frame_idx = min(total_frames, args.max_frames * args.frame_skip)
@@ -229,15 +375,36 @@ def main() -> None:
                     iou_thres=args.iou_thres,
                     max_dets=args.max_dets,
                     tracker_cfg=args.tracker_config,
+                    device=args.yolo_device,
                 )
                 if boxes.size == 0:
-                    writer.write(frame)
+                    empty = annotate_frame(frame.copy(), [], gallery)
+                    empty = annotate_frame_with_matches(
+                        empty,
+                        [],
+                        [],
+                        gallery,
+                        panel_top_k,
+                        MATCH_THUMB_SIZE,
+                        MATCH_PANEL_PADDING,
+                    )
+                    writer.write(empty)
                     processed += 1
                     continue
 
                 tensors, kept_boxes, kept_indices = preprocess_patches(frame, boxes, transform)
                 if not tensors:
-                    writer.write(frame)
+                    empty = annotate_frame(frame.copy(), [], gallery)
+                    empty = annotate_frame_with_matches(
+                        empty,
+                        [],
+                        [],
+                        gallery,
+                        panel_top_k,
+                        MATCH_THUMB_SIZE,
+                        MATCH_PANEL_PADDING,
+                    )
+                    writer.write(empty)
                     processed += 1
                     continue
 
@@ -245,7 +412,14 @@ def main() -> None:
                 feats = extract_features(reid_model, batch)
                 feats = feats.to(gallery.features.device)
                 scores_mat, indices_mat = match_gallery(feats, gallery, args.top_k)
-
+                match_indices_np = indices_mat.cpu().numpy()
+                matched_gallery_paths = gallery.paths[match_indices_np]
+                matched_gallery_labels = gallery.labels[match_indices_np]
+                matched_gallery_folders = [
+                    [os.path.join(GT_IMAGES_DIR, _file2date(path), LABEL_TO_FOLDER.get(str(label), str(label)), path) for label, path in zip(row, path_row)]
+                    for row, path_row in zip(matched_gallery_labels, matched_gallery_paths)
+                ]
+                
                 detections: List[DetectionResult] = []
                 for idx, bbox in enumerate(kept_boxes):
                     det_idx = kept_indices[idx]
@@ -299,14 +473,32 @@ def main() -> None:
                             predictions=[],
                         )
                     )
+                
 
+                ### add the visualization of matched gallery images with bounding boxes
                 annotated = annotate_frame(frame.copy(), detections, gallery)
+                annotated = annotate_frame_with_matches(
+                    annotated,
+                    detections,
+                    matched_gallery_folders,
+                    gallery,
+                    panel_top_k,
+                    MATCH_THUMB_SIZE,
+                    MATCH_PANEL_PADDING,
+                )
                 writer.write(annotated)
                 processed += 1
 
+    elapsed = max(time.perf_counter() - start_time, 1e-6)
     writer.release()
-    logger.info("Visualization saved to %s (processed %d frames)", args.output, processed)
-
+    logger.info(
+        "Visualization saved to %s (processed %d frames in %.2fs, %.2f FPS)",
+        args.output,
+        processed,
+        elapsed,
+        processed / elapsed,
+    )
+              
 
 if __name__ == "__main__":
     main()
