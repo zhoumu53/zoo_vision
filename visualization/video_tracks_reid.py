@@ -18,8 +18,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 import time
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List
@@ -40,6 +42,43 @@ for identity in DEFAULT_IDENTITY_NAMES:
 
 MATCH_THUMB_SIZE = 140
 MATCH_PANEL_PADDING = 14
+
+
+def get_video_start_datetime(video_path: str) -> datetime:
+    """Parse the video filename and return the recording start timestamp."""
+    _, date_str, time_str, _ = extract_metadata_from_video_path(video_path)
+    return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+
+
+def format_frame_timestamp(
+    video_start: datetime | None,
+    frame_idx: int,
+    fps: float,
+) -> str:
+    """Return a timestamp string for a frame index using video metadata when available."""
+    effective_fps = fps if fps > 0 else 30.0
+    offset_seconds = frame_idx / max(effective_fps, 1e-6)
+    if video_start is not None:
+        frame_time = video_start + timedelta(seconds=offset_seconds)
+        return frame_time.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    total_ms = int(offset_seconds * 1000)
+    seconds, millis = divmod(total_ms, 1000)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{hours:02d}{minutes:02d}{seconds:02d}_{millis:03d}"
+
+
+def build_frame_output_path(
+    frames_dir: Path,
+    video_path: str,
+    frame_idx: int,
+    fps: float,
+    video_start: datetime | None,
+) -> Path:
+    """Generate a deterministic frame path keeping the original video stem."""
+    base_name = Path(video_path).stem or "frame"
+    timestamp = format_frame_timestamp(video_start, frame_idx, fps)
+    return frames_dir / f"{base_name}_{timestamp}.jpg"
 
 
 def _file2date(file_path: str) -> str:
@@ -325,12 +364,27 @@ def main() -> None:
     panel_top_k = max(args.top_k, 1)
     match_panel_width = panel_top_k * MATCH_THUMB_SIZE + (panel_top_k + 1) * MATCH_PANEL_PADDING
     writer_size = (writer_width + match_panel_width, writer_height)
-    writer = cv2.VideoWriter(
-        args.output,
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        writer_size,
-    )
+
+    try:
+        video_start_time = get_video_start_datetime(args.video)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning(
+            "Unable to parse timestamp metadata from %s (%s); using relative timestamps.",
+            args.video,
+            exc,
+        )
+        video_start_time = None
+
+    output_path = Path(args.output)
+    frames_dir = output_path.with_suffix("")
+    if frames_dir.exists():
+        if frames_dir.is_dir():
+            shutil.rmtree(frames_dir)
+        else:
+            frames_dir.unlink()
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Saving intermediate frames to %s", frames_dir)
+    saved_frame_paths: List[Path] = []
 
     processed = 0
     bad_frame_count = 0
@@ -388,7 +442,12 @@ def main() -> None:
                         MATCH_THUMB_SIZE,
                         MATCH_PANEL_PADDING,
                     )
-                    writer.write(empty)
+                    frame_path = build_frame_output_path(
+                        frames_dir, args.video, frame_idx, fps, video_start_time
+                    )
+                    if not cv2.imwrite(str(frame_path), empty):
+                        raise RuntimeError(f"Failed to save frame {frame_path}")
+                    saved_frame_paths.append(frame_path)
                     processed += 1
                     continue
 
@@ -404,7 +463,12 @@ def main() -> None:
                         MATCH_THUMB_SIZE,
                         MATCH_PANEL_PADDING,
                     )
-                    writer.write(empty)
+                    frame_path = build_frame_output_path(
+                        frames_dir, args.video, frame_idx, fps, video_start_time
+                    )
+                    if not cv2.imwrite(str(frame_path), empty):
+                        raise RuntimeError(f"Failed to save frame {frame_path}")
+                    saved_frame_paths.append(frame_path)
                     processed += 1
                     continue
 
@@ -434,6 +498,7 @@ def main() -> None:
                         for j, m_idx in enumerate(match_indices)
                     ]
 
+                    ### 
                     identity_label = track_id_to_identity.get(track_id)
                     identity_score = None
                     if matches:
@@ -486,11 +551,35 @@ def main() -> None:
                     MATCH_THUMB_SIZE,
                     MATCH_PANEL_PADDING,
                 )
-                writer.write(annotated)
+                frame_path = build_frame_output_path(
+                    frames_dir, args.video, frame_idx, fps, video_start_time
+                )
+                if not cv2.imwrite(str(frame_path), annotated):
+                    raise RuntimeError(f"Failed to save frame {frame_path}")
+                saved_frame_paths.append(frame_path)
                 processed += 1
 
-    elapsed = max(time.perf_counter() - start_time, 1e-6)
+    if not saved_frame_paths:
+        raise RuntimeError("No frames were saved; cannot build output video.")
+
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps if fps > 0 else 30.0,
+        writer_size,
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Failed to open video writer for {output_path}")
+
+    logger.info("Encoding %d frames into %s", len(saved_frame_paths), output_path)
+    for frame_path in saved_frame_paths:
+        frame = cv2.imread(str(frame_path))
+        if frame is None:
+            logger.warning("Skipping unreadable frame %s", frame_path)
+            continue
+        writer.write(frame)
     writer.release()
+    elapsed = max(time.perf_counter() - start_time, 1e-6)
     logger.info(
         "Visualization saved to %s (processed %d frames in %.2fs, %.2f FPS)",
         args.output,
