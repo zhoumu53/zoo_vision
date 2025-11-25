@@ -185,9 +185,39 @@ def main() -> None:
 
          ### ReID + Track
 
+        # track_cmd = [
+        #     sys.executable,
+        #     str(THIS_DIR / "video_tracks_reid.py"),
+        #     "--video",
+        #     video_path,
+        #     "--output",
+        #     track_output,
+        #     "--yolo-model",
+        #     args.yolo_model,
+        #     "--class-names",
+        #     args.class_names,
+        #     "--reid-config",
+        #     args.reid_config,
+        #     "--reid-checkpoint",
+        #     args.reid_checkpoint,
+        #     "--gallery",
+        #     args.gallery,
+        #     "--yolo-device",
+        #     args.yolo_device,
+        #     "--device",
+        #     args.device,
+        #     "--gallery-device",
+        #     args.gallery_device,
+        #     "--tracker-config",
+        #     args.tracker_config,
+        #     "--min-similarity",
+        #     str(args.min_similarity),
+        # ]
+
+
         track_cmd = [
             sys.executable,
-            str(THIS_DIR / "video_tracks_reid.py"),
+            str(THIS_DIR / "video_tracks_reid_improved.py"),
             "--video",
             video_path,
             "--output",
@@ -200,19 +230,28 @@ def main() -> None:
             args.reid_config,
             "--reid-checkpoint",
             args.reid_checkpoint,
-            "--gallery",
-            args.gallery,
             "--yolo-device",
             args.yolo_device,
             "--device",
             args.device,
-            "--gallery-device",
-            args.gallery_device,
-            "--tracker-config",
-            args.tracker_config,
-            "--min-similarity",
-            str(args.min_similarity),
+            "--frame-skip",
+            "5",
+            "--max-dets",
+            "20",
+            "--reid-sim-thres",
+            "0.7",
+            "--reid-max-gap-frames",
+            "300",
+            "--save-jpg",
+            "--jpg-interval",
+            "20",
+            "--jpg-max-count",
+            "20000",
+            "--online-reid-from-hub",
+            "--max-new-reid-per-frame",
+            "5"
         ]
+
         add_runtime_flags(track_cmd, args)
         run_pipeline(track_cmd, logger)
 
