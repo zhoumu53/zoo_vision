@@ -43,10 +43,31 @@ from utils import (
     extract_features,
 )
 
+
 # ------------------ 轨迹颜色：给每个 stitched ID 稳定一个颜色 ------------------
 
+CANONICAL_TO_VISUAL: Dict[int, int] = {}
+NEXT_VISUAL_ID: int = 1
 TRACK_COLORS: Dict[int, Tuple[int, int, int]] = {}
 
+
+def get_or_create_visual_id(canonical_id: int | None) -> int:
+    """
+    Map stitched (canonical) ID to a dense visual ID: 1..N.
+
+    - Only IDs that actually show up in detections get a visual ID.
+    - If canonical_id is -1 or None, return -1.
+    """
+    global NEXT_VISUAL_ID
+
+    if canonical_id is None or canonical_id == -1:
+        return -1
+
+    if canonical_id not in CANONICAL_TO_VISUAL:
+        CANONICAL_TO_VISUAL[canonical_id] = NEXT_VISUAL_ID
+        NEXT_VISUAL_ID += 1
+
+    return CANONICAL_TO_VISUAL[canonical_id]
 
 def get_track_color(track_id: int) -> Tuple[int, int, int]:
     """给每个 display_track_id 分配一个稳定的随机颜色。"""
@@ -58,6 +79,96 @@ def get_track_color(track_id: int) -> Tuple[int, int, int]:
 
 
 # ------------------ 轨迹外观原型（本视频内部） ------------------
+
+class TrackFeatureHub:
+    """
+    Per-video feature gallery.
+
+    Stores:
+      - feats:  [N, D] float32
+      - ids:    [N]   int64  (we'll store stitched_id here)
+      - frames: [N]   int64
+    Saved as compressed npz at the end.
+    Also supports online matching with chunking to avoid OOM.
+    """
+
+    def __init__(self, feat_dim: int):
+        self.feats: List[np.ndarray] = []
+        self.ids: List[int] = []
+        self.frames: List[int] = []
+        self.feat_dim = feat_dim
+
+    def add(self, track_id: int, feat: torch.Tensor, frame_idx: int) -> None:
+        """feat: 1D tensor (already on CPU & typically normalized)."""
+        f = feat.detach().cpu().float().numpy().reshape(-1)
+        if f.shape[0] != self.feat_dim:
+            raise ValueError(f"Feature dim mismatch: got %d, expected %d"
+                             % (f.shape[0], self.feat_dim))
+        self.feats.append(f)
+        self.ids.append(int(track_id))
+        self.frames.append(int(frame_idx))
+
+    def as_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self.feats:
+            return (
+                np.zeros((0, self.feat_dim), dtype=np.float32),
+                np.zeros((0,), dtype=np.int64),
+                np.zeros((0,), dtype=np.int64),
+            )
+        feats = np.stack(self.feats, axis=0).astype(np.float32)
+        ids = np.array(self.ids, dtype=np.int64)
+        frames = np.array(self.frames, dtype=np.int64)
+        return feats, ids, frames
+
+    def save(self, path: Path) -> None:
+        feats, ids, frames = self.as_arrays()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            path,
+            feats=feats,
+            ids=ids,
+            frames=frames,
+        )
+
+    def match_best(
+        self,
+        feat: torch.Tensor,
+        top_k: int = 1,
+        chunk_size: int = 4096,
+    ) -> Tuple[int | None, float]:
+        """
+        Match a single feature against all history in the hub.
+
+        Returns:
+          best_id, best_sim
+        where best_id is stitched_id stored in the hub.
+        If hub empty, returns (None, -1.0).
+        Assumes all feats are L2-normalized; feat should also be normalized.
+        """
+        feats, ids, frames = self.as_arrays()
+        if feats.shape[0] == 0:
+            return None, -1.0
+
+        # query as numpy
+        q = feat.detach().cpu().float().numpy().reshape(-1)
+        # assume feats are normalized; if not, you can normalize here once
+        best_sim = -1.0
+        best_id: int | None = None
+
+        N = feats.shape[0]
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk = feats[start:end]  # [B, D]
+            # cosine similarity since both are normalized
+            sims = np.dot(chunk, q)  # [B]
+            idx = int(np.argmax(sims))
+            sim = float(sims[idx])
+            if sim > best_sim:
+                best_sim = sim
+                best_id = int(ids[start + idx])
+
+        return best_id, best_sim
 
 
 class TrackPrototype:
@@ -121,7 +232,7 @@ def parse_args() -> argparse.Namespace:
         help="Device for ReID model inference (cpu / cuda / cuda:0).",
     )
     parser.add_argument("--conf-thres", type=float, default=0.4, help="YOLO confidence threshold.")
-    parser.add_argument("--iou-thres", type=float, default=0.5, help="YOLO IOU threshold.")
+    parser.add_argument("--iou-thres", type=float, default=0.65, help="YOLO IOU threshold.")
     parser.add_argument("--max-dets", type=int, default=50, help="Max detections per frame.")
     parser.add_argument(
         "--frame-skip",
@@ -189,6 +300,19 @@ def parse_args() -> argparse.Namespace:
         default=2000,
         help="Maximum number of JPG frames to save.",
     )
+    parser.add_argument(
+        "--online-reid-from-hub",
+        action="store_true",
+        help="If set, match new tracks against the history stored in the feature hub "
+             "instead of (or in addition to) in-memory prototypes.",
+    )
+    parser.add_argument(
+        "--hub-chunk-size",
+        type=int,
+        default=4096,
+        help="Chunk size along gallery dimension when matching against the hub.",
+    )
+
     return parser.parse_args()
 
 
@@ -215,7 +339,7 @@ def annotate_frame(
         x1, y1, x2, y2 = det.bbox
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness=2)
 
-        text = f"ID {disp_id} (trk {raw_id}) det {det.score:.2f}"
+        text = f"ID {disp_id} | det {det.score:.2f}"
         cv2.putText(
             frame,
             text,
@@ -257,6 +381,13 @@ def main() -> None:
         logger=logger,
     )
     logger.info("Loaded ReID checkpoint from %s", args.reid_checkpoint)
+    
+    reid_model.eval()
+    with torch.no_grad():
+        dummy = torch.zeros(1, 3, 224, 224, device=device)  # or whatever your model expects
+        dummy_feat = extract_features(reid_model, dummy)
+        feat_dim = int(dummy_feat.shape[1])
+    feature_hub = TrackFeatureHub(feat_dim=feat_dim)
 
     # 2) 视频读取（decord）
     try:
@@ -416,6 +547,8 @@ def main() -> None:
                             feats_batch, reid_meta
                         ):
                             feats_for_new[raw_id] = feat_vec
+                            feature_hub.add(track_id=raw_id, feat=feat_vec, frame_idx=fidx)
+
 
                     # ------------------ 构建 DetectionResult，并在这里做 stitching ------------------
                     for idx, bbox in enumerate(kept_boxes):
@@ -451,49 +584,77 @@ def main() -> None:
 
                         # 情况 1：老轨迹，之前已经 stitch 过
                         elif raw_track_id in track_alias:
-                            display_track_id = track_alias[raw_track_id]
+                            
+                            canonical_id = track_alias[raw_track_id]  # internal stitched ID
                             # （可选）这里可以按一定间隔更新 prototype，目前先省略
+                            visual_id = get_or_create_visual_id(canonical_id)
+                            display_track_id = visual_id
 
                         # 情况 2：这是一个“新 raw ID”，并且这一帧对它跑了 ReID
                         elif raw_track_id in feats_for_new:
-                            feat_vec = feats_for_new[raw_track_id]  # CPU 上的 1D 向量
+                            feat_vec = feats_for_new[raw_track_id]  # CPU 上的 1D 向量 (normalized)
                             best_id = None
                             best_sim = -1.0
 
-                            # 在已有 stitched 轨迹 prototype 中找最像的
-                            for cand_id, proto in track_prototypes.items():
-                                # 时间约束：太久没出现的轨迹可以跳过
-                                if (
-                                    frame_idx - proto.last_frame
-                                    > args.reid_max_gap_frames
-                                ):
-                                    continue
+                            # --- Mode A: match against hub history (if flag is on) ---
+                            if args.online_reid_from_hub:
+                                hub_best_id, hub_best_sim = feature_hub.match_best(
+                                    feat_vec,
+                                    top_k=1,
+                                    chunk_size=args.hub_chunk_size,
+                                )
 
-                                # 计算 cosine similarity
-                                proto_feat = F.normalize(
-                                    proto.feat.unsqueeze(0), dim=1
-                                )[0]
-                                sim = float(torch.dot(feat_vec, proto_feat).item())
-                                if sim > best_sim:
-                                    best_sim = sim
-                                    best_id = cand_id
+                                best_id = hub_best_id
+                                best_sim = hub_best_sim
 
+                            # --- Mode B: fallback / prototype-only (if no hub match or flag off) ---
+                            if best_id is None or best_sim < args.reid_sim_thres:
+                                for cand_id, proto in track_prototypes.items():
+                                    if (
+                                        frame_idx - proto.last_frame
+                                        > args.reid_max_gap_frames
+                                    ):
+                                        continue
+                                    proto_feat = F.normalize(
+                                        proto.feat.unsqueeze(0), dim=1
+                                    )[0]
+                                    sim = float(torch.dot(feat_vec, proto_feat).item())
+                                    if sim > best_sim:
+                                        best_sim = sim
+                                        best_id = cand_id
+
+                            # --- Decide stitching (canonical_id) ---
                             if best_id is not None and best_sim >= args.reid_sim_thres:
                                 # 合并到已有 stitched 轨迹
-                                stitched_id = best_id
-                                track_alias[raw_track_id] = stitched_id
-                                track_prototypes[stitched_id].update(
-                                    feat_vec, frame_idx, center
-                                )
-                                display_track_id = stitched_id
+                                canonical_id = best_id
+                                track_alias[raw_track_id] = canonical_id
+                                if canonical_id not in track_prototypes:
+                                    track_prototypes[canonical_id] = TrackPrototype(
+                                        feat_vec, frame_idx, center
+                                    )
+                                else:
+                                    track_prototypes[canonical_id].update(
+                                        feat_vec, frame_idx, center
+                                    )
                             else:
                                 # 创建新的 stitched 轨迹
-                                stitched_id = raw_track_id
-                                track_alias[raw_track_id] = stitched_id
-                                track_prototypes[stitched_id] = TrackPrototype(
+                                canonical_id = raw_track_id
+                                track_alias[raw_track_id] = canonical_id
+                                track_prototypes[canonical_id] = TrackPrototype(
                                     feat_vec, frame_idx, center
                                 )
-                                display_track_id = stitched_id
+
+                            # 现在 canonical_id 已经确定，给它一个压缩的可视化 ID
+                            visual_id = get_or_create_visual_id(canonical_id)
+                            display_track_id = visual_id
+
+                            # 👉 Hub 里保存 canonical_id（真正 identity），不是 compact ID
+                            feature_hub.add(
+                                track_id=canonical_id,
+                                feat=feat_vec,
+                                frame_idx=frame_idx,
+                            )
+
 
                         # 如果这个 raw ID 还没跑过 ReID（因为 interval 或 max_new 限制），就先用 raw_track_id
                         detections.append(
@@ -524,6 +685,10 @@ def main() -> None:
                             jpg_saved += 1
 
     writer.release()
+    hub_path = output_path.with_suffix(".npz")
+    feature_hub.save(hub_path)
+    logger.info("Track feature hub saved to %s", hub_path)
+
     logger.info(
         "Visualization saved to %s (processed %d frames)",
         args.output,
