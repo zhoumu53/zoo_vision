@@ -64,7 +64,7 @@ max_frames=1000
 
 python3 visualization/run_multi_camera.py \
   --video "$opposite_video_path" \
-  --track-outdir /home/mu/Desktop/comparison_videos \
+  --track-outdir /home/mu/Desktop/comparison_videos/improved \
   --class-names models/segmentation/yolo/class_names.txt \
   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \

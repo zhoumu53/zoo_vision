@@ -173,43 +173,48 @@ def main() -> None:
     all_output_paths = [get_output_filename(path, args.track_outdir, args.max_frames) for path in all_video_paths]
     print("all video paths:", all_output_paths)
 
-    ### only run the commands if the output files do not exist yet
-    if all(os.path.exists(p) for p in all_output_paths):
-        logger.info("All output videos already exist. Skipping pipeline execution.")
-    else:
 
-        for idx, (video_path, track_output) in enumerate(zip(all_video_paths, all_output_paths)):
+    for idx, (video_path, track_output) in enumerate(zip(all_video_paths, all_output_paths)):
 
-            track_cmd = [
-                sys.executable,
-                str(THIS_DIR / "video_tracks_reid.py"),
-                "--video",
-                video_path,
-                "--output",
-                track_output,
-                "--yolo-model",
-                args.yolo_model,
-                "--class-names",
-                args.class_names,
-                "--reid-config",
-                args.reid_config,
-                "--reid-checkpoint",
-                args.reid_checkpoint,
-                "--gallery",
-                args.gallery,
-                "--yolo-device",
-                args.yolo_device,
-                "--device",
-                args.device,
-                "--gallery-device",
-                args.gallery_device,
-                "--tracker-config",
-                args.tracker_config,
-                "--min-similarity",
-                str(args.min_similarity),
-            ]
-            add_runtime_flags(track_cmd, args)
-            run_pipeline(track_cmd, logger)
+        if not os.path.exists(video_path):
+            logger.warning("Video path does not exist: %s. Skipping.", video_path)
+            continue
+        if os.path.exists(track_output):
+            logger.info("Output already exists for %s at %s. Skipping.", video_path, track_output)
+            continue
+
+         ### ReID + Track
+
+        track_cmd = [
+            sys.executable,
+            str(THIS_DIR / "video_tracks_reid.py"),
+            "--video",
+            video_path,
+            "--output",
+            track_output,
+            "--yolo-model",
+            args.yolo_model,
+            "--class-names",
+            args.class_names,
+            "--reid-config",
+            args.reid_config,
+            "--reid-checkpoint",
+            args.reid_checkpoint,
+            "--gallery",
+            args.gallery,
+            "--yolo-device",
+            args.yolo_device,
+            "--device",
+            args.device,
+            "--gallery-device",
+            args.gallery_device,
+            "--tracker-config",
+            args.tracker_config,
+            "--min-similarity",
+            str(args.min_similarity),
+        ]
+        add_runtime_flags(track_cmd, args)
+        run_pipeline(track_cmd, logger)
 
     ### titles
     all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
