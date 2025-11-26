@@ -67,4 +67,3 @@ class RandomIdentitySampler(Sampler):
 
 
 
-### TODO: add balanced sampler

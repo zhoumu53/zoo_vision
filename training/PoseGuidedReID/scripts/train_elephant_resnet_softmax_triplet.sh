@@ -11,7 +11,7 @@ export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT
 # Project paths
 PROJECT_ROOT="/media/mu/zoo_vision/training/PoseGuidedReID"
 CONFIG_FILE="${PROJECT_ROOT}/configs/elephant_resnet.yml"
-EXP_NAME='lr001_bs16_softmax_triplet'
+EXP_NAME='FULL_DATA_lr001_bs16_softmax_triplet'
 OUTPUT_DIR="${PROJECT_ROOT}/logs/elephant_resnet/${EXP_NAME}"
 
 # Training parameters
@@ -40,10 +40,12 @@ python3 tools/train.py \
     --do_training \
     --do_inference \
     --notes "Elephant ReID with ResNet50 backbone, triplet + softmax loss" \
+    DATASETS.ROOT_DIR "/media/mu/zoo_vision/data/full_data" \
+    DATASETS.IMG_DIR "/media/mu/zoo_vision/data/full_data" \
     SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
     SOLVER.MAX_EPOCHS ${NUM_EPOCHS} \
     SOLVER.BASE_LR ${LR} \
-    SOLVER.STEPS "(20, 40, 70)" \
+    SOLVER.STEPS "(20, 40, 70, 90)" \
     SOLVER.OPTIMIZER_NAME 'SGD' \
     SOLVER.CHECKPOINT_PERIOD 10 \
     SOLVER.LOG_PERIOD 100 \

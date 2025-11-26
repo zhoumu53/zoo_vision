@@ -347,7 +347,7 @@ class ImageDataset(Dataset):
         self.transform = transform
         self.pre_scaling = pre_scaling
         self.overfitting = overfitting
-        
+         
     def __len__(self) -> int:
         if self.overfitting:
             if len(self.dataset) > 5000:

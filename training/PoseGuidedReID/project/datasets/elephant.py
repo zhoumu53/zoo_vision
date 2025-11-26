@@ -148,6 +148,7 @@ class Elephant(BaseDataset):
             img_paths = glob(osp.join(id_path, '*.jpg')) + glob(osp.join(id_path, '*.png'))
             
             for img_path in img_paths:
+                
                 img_name = osp.basename(img_path)
                 
                 # Extract metadata from filename
