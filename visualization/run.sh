@@ -9,7 +9,7 @@ export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT
 
 video_path=/home/mu/Desktop/gt_videos/train/ZAG-ELP-CAM-018-20250830-025815-1756515495749-7.mp4
 opposite_video_path=/mnt/camera_nas/ZAG-ELP-CAM-017/20250830AM/ZAG-ELP-CAM-017-20250830-025750-1756515470201-7.mp4
-max_frames=1000
+max_frames=10000
 
 # python3 visualization/video_reid.py \
 #   --video "$video_path" \
@@ -60,16 +60,61 @@ max_frames=1000
 #   --titles ReID "ReID+Track" "ID Classifier" \
 #   --max-frames $max_frames \
 
+video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4'
 
+cmd=video_id_classification
 
 python3 visualization/run_multi_camera.py \
-  --video "$opposite_video_path" \
-  --track-outdir /home/mu/Desktop/comparison_videos/improved \
+  --video "$video" \
+  --cmd "$cmd" \
+  --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_empty \
   --class-names models/segmentation/yolo/class_names.txt \
   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
-  --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr01_bs32/net_best.pth \
-  --gallery training/PoseGuidedReID/logs/elephant_resnet/lr01_bs32/pred_features/train_iid/pytorch_result_e.npz \
+  --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
+  --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
   --id-checkpoint ../models/identity/vit/v4/config.ptc \
   --tracker-config bytetrack.yaml \
-  --max-frames $max_frames \
+  --frame-skip 15 \
+  --device cuda \
+  --yolo-device cuda \
+  --gallery-device cpu \
+  --max-frames 100 \
+
+
+
+
+# python visualization/video_tracks.py \
+#   --video "$video" \
+#   --output /home/mu/Desktop/comparison_videos/light_reid \
+#   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
+#   --class-names models/segmentation/yolo/class_names.txt \
+#   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
+#   --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
+#   --device cuda \
+#   --yolo-device cuda \
+#   --frame-skip 1 \
+#   --max-dets 30 \
+#   --reid-sim-thres 0.7 \
+#   --reid-max-gap-frames 300 \
+#   --save-jpg --jpg-interval 20 --jpg-max-count 1000
+
+
+# python visualization/video_tracks_reid_improved.py \
+#   --video "$video" \
+#   --output /home/mu/Desktop/comparison_videos/light_reid_online_IDfixed \
+#   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
+#   --class-names models/segmentation/yolo/class_names.txt \
+#   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
+#   --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
+#   --device cpu \
+#   --yolo-device cuda \
+#   --frame-skip 5 \
+#   --max-frames 30000 \
+#   --max-dets 20 \
+#   --reid-sim-thres 0.7 \
+#   --reid-max-gap-frames 300 \
+#   --reid-interval 1 \
+#   --max-new-reid-per-frame 3 \
+#   --online-reid-from-hub \
+#   --save-jpg --jpg-interval 20 --jpg-max-count 20000

@@ -44,41 +44,36 @@ MATCH_THUMB_SIZE = 140
 MATCH_PANEL_PADDING = 14
 
 
-def get_video_start_datetime(video_path: str) -> datetime:
-    """Parse the video filename and return the recording start timestamp."""
-    _, date_str, time_str, _ = extract_metadata_from_video_path(video_path)
-    return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+
+# def format_frame_timestamp(
+#     video_start: datetime | None,
+#     frame_idx: int,
+#     fps: float,
+# ) -> str:
+#     """Return a timestamp string for a frame index using video metadata when available."""
+#     effective_fps = fps if fps > 0 else 30.0
+#     offset_seconds = frame_idx / max(effective_fps, 1e-6)
+#     if video_start is not None:
+#         frame_time = video_start + timedelta(seconds=offset_seconds)
+#         return frame_time.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+#     total_ms = int(offset_seconds * 1000)
+#     seconds, millis = divmod(total_ms, 1000)
+#     hours, seconds = divmod(seconds, 3600)
+#     minutes, seconds = divmod(seconds, 60)
+#     return f"{hours:02d}{minutes:02d}{seconds:02d}_{millis:03d}"
 
 
-def format_frame_timestamp(
-    video_start: datetime | None,
-    frame_idx: int,
-    fps: float,
-) -> str:
-    """Return a timestamp string for a frame index using video metadata when available."""
-    effective_fps = fps if fps > 0 else 30.0
-    offset_seconds = frame_idx / max(effective_fps, 1e-6)
-    if video_start is not None:
-        frame_time = video_start + timedelta(seconds=offset_seconds)
-        return frame_time.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    total_ms = int(offset_seconds * 1000)
-    seconds, millis = divmod(total_ms, 1000)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    return f"{hours:02d}{minutes:02d}{seconds:02d}_{millis:03d}"
-
-
-def build_frame_output_path(
-    frames_dir: Path,
-    video_path: str,
-    frame_idx: int,
-    fps: float,
-    video_start: datetime | None,
-) -> Path:
-    """Generate a deterministic frame path keeping the original video stem."""
-    base_name = Path(video_path).stem or "frame"
-    timestamp = format_frame_timestamp(video_start, frame_idx, fps)
-    return frames_dir / f"{base_name}_{timestamp}.jpg"
+# def build_frame_output_path(
+#     frames_dir: Path,
+#     video_path: str,
+#     frame_idx: int,
+#     fps: float,
+#     video_start: datetime | None,
+# ) -> Path:
+#     """Generate a deterministic frame path keeping the original video stem."""
+#     base_name = Path(video_path).stem or "frame"
+#     timestamp = format_frame_timestamp(video_start, frame_idx, fps)
+#     return frames_dir / f"{base_name}_{timestamp}.jpg"
 
 
 def _file2date(file_path: str) -> str:
@@ -366,7 +361,9 @@ def main() -> None:
     writer_size = (writer_width + match_panel_width, writer_height)
 
     try:
-        video_start_time = get_video_start_datetime(args.video)
+        _, date_str, time_str, ampm = extract_metadata_from_video_path(args.video)
+        video_start_time = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
             "Unable to parse timestamp metadata from %s (%s); using relative timestamps.",
@@ -374,6 +371,7 @@ def main() -> None:
             exc,
         )
         video_start_time = None
+        ampm = None
 
     output_path = Path(args.output)
     frames_dir = output_path.with_suffix("")
@@ -432,50 +430,18 @@ def main() -> None:
                     device=args.yolo_device,
                 )
                 if boxes.size == 0:
-                    empty = annotate_frame(frame.copy(), [], gallery)
-                    empty = annotate_frame_with_matches(
-                        empty,
-                        [],
-                        [],
-                        gallery,
-                        panel_top_k,
-                        MATCH_THUMB_SIZE,
-                        MATCH_PANEL_PADDING,
-                    )
-                    frame_path = build_frame_output_path(
-                        frames_dir, args.video, frame_idx, fps, video_start_time
-                    )
-                    if not cv2.imwrite(str(frame_path), empty):
-                        raise RuntimeError(f"Failed to save frame {frame_path}")
-                    saved_frame_paths.append(frame_path)
                     processed += 1
                     continue
 
                 tensors, kept_boxes, kept_indices = preprocess_patches(frame, boxes, transform)
                 if not tensors:
-                    empty = annotate_frame(frame.copy(), [], gallery)
-                    empty = annotate_frame_with_matches(
-                        empty,
-                        [],
-                        [],
-                        gallery,
-                        panel_top_k,
-                        MATCH_THUMB_SIZE,
-                        MATCH_PANEL_PADDING,
-                    )
-                    frame_path = build_frame_output_path(
-                        frames_dir, args.video, frame_idx, fps, video_start_time
-                    )
-                    if not cv2.imwrite(str(frame_path), empty):
-                        raise RuntimeError(f"Failed to save frame {frame_path}")
-                    saved_frame_paths.append(frame_path)
                     processed += 1
                     continue
 
                 batch = torch.stack(tensors).to(device)
                 feats = extract_features(reid_model, batch)
                 feats = feats.to(gallery.features.device)
-                scores_mat, indices_mat = match_gallery(feats, gallery, args.top_k)
+                scores_mat, indices_mat = match_gallery(feats, gallery, args.top_k, ampm=ampm)
                 match_indices_np = indices_mat.cpu().numpy()
                 matched_gallery_paths = gallery.paths[match_indices_np]
                 matched_gallery_labels = gallery.labels[match_indices_np]

@@ -36,6 +36,7 @@ def setup_logger(level: str) -> logging.Logger:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare multiple visualization pipelines.")
     parser.add_argument("--video", required=True, help="Input video path.")
+    parser.add_argument("--cmd", required=True, choices=['video_tracks_reid_improved', 'video_id_classification'], help="Which visualization pipeline to run.")
     parser.add_argument("--track-outdir", default="/home/mu/Desktop/comparison_videos", help="Output path for tracking+ReID pipeline.")
     parser.add_argument("--class-names", required=True, help="Path to YOLO class names file.")
     parser.add_argument("--yolo-model", required=True, help="Path to YOLO checkpoint.")
@@ -183,79 +184,125 @@ def main() -> None:
             logger.info("Output already exists for %s at %s. Skipping.", video_path, track_output)
             continue
 
+        ### if track_output is dir, and exists, skip
+        if os.path.isdir(track_output) and os.path.exists(track_output):
+            logger.info("Output directory already exists for %s at %s. Skipping.", video_path, track_output)
+            continue
+
          ### ReID + Track
 
-        # track_cmd = [
-        #     sys.executable,
-        #     str(THIS_DIR / "video_tracks_reid.py"),
-        #     "--video",
-        #     video_path,
-        #     "--output",
-        #     track_output,
-        #     "--yolo-model",
-        #     args.yolo_model,
-        #     "--class-names",
-        #     args.class_names,
-        #     "--reid-config",
-        #     args.reid_config,
-        #     "--reid-checkpoint",
-        #     args.reid_checkpoint,
-        #     "--gallery",
-        #     args.gallery,
-        #     "--yolo-device",
-        #     args.yolo_device,
-        #     "--device",
-        #     args.device,
-        #     "--gallery-device",
-        #     args.gallery_device,
-        #     "--tracker-config",
-        #     args.tracker_config,
-        #     "--min-similarity",
-        #     str(args.min_similarity),
-        # ]
+        if args.cmd == 'video_tracks_reid':
+            track_cmd = [
+                sys.executable,
+                str(THIS_DIR / f"{args.cmd}.py"),
+                "--video",
+                video_path,
+                "--output",
+                track_output,
+                "--yolo-model",
+                args.yolo_model,
+                "--class-names",
+                args.class_names,
+                "--reid-config",
+                args.reid_config,
+                "--reid-checkpoint",
+                args.reid_checkpoint,
+                "--gallery",
+                args.gallery,
+                "--yolo-device",
+                args.yolo_device,
+                "--device",
+                args.device,
+                "--gallery-device",
+                args.gallery_device,
+                "--tracker-config",
+                args.tracker_config,
+                "--min-similarity",
+                str(args.min_similarity),
+            ]
 
+        elif args.cmd == 'video_id_classification':
+            track_cmd = [
+                sys.executable,
+                str(THIS_DIR / f"{args.cmd}.py"),
+                "--video",
+                video_path,
+                "--output",
+                track_output,
+                "--yolo-model",
+                args.yolo_model,
+                "--class-names",
+                args.class_names,
+                "--id-checkpoint",
+                args.id_checkpoint,
+                "--yolo-device",
+                args.yolo_device,
+                "--device",
+                args.device,
+                "--max-frames",
+                str(args.max_frames),
+                "--save-jpg",
+                "--jpg-interval",
+                "20",
+                "--jpg-max-count",
+                "20000",
+            ]
 
-        track_cmd = [
-            sys.executable,
-            str(THIS_DIR / "video_tracks_reid_improved.py"),
-            "--video",
-            video_path,
-            "--output",
-            track_output,
-            "--yolo-model",
-            args.yolo_model,
-            "--class-names",
-            args.class_names,
-            "--reid-config",
-            args.reid_config,
-            "--reid-checkpoint",
-            args.reid_checkpoint,
-            "--yolo-device",
-            args.yolo_device,
-            "--device",
-            args.device,
-            "--frame-skip",
-            "5",
-            "--max-dets",
-            "20",
-            "--reid-sim-thres",
-            "0.7",
-            "--reid-max-gap-frames",
-            "300",
-            "--save-jpg",
-            "--jpg-interval",
-            "20",
-            "--jpg-max-count",
-            "20000",
-            "--online-reid-from-hub",
-            "--max-new-reid-per-frame",
-            "5"
-        ]
+        elif args.cmd == 'video_tracks_reid_improved':  
+            track_cmd = [
+                sys.executable,
+                str(THIS_DIR / f"{args.cmd}.py"),
+                "--video",
+                video_path,
+                "--output",
+                track_output,
+                "--yolo-model",
+                args.yolo_model,
+                "--class-names",
+                args.class_names,
+                "--reid-config",
+                args.reid_config,
+                "--reid-checkpoint",
+                args.reid_checkpoint,
+                "--yolo-device",
+                args.yolo_device,
+                "--device",
+                args.device,
+                "--frame-skip",
+                "5",
+                "--max-dets",
+                "20",
+                "--reid-sim-thres",
+                "0.7",
+                "--reid-max-gap-frames",
+                "300",
+                "--save-jpg",
+                "--jpg-interval",
+                "20",
+                "--jpg-max-count",
+                "20000",
+                "--online-reid-from-hub",
+                "--max-new-reid-per-frame",
+                "5"
+            ]
 
         add_runtime_flags(track_cmd, args)
         run_pipeline(track_cmd, logger)
 
     ### titles
+
+    print("all video paths for titles:", all_video_paths)
+    print("all output paths for titles:", all_output_paths)
+
+    ### if any output path is dir, get new mp4 path inside dir
+    new_all_output_paths = []
+    for path in all_output_paths:
+        if os.path.isdir(path):
+            suffix = 'tracks' if args.cmd == 'video_tracks_reid_improved' else 'idcls'
+            path = os.path.join(path, os.path.basename(path).replace(str(args.max_frames),  suffix))
+        new_all_output_paths.append(path)
+    all_output_paths = new_all_output_paths if len(new_all_output_paths) == len(all_output_paths) else all_output_paths
+
     all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
     stream_and_write(all_output_paths, all_titles, os.path.join(args.track_outdir, 'comparison_video.mp4'))
     logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, 'comparison_video.mp4'))

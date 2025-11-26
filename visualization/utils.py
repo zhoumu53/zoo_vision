@@ -1,23 +1,32 @@
 import logging
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
-import sys
+import cv2
+import numpy as np
+import pandas as pd
 import torch
 import torchvision.transforms as T
 from PIL import Image
 
-import cv2
-import os
-import numpy as np
-import pandas as pd
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
+import time
+from datetime import datetime, timedelta
+
+THIS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = THIS_DIR.parent
+POSE_REID_ROOT = PROJECT_ROOT / "training" / "PoseGuidedReID"
+
+for path in (PROJECT_ROOT, POSE_REID_ROOT):
+    if path.exists() and str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
 from project.config import cfg as base_cfg  # noqa: E402
 from project.datasets.make_dataloader import get_transforms  # noqa: E402
 from project.models import make_model  # noqa: E402
 from project.utils.tools import load_model  # noqa: E402
-
-from pathlib import Path
 
 try:
     from ultralytics import YOLO
@@ -25,12 +34,6 @@ except ImportError as exc:  # pragma: no cover - guard for missing dependency
     raise ImportError(
         "Ultralytics is required for visualization. Install via `pip install ultralytics`."
     ) from exc
-
-# Allow importing PoseGuidedReID modules when running from repo root
-THIS_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = THIS_DIR.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 GT_IMAGES_DIR = '/media/dherrera/ElephantsWD/elephants/reid_gt_cleaned_data'
@@ -86,6 +89,37 @@ def time2ampm(time_str: str) -> str:
     ampm = 'AM' if hour < 12 else 'PM'
     return ampm
 
+def format_frame_timestamp(
+    video_start: datetime | None,
+    frame_idx: int,
+    fps: float,
+) -> str:
+    """Return a timestamp string for a frame index using video metadata when available."""
+    effective_fps = fps if fps > 0 else 30.0
+    offset_seconds = frame_idx / max(effective_fps, 1e-6)
+    if video_start is not None:
+        frame_time = video_start + timedelta(seconds=offset_seconds)
+        return frame_time.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    total_ms = int(offset_seconds * 1000)
+    seconds, millis = divmod(total_ms, 1000)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{hours:02d}{minutes:02d}{seconds:02d}_{millis:03d}"
+
+
+def build_frame_output_path(
+    frames_dir: Path,
+    video_path: str,
+    frame_idx: int,
+    fps: float,
+    video_start: datetime | None,
+) -> Path:
+    """Generate a deterministic frame path keeping the original video stem."""
+    base_name = Path(video_path).stem or "frame"
+    timestamp = format_frame_timestamp(video_start, frame_idx, fps)
+    return frames_dir / f"{base_name}_{timestamp}.jpg"
+
+
 
 def extract_metadata_from_video_path(videopath) -> Tuple[str, str, str, str]:
     """
@@ -102,6 +136,20 @@ def extract_metadata_from_video_path(videopath) -> Tuple[str, str, str, str]:
     ampm = time2ampm(time)
     return camera_id, date, time, ampm
 
+
+def extract_metadata_from_file_path(filepath) -> Tuple[str, str, str, str]:
+    """
+    e.g. 'zag_elp_cam_017_20250820_070234_t1_6977.jpg' -> ('017', '20250820', '070234')
+    """
+    parts = filepath.split('/')
+    
+    filename = parts[-1]
+    
+    camera_id = filename.split('_')[3]
+    date = filename.split('_')[4]
+    time = filename.split('_')[5]
+    ampm = time2ampm(time)
+    return camera_id, date, time, ampm
 
 def extract_other_cameras(camera_id, date, time, ampm, raw_video_dir='/mnt/camera_nas') -> str | None:
     """
@@ -405,11 +453,65 @@ def match_gallery(
     query_feats: torch.Tensor,
     gallery: GalleryDB,
     top_k: int,
+    chunk_size: int = 2048,
+    ampm: str | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    sims = query_feats @ gallery.features.t()
-    k = min(top_k, sims.shape[1])
-    scores, indices = torch.topk(sims, k=k, dim=1)
-    return scores.cpu(), indices.cpu()
+
+    ### If ampm is provided, filter gallery features accordingly
+    if ampm is not None:
+        filtered_indices = []
+        for idx, path in enumerate(gallery.paths):
+            _, _, _, entry_ampm = extract_metadata_from_file_path(path)
+            if entry_ampm == ampm:
+                filtered_indices.append(idx)
+        if not filtered_indices:
+            raise ValueError(f"No gallery entries found for AM/PM: {ampm}")
+        filtered_features = gallery.features[filtered_indices]
+        filtered_labels = gallery.labels[filtered_indices]
+        filtered_ids = gallery.ids[filtered_indices]
+        filtered_paths = gallery.paths[filtered_indices]
+        filtered_gallery = GalleryDB(
+            features=filtered_features,
+            labels=filtered_labels,
+            ids=filtered_ids,
+            paths=filtered_paths,
+            label_to_color=gallery.label_to_color,
+        )
+        gallery = filtered_gallery
+    ### End of filtering step
+    
+
+    num_gallery = gallery.features.shape[0]
+    effective_topk = min(top_k, num_gallery)
+    if effective_topk == 0:
+        raise ValueError("Gallery is empty after filtering.")
+
+    best_scores: torch.Tensor | None = None
+    best_indices: torch.Tensor | None = None
+
+    for start in range(0, num_gallery, chunk_size):
+        end = min(start + chunk_size, num_gallery)
+        gallery_chunk = gallery.features[start:end]  # [chunk, D]
+        sims = query_feats @ gallery_chunk.t()  # [Q, chunk]
+
+        chunk_topk = min(effective_topk, gallery_chunk.shape[0])
+        chunk_scores, chunk_indices = torch.topk(sims, k=chunk_topk, dim=1)
+        chunk_indices = chunk_indices + start
+
+        if best_scores is None:
+            best_scores = chunk_scores
+            best_indices = chunk_indices
+            continue
+
+        combined_scores = torch.cat([best_scores, chunk_scores], dim=1)
+        combined_indices = torch.cat([best_indices, chunk_indices], dim=1)
+        best_scores, best_pos = torch.topk(
+            combined_scores, k=effective_topk, dim=1
+        )
+        best_indices = torch.gather(combined_indices, 1, best_pos)
+
+    assert best_scores is not None and best_indices is not None
+    return best_scores.cpu(), best_indices.cpu()
 
 
 def annotate_frame(
