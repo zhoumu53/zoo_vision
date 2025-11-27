@@ -697,18 +697,18 @@ def run_tracking(
     track_alias: Dict[int, int] = {}  # raw track_id -> stitched_id
 
     processed = 0
+    rendered_frames = 0
     bad_frame_count = 0
 
     # 计算将要处理的 frame indices
     if args.max_frames is not None:
-        max_frame_idx = min(total_frames, args.max_frames * args.frame_skip)
+        max_frame_idx = min(total_frames, args.max_frames)
     else:
         max_frame_idx = total_frames
 
-    frame_indices = list(range(0, max_frame_idx, max(args.frame_skip, 1)))
     logger.info(
-        "Will process %d / %d frames (frame_skip=%d, max_frames=%s)",
-        len(frame_indices),
+        "Will process %d / %d frames (visualization interval=%d, max_frames=%s)",
+        max_frame_idx,
         total_frames,
         args.frame_skip,
         args.max_frames,
@@ -731,9 +731,10 @@ def run_tracking(
         track_logger = None
 
     with torch.no_grad():
-        with tqdm(total=len(frame_indices), desc="Frames") as pbar:
-            for frame_idx in frame_indices:
+        with tqdm(total=max_frame_idx, desc="Frames") as pbar:
+            for frame_idx in range(0, max_frame_idx):
                 pbar.update(1)
+                render_frame = (frame_idx % max(args.frame_skip, 1) == 0)
 
                 # 读帧
                 try:
@@ -1015,42 +1016,42 @@ def run_tracking(
                                 }
                             )
 
-                    # 行为分类
-                    if detections:
-                        behaviour_crops, behaviour_indices = prepare_behavior_crops(
-                            frame_bgr,
-                            detections,
-                            context=args.behavior_context,
+                # 行为分类
+                if detections:
+                    behaviour_crops, behaviour_indices = prepare_behavior_crops(
+                        frame_bgr,
+                        detections,
+                        context=args.behavior_context,
+                    )
+                    if behaviour_crops:
+                        behaviour_preds = run_behavior_inference(
+                            model=behaviour_model,
+                            processor=behaviour_processor,
+                            device=behaviour_device,
+                            crops=behaviour_crops,
+                            id2label=behaviour_id2label,
+                            batch_size=args.behavior_batch_size,
                         )
-                        if behaviour_crops:
-                            behaviour_preds = run_behavior_inference(
-                                model=behaviour_model,
-                                processor=behaviour_processor,
-                                device=behaviour_device,
-                                crops=behaviour_crops,
-                                id2label=behaviour_id2label,
-                                batch_size=args.behavior_batch_size,
-                            )
-                            for det_idx, pred in zip(behaviour_indices, behaviour_preds):
-                                detections[det_idx].predictions = [pred]
-                                if 0 <= det_idx < len(tracks_for_json):
-                                    tracks_for_json[det_idx]["behavior"] = {
-                                        "label": pred[0][3:],
-                                        "id": pred[0][:2],
-                                        "prob": np.round(float(pred[1]), 3),
-                                    }
+                        for det_idx, pred in zip(behaviour_indices, behaviour_preds):
+                            detections[det_idx].predictions = [pred]
+                            if 0 <= det_idx < len(tracks_for_json):
+                                tracks_for_json[det_idx]["behavior"] = {
+                                    "label": pred[0][3:],
+                                    "id": pred[0][:2],
+                                    "prob": np.round(float(pred[1]), 3),
+                                }
 
-                    # 4) 画框 & 写视频
+                if track_logger is not None:
+                    track_logger.log_frame(
+                        frame_idx=frame_idx,
+                        tracks=tracks_for_json,
+                        frame_timestamp=frame_timestamp_str,
+                    )
+
+                if render_frame:
                     annotated = annotate_frame(frame_bgr.copy(), detections)
                     writer.write(annotated)
-                    processed += 1
-
-                    if track_logger is not None:
-                        track_logger.log_frame(
-                            frame_idx=frame_idx,
-                            tracks=tracks_for_json,
-                            frame_timestamp=frame_timestamp_str,
-                        )
+                    rendered_frames += 1
 
                     if frame_callback is not None:
                         try:
@@ -1058,12 +1059,13 @@ def run_tracking(
                         except Exception as exc:
                             logger.warning("Frame callback failed at frame %d: %s", frame_idx, exc)
 
-                    # 可选：保存部分 JPG 检查
                     if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
-                        if processed % args.jpg_interval == 0:
+                        if rendered_frames % args.jpg_interval == 0:
                             jpg_path = jpg_dir / f"{frame_name}"
                             cv2.imwrite(str(jpg_path), annotated)
                             jpg_saved += 1
+
+                processed += 1
 
     writer.release()
     if track_logger is not None:
@@ -1080,14 +1082,14 @@ def run_tracking(
     )
 
 
-    if args.save_tracklets:
-        tracklets_output_dir = output_dir / "tracklets"
-        extract_tracklets(
-            tracks_json_path=tracks_json_path,
-            video_path=args.video,
-            output_dir=tracklets_output_dir,
-        )
-        logger.info("Tracklets saved to %s", tracklets_output_dir)
+    # if args.save_tracklets:
+    #     tracklets_output_dir = output_dir / "tracklets"
+    #     extract_tracklets(
+    #         tracks_json_path=tracks_json_path,
+    #         video_path=args.video,
+    #         output_dir=tracklets_output_dir,
+    #     )
+    #     logger.info("Tracklets saved to %s", tracklets_output_dir)
 
 
 def main() -> None:
