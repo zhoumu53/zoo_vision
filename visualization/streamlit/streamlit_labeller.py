@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+from ultralytics import YOLO
 
 THIS_DIR = Path(__file__).resolve().parent
 VIS_DIR = THIS_DIR.parent
@@ -47,6 +48,10 @@ def _init_state() -> None:
         st.session_state.fixes: Dict[int, int] = {}
     if "fixes_path" not in st.session_state:
         st.session_state.fixes_path = ""
+    if "yolo_stream_running" not in st.session_state:
+        st.session_state.yolo_stream_running = False
+    if "yolo_stream_stop" not in st.session_state:
+        st.session_state.yolo_stream_stop = False
 
 
 def _drain_frame_queue() -> None:
@@ -233,7 +238,9 @@ def main() -> None:
         if st.session_state.tracks_json_path:
             st.write(f"Current track log: {st.session_state.tracks_json_path}")
 
-    tab_live, tab_fix, tab_analysis = st.tabs(["Live preview", "Fix tracks", "Analysis"])
+    tab_live, tab_fix, tab_analysis, tab_yolo = st.tabs(
+        ["Live preview", "Fix tracks", "Analysis", "YOLO stream"]
+    )
 
     with tab_live:
         st.subheader("Live annotated frames")
@@ -302,6 +309,53 @@ def main() -> None:
             st.dataframe(analysis.summarize_tracks(applied))
             st.write("Class breakdown")
             st.dataframe(analysis.class_breakdown(applied))
+
+    with tab_yolo:
+        st.subheader("Quick YOLO stream (no ReID stitching)")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            yolo_video = st.text_input("Video/source", value="0")
+        with col2:
+            yolo_weights = st.text_input("YOLO weights", value="yolov8n.pt")
+        with col3:
+            yolo_conf = st.slider("Confidence", 0.1, 0.9, 0.4, 0.05)
+        max_frames_stream = st.number_input("Max frames to preview", min_value=10, max_value=2000, value=300, step=10)
+        start_stream = st.button("Start YOLO stream")
+        stop_stream = st.button("Stop stream")
+
+        if start_stream:
+            st.session_state.yolo_stream_running = True
+            st.session_state.yolo_stream_stop = False
+        if stop_stream:
+            st.session_state.yolo_stream_stop = True
+
+        if st.session_state.yolo_stream_running:
+            placeholder = st.empty()
+            status = st.empty()
+            try:
+                model = YOLO(yolo_weights)
+                for idx, res in enumerate(
+                    model.predict(
+                        source=yolo_video,
+                        stream=True,
+                        conf=float(yolo_conf),
+                        imgsz=640,
+                        show=False,
+                        verbose=False,
+                    )
+                ):
+                    if st.session_state.yolo_stream_stop or idx >= int(max_frames_stream):
+                        break
+                    frame = res.plot()  # annotated BGR
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    placeholder.image(frame, channels="RGB", use_column_width=True)
+                    status.write(f"Frame {idx}")
+                status.write("Stream finished.")
+            except Exception as exc:
+                st.error(f"Stream failed: {exc}")
+            finally:
+                st.session_state.yolo_stream_running = False
+                st.session_state.yolo_stream_stop = False
 
 
 if __name__ == "__main__":
