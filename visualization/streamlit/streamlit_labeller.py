@@ -275,5 +275,38 @@ def main() -> None:
                 _drain_frame_queue()
                 st.experimental_rerun()
 
+    with tab_analysis:
+        st.subheader("Behavior & tracking analysis")
+        tracks_path = st.text_input(
+            "Track log (.jsonl)", value=st.session_state.tracks_json_path, key="analysis_tracks_path"
+        )
+        if st.button("Load log for analysis"):
+            _load_tracks_if_available(tracks_path)
+
+        df: Optional[pd.DataFrame] = st.session_state.tracks_df
+        if df is None or df.empty:
+            st.info("Load a track log to see analytics.")
+        else:
+            applied = fixer.apply_fixes(df, st.session_state.fixes)
+            meta = st.session_state.track_meta
+
+            st.markdown("**Per-track summary**")
+            st.dataframe(analysis.summarize_tracks(applied))
+
+            st.markdown("**Class breakdown**")
+            st.dataframe(analysis.class_breakdown(applied))
+
+            st.markdown("**Behavior time per track (seconds)**")
+            st.dataframe(analysis.behavior_time_by_track(applied, meta))
+
+            st.markdown("**Behavior heatmap (seconds by track x behavior)**")
+            st.dataframe(analysis.behavior_heatmap(applied, meta))
+
+            st.markdown("**Overall behavior distribution**")
+            overall = analysis.behavior_overall(applied, meta)
+            st.dataframe(overall)
+            if not overall.empty:
+                st.bar_chart(overall.set_index("behavior")["seconds"])
+
 if __name__ == "__main__":
     main()
