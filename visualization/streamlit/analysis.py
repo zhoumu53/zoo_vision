@@ -50,21 +50,49 @@ def summarize_tracks(tracks: pd.DataFrame) -> pd.DataFrame:
 
 
 def behavior_time_by_track(tracks: pd.DataFrame, meta: dict) -> pd.DataFrame:
-    """Aggregate time spent per behavior per track."""
+    """Aggregate time spent per behavior per track with start/end frames."""
     if tracks.empty or "behavior_label" not in tracks.columns:
-        return pd.DataFrame(columns=["track_id", "behavior", "frames", "seconds"])
+        return pd.DataFrame(
+            columns=[
+                "track_id",
+                "behavior",
+                "frames",
+                "seconds",
+                "start_frame",
+                "end_frame",
+                "start_s",
+                "end_s",
+            ]
+        )
     track_col = _track_column(tracks)
     frame_sec = _frame_seconds(meta)
     subset = tracks.dropna(subset=["behavior_label"])
     if subset.empty:
-        return pd.DataFrame(columns=["track_id", "behavior", "frames", "seconds"])
+        return pd.DataFrame(
+            columns=[
+                "track_id",
+                "behavior",
+                "frames",
+                "seconds",
+                "start_frame",
+                "end_frame",
+                "start_s",
+                "end_s",
+            ]
+        )
     agg = (
         subset.groupby([track_col, "behavior_label"])
-        .agg(frames=("frame_idx", "count"))
+        .agg(
+            frames=("frame_idx", "count"),
+            start_frame=("frame_idx", "min"),
+            end_frame=("frame_idx", "max"),
+        )
         .reset_index()
         .rename(columns={track_col: "track_id", "behavior_label": "behavior"})
     )
     agg["seconds"] = agg["frames"] * frame_sec
+    agg["start_s"] = agg["start_frame"] * frame_sec
+    agg["end_s"] = (agg["end_frame"] + 1) * frame_sec
     agg.sort_values(["track_id", "seconds"], ascending=[True, False], inplace=True)
     return agg
 
@@ -104,3 +132,14 @@ def class_breakdown(tracks: pd.DataFrame) -> pd.DataFrame:
     )
     summary.sort_values("detections", ascending=False, inplace=True)
     return summary
+
+
+def behavior_segments(tracks: pd.DataFrame, meta: dict) -> pd.DataFrame:
+    """
+    Build per-track behavior segments with start/end timestamps (seconds).
+    """
+    agg = behavior_time_by_track(tracks, meta)
+    if agg.empty:
+        return agg
+    segments = agg[["track_id", "behavior", "start_frame", "end_frame", "start_s", "end_s", "seconds"]].copy()
+    return segments
