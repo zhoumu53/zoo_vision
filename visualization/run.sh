@@ -77,12 +77,10 @@ python3 visualization/run_multi_camera.py \
   --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
   --id-checkpoint ../models/identity/vit/v4/config.ptc \
   --tracker-config bytetrack.yaml \
-  --frame-skip 15 \
+  --frame-skip 1 \
   --device cuda \
   --yolo-device cuda \
   --gallery-device cpu \
-  --max-frames 400
-
 
 # video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4'
 # python3 visualization/video_tracks_reid_improved_with_behavior.py \

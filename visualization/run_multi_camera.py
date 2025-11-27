@@ -160,18 +160,7 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
             writer.release()
 
 
-
-def get_output_filename(video_path, track_outdir, max_frames, date=None) -> str:
-    filename = os.path.basename(video_path)
-    suffix = '' if max_frames is None else f'_max{max_frames}'
-    filename = filename.replace('.mp4', suffix)
-    if date is None:
-        date = extract_metadata_from_video_path(video_path)[1]
-    return os.path.join(track_outdir, date, filename)
-
-
-
-def run_cameras(args, video, date=None) -> None:
+def run_cameras(args, video) -> None:
     logger = setup_logger(args.log_level)
 
     camera_id, date, time, ampm = extract_metadata_from_video_path(video)
@@ -181,23 +170,25 @@ def run_cameras(args, video, date=None) -> None:
 
     other_video_paths = [extract_other_cameras(camera_id, date, time, ampm, raw_video_dir='/mnt/camera_nas') for camera_id in other_camera_ids]    
     all_video_paths = [video] + other_video_paths
-    track_output_paths = [get_output_filename(path, args.track_outdir, args.max_frames) for path in all_video_paths]
+    track_output = os.path.join(args.track_outdir, f'{date}/{date}_{time[:2]}')
 
     commands_to_run: List[tuple[str, str, List[str]]] = []
 
-    for idx, (video_path, track_output) in enumerate(zip(all_video_paths, track_output_paths)):
+    for video_path in all_video_paths:
+
+        if video_path is None:
+            logger.warning("No video found for camera on date/time: %s. Skipping.", video_path)
+            continue
 
         if not os.path.exists(video_path):
             logger.warning("Video path does not exist: %s. Skipping.", video_path)
             continue
-        # if os.path.exists(track_output):
-        #     logger.info("Output already exists for %s at %s. Skipping.", video_path, track_output)
-        #     continue
 
-        # ### if track_output is dir, and exists, skip
-        # if os.path.isdir(track_output) and os.path.exists(track_output):
-        #     logger.info("Output directory already exists for %s at %s. Skipping.", video_path, track_output)
-        #     continue
+        video_filename = os.path.basename(video_path)
+        track_video_output = os.path.join(track_output, f"{Path(video_filename).stem}*.mp4")
+        print("track output path:", track_video_output)
+        
+        # TODO: check if video exists, if yes, skip
 
          ### ReID + Track
 
@@ -360,22 +351,15 @@ def run_cameras(args, video, date=None) -> None:
         if failures:
             raise RuntimeError(f"{len(failures)} tracking job(s) failed; see logs for details.")
 
-    ### titles
 
-    ### if any output path is dir, get new mp4 path inside dir
-    new_track_output_paths = []
-    for path in track_output_paths:
-        if os.path.isdir(path):
-            suffix = 'tracks' if 'video_tracks_reid_improved' in args.cmd else 'idcls'
-            filename = os.path.basename(path).replace(str(args.max_frames),  suffix)
-            path = os.path.join(path, filename , filename+'.mp4')
-        new_track_output_paths.append(path)
-    track_output_paths = new_track_output_paths if len(new_track_output_paths) == len(track_output_paths) else all_output_paths
+    # ### if any output path is dir, get new mp4 path inside dir
+    # print("track output paths before finalizing:", track_output_paths)
 
-    all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
-    combined_video = f'{extract_metadata_from_video_path(video)[2]}_comparison_video.mp4'
-    stream_and_write(track_output_paths, all_titles, os.path.join(args.track_outdir, date, combined_video))
-    logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, date, combined_video))
+    # all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
+    # combined_video = f'{extract_metadata_from_video_path(video)[2]}_comparison_video.mp4'
+    # # TODO: update the path
+    # stream_and_write(os.path.join(args.track_outdir, date), all_titles, os.path.join(args.track_outdir, date, combined_video))
+    # logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, date, combined_video))
 
 
 if __name__ == "__main__":
@@ -385,12 +369,35 @@ if __name__ == "__main__":
     video = args.video
 
     ### if run whole day -- extract camera id, date, time, ampm
-    camera_id, date, time, ampm = extract_metadata_from_video_path(video)
+    # camera_id, date, time, ampm = extract_metadata_from_video_path(video)
 
     ### 
     ## extract all videos from this camera id, from this day
 
-    single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
+    camera_id = '016'  #ZAG-ELP-CAM-016
+    dates = [
+             '20250702',
+             '20250703',
+             '20250708',
+             '20250709',
+            '20250825',
+            '20250826',
+            '20250827',
+            '20250828',
+            '20250829',
+            '20250830',
+            '20250831',
+            '20240904',
+             '20240905',
+             '20240906'
+             ]  #, '202409
+    for date in dates:
 
-    for video in single_cam_single_day_videos:
-        run_cameras(args, video=video, date=date)
+        single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
+
+        for video in single_cam_single_day_videos:
+
+            print("processing video:", video)
+
+
+            run_cameras(args, video=video)
