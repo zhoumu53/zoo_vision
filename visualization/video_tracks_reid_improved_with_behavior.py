@@ -569,18 +569,15 @@ class TrackJSONLogger:
         self,
         frame_idx: int,
         tracks: List[Dict],
-        timestamp_s: float | None = None,
-        timestamp_label: str | None = None,
+        frame_timestamp: str | None = None,
     ) -> None:
         payload = {
             "type": "frame",
             "frame_idx": int(frame_idx),
             "tracks": [_ensure_json_serializable(track) for track in tracks],
         }
-        if timestamp_s is not None:
-            payload["timestamp_s"] = float(timestamp_s)
-        if timestamp_label is not None:
-            payload["timestamp_label"] = str(timestamp_label)
+        if frame_timestamp is not None:
+            payload["timestamp"] = str(frame_timestamp)
         self.fp.write(json.dumps(payload) + "\n")
 
     def close(self) -> None:
@@ -664,20 +661,22 @@ def run_tracking(
 
     videoname = Path(args.video).stem + "_tracks.mp4"
     # create output directory if not exists
-    output_dir = Path(args.output)
+    output_dir = Path(args.output) / (Path(args.video).stem + "_tracks")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / videoname
+
+
+    video_output_path = output_dir / videoname
     writer = cv2.VideoWriter(
-        str(output_path),
+        str(video_output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps if fps > 0 else 30.0,
         (width, height),
     )
     if not writer.isOpened():
-        raise RuntimeError(f"Failed to open video writer for {output_path}")
+        raise RuntimeError(f"Failed to open video writer for {video_output_path}")
 
     # JPG 保存目录
-    jpg_dir = output_path.with_suffix("")
+    jpg_dir = output_dir / "frames"
     if args.frames_dir:
         jpg_dir = Path(args.frames_dir)
     jpg_saved = 0
@@ -710,7 +709,7 @@ def run_tracking(
         args.max_frames,
     )
 
-    tracks_json_path = Path(args.tracks_json) if args.tracks_json else output_path.with_suffix(".tracks.jsonl")
+    tracks_json_path = Path(args.tracks_json) if args.tracks_json else video_output_path.with_suffix(".jsonl")
     track_logger: TrackJSONLogger | None = None
     try:
         track_logger = TrackJSONLogger(
@@ -752,8 +751,8 @@ def run_tracking(
                     frame_dt = video_start_dt + timedelta(seconds=timestamp_s)
                 else:
                     frame_dt = datetime.now()
-                frame_timestamp_str = frame_dt.strftime("%Y.%m.%d_%H.%M.%S")
-                frame_name = f"{Path(args.video).stem}_{frame_timestamp_str}"
+                frame_timestamp_str = frame_dt.strftime("%Y%m%d_%H%M%S")
+                frame_name = f"{Path(args.video).stem}_{frame_timestamp_str}_{frame_idx:06d}.jpg"
 
                 # YOLO + ByteTrack
                 boxes, det_scores, cls_ids, track_ids = run_yolo_byteTrack(
@@ -1033,8 +1032,9 @@ def run_tracking(
                                 detections[det_idx].predictions = [pred]
                                 if 0 <= det_idx < len(tracks_for_json):
                                     tracks_for_json[det_idx]["behavior"] = {
-                                        "label": pred[0],
-                                        "prob": float(pred[1]),
+                                        "label": pred[0][3:],
+                                        "id": pred[0][:2],
+                                        "prob": np.round(float(pred[1]), 3),
                                     }
 
                     # 4) 画框 & 写视频
@@ -1046,8 +1046,7 @@ def run_tracking(
                         track_logger.log_frame(
                             frame_idx=frame_idx,
                             tracks=tracks_for_json,
-                            timestamp_s=timestamp_s,
-                            timestamp_label=frame_timestamp_str,
+                            frame_timestamp=frame_timestamp_str,
                         )
 
                     if frame_callback is not None:
@@ -1059,7 +1058,7 @@ def run_tracking(
                     # 可选：保存部分 JPG 检查
                     if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
                         if processed % args.jpg_interval == 0:
-                            jpg_path = jpg_dir / f"frame_{processed:06d}.jpg"
+                            jpg_path = jpg_dir / f"{frame_name}"
                             cv2.imwrite(str(jpg_path), annotated)
                             jpg_saved += 1
 
@@ -1067,7 +1066,7 @@ def run_tracking(
     if track_logger is not None:
         track_logger.close()
     if feature_hub is not None:
-        hub_path = output_path.with_suffix(".npz")
+        hub_path = video_output_path.with_suffix(".npz")
         feature_hub.save(hub_path)
         logger.info("Track feature hub saved to %s", hub_path)
 
