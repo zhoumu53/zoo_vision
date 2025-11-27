@@ -1,24 +1,3 @@
-"""
-Lightweight online ReID stitching within a single video + behaviour labels.
-
-Key idea:
-- Use YOLO + ByteTrack for tracking as usual.
-- Maintain a per-video appearance prototype for each stitched track ID.
-- Only run ReID when a *new raw track_id* appears (potential ID switch).
-- For old raw track IDs, just reuse the existing stitched ID (no ReID).
-- Additionally run a ViT classifier to predict elephant behaviour per detection.
-
-This avoids:
-- Large external gallery npz.
-- Huge similarity matrices.
-- Running ReID for every detection in every frame.
-
-Result:
-- display_track_id is longer and more stable than raw tracker IDs.
-- Annotated frames display both stitched ID and behaviour prediction.
-- Resource usage is much lighter, reducing OOM and GPU/desktop crashes.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -49,7 +28,7 @@ from utils import (
 from visualization.tracklet_extraction import extract_tracklets
 
 
-# ------------------ 轨迹颜色：给每个 stitched ID 稳定一个颜色 ------------------
+# ------------------ Stable visual IDs & colors ------------------
 
 CANONICAL_TO_VISUAL: Dict[int, int] = {}
 NEXT_VISUAL_ID: int = 1
@@ -74,8 +53,9 @@ def get_or_create_visual_id(canonical_id: int | None) -> int:
 
     return CANONICAL_TO_VISUAL[canonical_id]
 
+
 def get_track_color(track_id: int) -> Tuple[int, int, int]:
-    """给每个 display_track_id 分配一个稳定的随机颜色。"""
+    """Assign a stable pseudo-random color to each display_track_id."""
     if track_id not in TRACK_COLORS:
         rng = np.random.RandomState(track_id & 0xFFFF)
         color = tuple(int(x) for x in rng.randint(50, 255, size=3))
@@ -83,18 +63,22 @@ def get_track_color(track_id: int) -> Tuple[int, int, int]:
     return TRACK_COLORS[track_id]
 
 
-# ------------------ 轨迹外观原型（本视频内部） ------------------
+# ------------------ Per-video feature hub (memory-optimized) ------------------
 
 class TrackFeatureHub:
     """
     Per-video feature gallery.
 
-    Stores:
+    Stores sparse snapshots:
       - feats:  [N, D] float32
-      - ids:    [N]   int64  (we'll store stitched_id here)
+      - ids:    [N]   int64  (canonical track IDs)
       - frames: [N]   int64
-    Saved as compressed npz at the end.
-    Also supports online matching with chunking to avoid OOM.
+
+    This version is memory-friendlier:
+      - Only snapshot canonical prototypes every K seconds (configurable).
+      - Keeps Python lists as the source of truth.
+      - Uses cached NumPy arrays to avoid re-stacking on every match.
+      - Supports pruning old entries by frame gap.
     """
 
     def __init__(self, feat_dim: int):
@@ -103,27 +87,51 @@ class TrackFeatureHub:
         self.frames: List[int] = []
         self.feat_dim = feat_dim
 
+        # Cached numpy arrays
+        self._feats_np: Optional[np.ndarray] = None
+        self._ids_np: Optional[np.ndarray] = None
+        self._frames_np: Optional[np.ndarray] = None
+        self._dirty: bool = False
+
     def add(self, track_id: int, feat: torch.Tensor, frame_idx: int) -> None:
-        """feat: 1D tensor (already on CPU & typically normalized)."""
+        """
+        Add a single feature snapshot (already on CPU & typically normalized).
+        track_id is the canonical track id here.
+        """
         f = feat.detach().cpu().float().numpy().reshape(-1)
         if f.shape[0] != self.feat_dim:
-            raise ValueError(f"Feature dim mismatch: got %d, expected %d"
-                             % (f.shape[0], self.feat_dim))
+            raise ValueError(
+                f"Feature dim mismatch: got {f.shape[0]}, expected {self.feat_dim}"
+            )
         self.feats.append(f)
         self.ids.append(int(track_id))
         self.frames.append(int(frame_idx))
+        self._dirty = True
+
+    def _refresh_cache(self) -> None:
+        """Rebuild cached NumPy arrays if dirty or not initialized."""
+        if (self._feats_np is not None) and (not self._dirty):
+            return
+
+        if not self.feats:
+            # no features yet -> empty arrays
+            self._feats_np = np.zeros((0, self.feat_dim), dtype=np.float32)
+            self._ids_np = np.zeros((0,), dtype=np.int64)
+            self._frames_np = np.zeros((0,), dtype=np.int64)
+        else:
+            self._feats_np = np.stack(self.feats, axis=0).astype(np.float32)
+            self._ids_np = np.array(self.ids, dtype=np.int64)
+            self._frames_np = np.array(self.frames, dtype=np.int64)
+
+        self._dirty = False
 
     def as_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if not self.feats:
-            return (
-                np.zeros((0, self.feat_dim), dtype=np.float32),
-                np.zeros((0,), dtype=np.int64),
-                np.zeros((0,), dtype=np.int64),
-            )
-        feats = np.stack(self.feats, axis=0).astype(np.float32)
-        ids = np.array(self.ids, dtype=np.int64)
-        frames = np.array(self.frames, dtype=np.int64)
-        return feats, ids, frames
+        self._refresh_cache()
+        return (
+            self._feats_np,
+            self._ids_np,
+            self._frames_np,
+        )
 
     def save(self, path: Path) -> None:
         feats, ids, frames = self.as_arrays()
@@ -136,6 +144,26 @@ class TrackFeatureHub:
             frames=frames,
         )
 
+    def prune(self, current_frame: int, max_gap_frames: int) -> None:
+        """
+        Drop features whose frame index is older than current_frame - max_gap_frames.
+
+        This bounds memory over long videos: only recent history is kept.
+        """
+        if not self.feats:
+            return
+
+        feats_np, ids_np, frames_np = self.as_arrays()
+        valid_mask = (current_frame - frames_np) <= max_gap_frames
+        if valid_mask.all():
+            return
+
+        # Rebuild Python lists with only valid entries
+        self.feats = [f for f, v in zip(self.feats, valid_mask) if v]
+        self.ids = [i for i, v in zip(self.ids, valid_mask) if v]
+        self.frames = [fr for fr, v in zip(self.frames, valid_mask) if v]
+        self._dirty = True
+
     def match_best(
         self,
         feat: torch.Tensor,
@@ -147,17 +175,15 @@ class TrackFeatureHub:
 
         Returns:
           best_id, best_sim
-        where best_id is stitched_id stored in the hub.
+        where best_id is the canonical track id stored in the hub.
         If hub empty, returns (None, -1.0).
         Assumes all feats are L2-normalized; feat should also be normalized.
         """
         feats, ids, frames = self.as_arrays()
-        if feats.shape[0] == 0:
+        if feats.shape[0] == 0 or feats is None:
             return None, -1.0
 
-        # query as numpy
         q = feat.detach().cpu().float().numpy().reshape(-1)
-        # assume feats are normalized; if not, you can normalize here once
         best_sim = -1.0
         best_id: int | None = None
 
@@ -165,8 +191,7 @@ class TrackFeatureHub:
         for start in range(0, N, chunk_size):
             end = min(start + chunk_size, N)
             chunk = feats[start:end]  # [B, D]
-            # cosine similarity since both are normalized
-            sims = np.dot(chunk, q)  # [B]
+            sims = np.dot(chunk, q)  # cosine similarity
             idx = int(np.argmax(sims))
             sim = float(sims[idx])
             if sim > best_sim:
@@ -177,25 +202,33 @@ class TrackFeatureHub:
 
 
 class TrackPrototype:
+    """
+    Per-stitched (canonical) track running prototype.
+
+    Stores:
+      - feat: averaged embedding on CPU
+      - count: how many updates
+      - last_frame: last frame index where it was seen
+      - last_center: last (cx, cy) center in image
+    """
     __slots__ = ("feat", "count", "last_frame", "last_center")
 
     def __init__(self, feat: torch.Tensor, frame_idx: int, center: Tuple[float, float]):
-        """
-        feat: 1D tensor (embedding), stored on CPU.
-        """
-        self.feat = feat.clone().detach().cpu()
+        feat = feat.clone().detach().cpu()
+        self.feat = feat
         self.count = 1
         self.last_frame = frame_idx
         self.last_center = center
 
     def update(self, feat: torch.Tensor, frame_idx: int, center: Tuple[float, float]):
         feat = feat.clone().detach().cpu()
-        # 简单的 running average
         self.feat = (self.feat * self.count + feat) / (self.count + 1)
         self.count += 1
         self.last_frame = frame_idx
         self.last_center = center
 
+
+# ------------------ Behaviour classifier helpers ------------------
 
 def resolve_behavior_model_dir(path_str: str, logger: logging.Logger) -> Path:
     """
@@ -219,7 +252,8 @@ def resolve_behavior_model_dir(path_str: str, logger: logging.Logger) -> Path:
                 )
                 return parent
     raise FileNotFoundError(
-        f"Unable to resolve behaviour model from {path_str}. Provide a directory or config.json exported by HuggingFace."
+        f"Unable to resolve behaviour model from {path_str}. "
+        f"Provide a directory or config.json exported by HuggingFace."
     )
 
 
@@ -327,13 +361,12 @@ def run_behavior_inference(
 
 # ------------------ CLI & logger ------------------
 
-
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualize YOLO+ByteTrack with lightweight online ReID stitching (within one video)."
+        description="Visualize YOLO+ByteTrack with lightweight online ReID stitching (within one video) + behaviour labels."
     )
     parser.add_argument("--video", required=True, help="Input video path.")
-    parser.add_argument("--output", required=True, help="Path to save the annotated video.")
+    parser.add_argument("--output", required=True, help="Directory to save outputs (video, jsonl, hub, etc.).")
     parser.add_argument(
         "--yolo-model",
         required=True,
@@ -361,7 +394,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        default="cpu",  # ⚠ 默认用 CPU 做 ReID，尽量减少对 GPU / 桌面的压力
+        default="cpu",
         help="Device for ReID model inference (cpu / cuda / cuda:0).",
     )
     parser.add_argument("--conf-thres", type=float, default=0.65, help="YOLO confidence threshold.")
@@ -394,8 +427,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--reid-max-gap-frames",
         type=int,
-        default=300,
-        help="Maximum frame gap allowed when stitching tracks (e.g. 300 @30fps ~10s).",
+        default=3000,
+        help="Maximum frame gap allowed when stitching tracks (e.g. 300 @30fps ~10s). Also used to prune hub.",
     )
     parser.add_argument(
         "--reid-interval",
@@ -436,18 +469,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--frames-dir",
         default=None,
-        help="Directory to dump annotated frames (default: <output>/<video_name> without extension).",
+        help="Directory to dump annotated frames (default: <output>/<video_name>_.../frames).",
     )
     parser.add_argument(
         "--tracks-json",
         default=None,
-        help="Optional JSONL file to record per-frame tracks for Streamlit review/fixing.",
+        help="Optional JSONL file to record per-frame tracks for downstream analysis / Streamlit.",
     )
     parser.add_argument(
         "--online-reid-from-hub",
         action="store_true",
         help="If set, match new tracks against the history stored in the feature hub "
-             "instead of (or in addition to) in-memory prototypes.",
+             "in addition to in-memory prototypes.",
     )
     parser.add_argument(
         "--hub-chunk-size",
@@ -456,9 +489,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Chunk size along gallery dimension when matching against the hub.",
     )
     parser.add_argument(
+        "--hub-snapshot-interval-seconds",
+        type=float,
+        default=5.0,
+        help="Interval (in seconds) between feature snapshots per canonical track into the hub. "
+             "Larger value => smaller hub => less CPU memory.",
+    )
+    parser.add_argument(
+        "--hub-prune-interval-frames",
+        type=int,
+        default=10000,
+        help="How often (in frames) to prune old entries from the hub by reid-max-gap-frames.",
+    )
+    parser.add_argument(
         "--no-new-stitching",
         action="store_true",
-        help="Disable lightweight ReID stitching and keep raw YOLO+ByteTrack track IDs.",
+        help="Disable lightweight ReID stitching and keep raw YOLO+ByteTrack track IDs only.",
     )
     parser.add_argument(
         "--behavior-model",
@@ -482,7 +528,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=1.1,
         help="Context scale applied around each bbox before cropping for behaviour classification.",
     )
-    ## save tracklets  ## default true
     parser.add_argument(
         "--save-tracklets",
         action="store_true",
@@ -501,8 +546,7 @@ def setup_logger(level: str) -> logging.Logger:
     return logging.getLogger("visualize_stitch")
 
 
-# ------------------ 可视化：画 bbox + stitched ID ------------------
-
+# ------------------ Visualization ------------------
 
 def annotate_frame(
     frame: np.ndarray,
@@ -519,6 +563,7 @@ def annotate_frame(
         behaviour_text = ""
         if det.predictions:
             top_label, top_prob = det.predictions[0]
+            # top_label e.g. "00_sleeping" -> display "sleeping"
             behaviour_text = f" | {top_label[3:]} ({top_prob:.2f})"
         score_text = f"{det.score:.2f}" if det.score is not None else "nan"
         text = f"ID {disp_id}{behaviour_text} | det {score_text}"
@@ -592,8 +637,7 @@ class TrackJSONLogger:
             pass
 
 
-# ------------------ 主流程：YOLO + ByteTrack + 轻量 ReID stitching ------------------
-
+# ------------------ Main pipeline: YOLO + ByteTrack + lightweight ReID stitching ------------------
 
 def run_tracking(
     args: argparse.Namespace,
@@ -604,27 +648,30 @@ def run_tracking(
     device = torch.device(args.device)
     logger.info("Using device for ReID = %s, YOLO device = %s", device, args.yolo_device)
 
-    # 1) 加载模型
     from ultralytics import YOLO
 
+    # Load YOLO
     class_names = load_class_names(args.class_names)
     yolo_model = YOLO(args.yolo_model)
     if args.yolo_device:
         yolo_model.to(args.yolo_device)
     logger.info("Loaded YOLO model from %s on %s", args.yolo_model, args.yolo_device)
 
-    reid_model = None
-    transform = None
-    feature_hub: TrackFeatureHub | None = None
+    # Load behaviour classifier
     behaviour_device = torch.device(args.behavior_device)
     behaviour_model, behaviour_processor, behaviour_id2label = load_behavior_model(
         args.behavior_model, behaviour_device, logger
     )
 
+    # ReID model & feature hub
+    reid_model = None
+    transform = None
+    feature_hub: TrackFeatureHub | None = None
+
     if args.no_new_stitching:
         logger.info("no-new-stitching enabled: skipping ReID model and stitching logic.")
     else:
-        # ReID 这里只当特征提取器用，不需要 num_classes
+        # Build ReID model once, used only as feature extractor
         reid_model, transform = build_reid_model(
             args.reid_config,
             args.reid_checkpoint,
@@ -636,12 +683,18 @@ def run_tracking(
 
         reid_model.eval()
         with torch.no_grad():
-            dummy = torch.zeros(1, 3, 224, 224, device=device)  # or whatever your model expects
+            dummy = torch.zeros(1, 3, 224, 224, device=device)
             dummy_feat = extract_features(reid_model, dummy)
             feat_dim = int(dummy_feat.shape[1])
-        feature_hub = TrackFeatureHub(feat_dim=feat_dim)
 
-    # 2) 视频读取（decord）
+        # Only allocate a feature hub if we actually want hub-based matching
+        if args.online_reid_from_hub:
+            feature_hub = TrackFeatureHub(feat_dim=feat_dim)
+            logger.info("Online ReID from hub is enabled (feat_dim=%d)", feat_dim)
+        else:
+            logger.info("online-reid-from-hub is disabled: feature hub will not be used.")
+
+    # Open video with decord
     try:
         vr = VideoReader(args.video, ctx=cpu(0))
     except Exception as e:
@@ -656,21 +709,23 @@ def run_tracking(
             fps = 30.0
     except Exception:
         fps = 30.0
+
     video_start_dt = parse_video_start_datetime(args.video)
 
-    # 先读一帧确定尺寸
+    # Get first frame for size & writer
     first_frame = vr[0].asnumpy()
     first_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
     first_frame = maybe_resize(first_frame, args.resize_width)
     height, width = first_frame.shape[:2]
 
-    videoname = Path(args.video).stem + "_tracks.mp4"
-    # create output directory if not exists
-    output_dir = Path(args.output) / (Path(args.video).stem + f"_max{args.max_frames if args.max_frames else ''}")
+    # Prepare output dirs
+    output_root = Path(args.output)
+    output_root.mkdir(parents=True, exist_ok=True)
+    subdir_name = f"{Path(args.video).stem}"
+    output_dir = output_root / subdir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-
-    video_output_path = output_dir / videoname
+    video_output_path = output_dir / f"{Path(args.video).stem}_tracks.mp4"
     writer = cv2.VideoWriter(
         str(video_output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -680,27 +735,27 @@ def run_tracking(
     if not writer.isOpened():
         raise RuntimeError(f"Failed to open video writer for {video_output_path}")
 
-    # JPG 保存目录
+    # JPG frames dir
     jpg_dir = output_dir / "frames"
     if args.frames_dir:
         jpg_dir = Path(args.frames_dir)
     jpg_saved = 0
     if args.save_jpg or frame_callback is not None:
         import shutil
-
         if jpg_dir.exists():
             shutil.rmtree(jpg_dir)
         jpg_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3) 在线 ReID stitching 状态
-    track_prototypes: Dict[int, TrackPrototype] = {}  # stitched_id -> prototype
-    track_alias: Dict[int, int] = {}  # raw track_id -> stitched_id
+    # Online stitching state
+    track_prototypes: Dict[int, TrackPrototype] = {}   # canonical_id -> prototype
+    track_alias: Dict[int, int] = {}                  # raw_track_id -> canonical_id
+    last_hub_update_frame: Dict[int, int] = {}        # canonical_id -> last frame snapshot into hub
 
     processed = 0
     rendered_frames = 0
     bad_frame_count = 0
 
-    # 计算将要处理的 frame indices
+    # Frame count to process
     if args.max_frames is not None:
         max_frame_idx = min(total_frames, args.max_frames)
     else:
@@ -714,6 +769,7 @@ def run_tracking(
         args.max_frames,
     )
 
+    # JSON logger
     tracks_json_path = Path(args.tracks_json) if args.tracks_json else video_output_path.with_suffix(".jsonl")
     track_logger: TrackJSONLogger | None = None
     try:
@@ -730,13 +786,37 @@ def run_tracking(
         logger.warning("Failed to open track logger at %s: %s", tracks_json_path, exc)
         track_logger = None
 
+    # Convert snapshot interval (seconds) -> frames
+    hub_snapshot_interval_frames = max(1, int(args.hub_snapshot_interval_seconds * fps))
+
+    ### only process frames within max_frame_idx and with skip frames
+    frames = list(range(0, max_frame_idx, max(args.frame_skip, 1)))
+
     with torch.no_grad():
-        with tqdm(total=max_frame_idx, desc="Frames") as pbar:
-            for frame_idx in range(0, max_frame_idx):
+        with tqdm(total=len(frames), desc="Frames") as pbar:
+            for frame_idx in frames:
                 pbar.update(1)
                 render_frame = (frame_idx % max(args.frame_skip, 1) == 0)
 
-                # 读帧
+                # Periodic pruning of the feature hub (if any)
+                if (
+                    feature_hub is not None
+                    and args.reid_max_gap_frames > 0
+                    and frame_idx > 0
+                    and frame_idx % max(args.hub_prune_interval_frames, 1) == 0
+                ):
+                    ### TODO -- prune by similarity
+                    feature_hub.prune(current_frame=frame_idx, max_gap_frames=args.reid_max_gap_frames)
+                    
+                    to_delete = []
+                    for cid, proto in track_prototypes.items():
+                        if frame_idx - proto.last_frame > args.reid_max_gap_frames:
+                            to_delete.append(cid)
+
+                    for cid in to_delete:
+                        track_prototypes.pop(cid, None)
+                        CANONICAL_TO_VISUAL.pop(cid, None)
+                # Read frame via decord
                 try:
                     frame_np = vr[frame_idx].asnumpy()
                 except Exception as e:
@@ -753,6 +833,7 @@ def run_tracking(
                 frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
                 frame_bgr = maybe_resize(frame_bgr, args.resize_width)
                 timestamp_s = frame_idx / max(fps, 1e-6)
+
                 if video_start_dt is not None:
                     frame_dt = video_start_dt + timedelta(seconds=timestamp_s)
                 else:
@@ -775,6 +856,7 @@ def run_tracking(
                 tracks_for_json: List[Dict[str, Any]] = []
 
                 if boxes.size != 0:
+                    # ------------------ Case 1: no stitching, raw YOLO+ByteTrack IDs only ------------------
                     if args.no_new_stitching:
                         for det_idx, bbox in enumerate(boxes):
                             raw_track_id = (
@@ -822,18 +904,18 @@ def run_tracking(
                                     "behavior": None,
                                 }
                             )
+
+                    # ------------------ Case 2: lightweight stitching with ReID features ------------------
                     else:
                         if reid_model is None or transform is None:
                             raise RuntimeError("ReID model/transform missing while stitching is enabled.")
-                        if feature_hub is None:
-                            raise RuntimeError("Feature hub is not initialized while stitching is enabled.")
 
-                        # 预处理 patch（这一步只做一次，后面 ReID 只用其中一部分）
+                        # Preprocess patches once
                         tensors, kept_boxes, kept_indices = preprocess_patches(
                             frame_bgr, boxes, transform
                         )
 
-                        # ------------------ 只对“新 raw_track_id” 准备 ReID ------------------
+                        # Prepare new raw IDs for ReID
                         reid_tensors: List[torch.Tensor] = []
                         reid_meta: List[Tuple[int, int, Tuple[float, float], int]] = []
                         new_count = 0
@@ -847,11 +929,10 @@ def run_tracking(
                             )
                             if raw_track_id == -1:
                                 continue
-                            # 已经有 alias 的老轨迹：不需要再跑 ReID
                             if raw_track_id in track_alias:
+                                # already stitched; no need to run ReID again
                                 continue
 
-                            # 限制每帧最多跑多少个新 ID
                             if new_count >= args.max_new_reid_per_frame:
                                 break
 
@@ -864,7 +945,7 @@ def run_tracking(
                             reid_meta.append((idx, raw_track_id, center, frame_idx))
                             new_count += 1
 
-                        # ------------------ 只在满足 interval 时，对这些新 ID 跑 ReID ------------------
+                        # Only run ReID on some frames (interval)
                         feats_for_new: Dict[int, torch.Tensor] = {}  # raw_track_id -> feat (CPU)
                         run_reid_this_frame = processed % max(args.reid_interval, 1) == 0
 
@@ -875,14 +956,12 @@ def run_tracking(
                             feats_batch = extract_features(reid_model, batch)  # [M, D]
                             feats_batch = F.normalize(feats_batch, dim=1)
                             feats_batch = feats_batch.cpu()
-
                             for feat_vec, (idx_in_kept, raw_id, center, fidx) in zip(
                                 feats_batch, reid_meta
                             ):
                                 feats_for_new[raw_id] = feat_vec
-                                feature_hub.add(track_id=raw_id, feat=feat_vec, frame_idx=fidx)
 
-                        # ------------------ 构建 DetectionResult，并在这里做 stitching ------------------
+                        # Build DetectionResult + stitching
                         for idx, bbox in enumerate(kept_boxes):
                             det_idx = kept_indices[idx]
                             raw_track_id = (
@@ -911,35 +990,33 @@ def run_tracking(
                             display_track_id = raw_track_id
                             canonical_id = raw_track_id
 
-                            # 情况 0：没有 tracker ID，直接用 raw_track_id（一般是 -1）
+                            # Case 0: no tracker ID
                             if raw_track_id == -1:
                                 pass
 
-                            # 情况 1：老轨迹，之前已经 stitch 过
+                            # Case 1: existing raw track alias
                             elif raw_track_id in track_alias:
-                                canonical_id = track_alias[raw_track_id]  # internal stitched ID
-                                # （可选）这里可以按一定间隔更新 prototype，目前先省略
+                                canonical_id = track_alias[raw_track_id]
                                 visual_id = get_or_create_visual_id(canonical_id)
                                 display_track_id = visual_id
 
-                            # 情况 2：这是一个“新 raw ID”，并且这一帧对它跑了 ReID
+                            # Case 2: new raw ID with freshly computed ReID feature
                             elif raw_track_id in feats_for_new:
-                                feat_vec = feats_for_new[raw_track_id]  # CPU 上的 1D 向量 (normalized)
+                                feat_vec = feats_for_new[raw_track_id]  # CPU, normalized
                                 best_id = None
                                 best_sim = -1.0
 
-                                # --- Mode A: match against hub history (if flag is on) ---
-                                if args.online_reid_from_hub:
+                                # Mode A: match against hub history (if enabled)
+                                if args.online_reid_from_hub and feature_hub is not None and feat_vec is not None:
                                     hub_best_id, hub_best_sim = feature_hub.match_best(
                                         feat_vec,
                                         top_k=1,
                                         chunk_size=args.hub_chunk_size,
                                     )
-
                                     best_id = hub_best_id
                                     best_sim = hub_best_sim
 
-                                # --- Mode B: fallback / prototype-only (if no hub match or flag off) ---
+                                # Mode B: match against prototypes
                                 if best_id is None or best_sim < args.reid_sim_thres:
                                     for cand_id, proto in track_prototypes.items():
                                         if (
@@ -947,17 +1024,16 @@ def run_tracking(
                                             > args.reid_max_gap_frames
                                         ):
                                             continue
-                                        proto_feat = F.normalize(
+                                        proto_norm = F.normalize(
                                             proto.feat.unsqueeze(0), dim=1
                                         )[0]
-                                        sim = float(torch.dot(feat_vec, proto_feat).item())
+                                        sim = float(torch.dot(feat_vec, proto_norm).item())
                                         if sim > best_sim:
                                             best_sim = sim
                                             best_id = cand_id
 
-                                # --- Decide stitching (canonical_id) ---
+                                # Decide stitching
                                 if best_id is not None and best_sim >= args.reid_sim_thres:
-                                    # 合并到已有 stitched 轨迹
                                     canonical_id = best_id
                                     track_alias[raw_track_id] = canonical_id
                                     if canonical_id not in track_prototypes:
@@ -969,36 +1045,45 @@ def run_tracking(
                                             feat_vec, frame_idx, center
                                         )
                                 else:
-                                    # 创建新的 stitched 轨迹
+                                    # New stitched track
                                     canonical_id = raw_track_id
                                     track_alias[raw_track_id] = canonical_id
                                     track_prototypes[canonical_id] = TrackPrototype(
                                         feat_vec, frame_idx, center
                                     )
 
-                                # 现在 canonical_id 已经确定，给它一个压缩的可视化 ID
                                 visual_id = get_or_create_visual_id(canonical_id)
                                 display_track_id = visual_id
 
-                                # 👉 Hub 里保存 canonical_id（真正 identity），不是 compact ID
-                                feature_hub.add(
-                                    track_id=canonical_id,
-                                    feat=feat_vec,
-                                    frame_idx=frame_idx,
-                                )
+                                # Sparse feature hub snapshot: one snapshot per canonical track every K seconds
+                                if args.online_reid_from_hub and feature_hub is not None:
+                                    proto = track_prototypes[canonical_id]
+                                    last_snapshot_frame = last_hub_update_frame.get(
+                                        canonical_id, -10**9
+                                    )
+                                    if frame_idx - last_snapshot_frame >= hub_snapshot_interval_frames:
+                                        proto_feat_norm = F.normalize(
+                                            proto.feat.unsqueeze(0), dim=1
+                                        )[0]
+                                        feature_hub.add(
+                                            track_id=canonical_id,
+                                            feat=proto_feat_norm,
+                                            frame_idx=frame_idx,
+                                        )
+                                        last_hub_update_frame[canonical_id] = frame_idx
 
-                            # 如果这个 raw ID 还没跑过 ReID（因为 interval 或 max_new 限制），就先用 raw_track_id
+                            # Build detection object
                             detections.append(
                                 DetectionResult(
-                                    bbox=bbox,
+                                    bbox=tuple(int(v) for v in bbox),
                                     score=det_score,
                                     cls_id=cls_id,
                                     cls_name=cls_name,
                                     track_id=raw_track_id,
                                     display_track_id=display_track_id,
-                                    identity_label=None,  # 不使用外部 identity
+                                    identity_label=None,
                                     identity_score=None,
-                                    matches=[],  # 不显示 top-k gallery
+                                    matches=[],
                                     predictions=[],
                                 )
                             )
@@ -1016,7 +1101,7 @@ def run_tracking(
                                 }
                             )
 
-                # 行为分类
+                # Behaviour classification
                 if detections:
                     behaviour_crops, behaviour_indices = prepare_behavior_crops(
                         frame_bgr,
@@ -1041,6 +1126,7 @@ def run_tracking(
                                     "prob": np.round(float(pred[1]), 3),
                                 }
 
+                # JSONL logging
                 if track_logger is not None:
                     track_logger.log_frame(
                         frame_idx=frame_idx,
@@ -1048,10 +1134,15 @@ def run_tracking(
                         frame_timestamp=frame_timestamp_str,
                     )
 
+                # Visualization
                 if render_frame:
                     annotated = annotate_frame(frame_bgr.copy(), detections)
                     writer.write(annotated)
                     rendered_frames += 1
+
+                    ## only save the frame when the bboxes are detected
+                    if len(detections) == 0:
+                        continue
 
                     if frame_callback is not None:
                         try:
@@ -1061,7 +1152,7 @@ def run_tracking(
 
                     if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
                         if rendered_frames % args.jpg_interval == 0:
-                            jpg_path = jpg_dir / f"{frame_name}"
+                            jpg_path = jpg_dir / frame_name
                             cv2.imwrite(str(jpg_path), annotated)
                             jpg_saved += 1
 
@@ -1077,10 +1168,9 @@ def run_tracking(
 
     logger.info(
         "Visualization saved to %s (processed %d frames)",
-        args.output,
+        video_output_path,
         processed,
     )
-
 
     # if args.save_tracklets:
     #     tracklets_output_dir = output_dir / "tracklets"
