@@ -26,6 +26,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta
 
 import cv2
 import json
@@ -240,6 +241,23 @@ def load_behavior_model(
         device,
     )
     return model, processor, id2label
+
+
+def parse_video_start_datetime(video_path: str) -> Optional[datetime]:
+    """
+    Try to parse start datetime from a video filename like:
+    ZAG-ELP-CAM-016-20240905-224718-XXXX.mp4 -> 2024-09-05 22:47:18
+    """
+    stem = Path(video_path).stem
+    parts = stem.split("-")
+    if len(parts) >= 6:
+        date_str = parts[4]
+        time_str = parts[5]
+        try:
+            return datetime.strptime(date_str + time_str, "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+    return None
 
 
 def prepare_behavior_crops(
@@ -628,6 +646,7 @@ def run_tracking(
             fps = 30.0
     except Exception:
         fps = 30.0
+    video_start_dt = parse_video_start_datetime(args.video)
 
     # 先读一帧确定尺寸
     first_frame = vr[0].asnumpy()
@@ -720,6 +739,16 @@ def run_tracking(
 
                 frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
                 frame_bgr = maybe_resize(frame_bgr, args.resize_width)
+                timestamp_s = frame_idx / max(fps, 1e-6)
+                frame_timestamp_str = None
+                if video_start_dt is not None:
+                    dt = video_start_dt + timedelta(seconds=timestamp_s)
+                    frame_timestamp_str = dt.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                frame_name = (
+                    f"{Path(args.video).stem}_{frame_timestamp_str}"
+                    if frame_timestamp_str
+                    else f"{Path(args.video).stem}_{frame_idx:06d}"
+                )
 
                 # YOLO + ByteTrack
                 boxes, det_scores, cls_ids, track_ids = run_yolo_byteTrack(
@@ -775,6 +804,8 @@ def run_tracking(
                                     "raw_track_id": raw_track_id,
                                     "canonical_track_id": canonical_id,
                                     "display_track_id": raw_track_id,
+                                    "frame_id": frame_idx,
+                                    "frame_name": frame_name,
                                     "bbox": [int(v) for v in bbox],
                                     "score": det_score,
                                     "cls_id": cls_id,
@@ -967,6 +998,8 @@ def run_tracking(
                                     "raw_track_id": raw_track_id,
                                     "canonical_track_id": canonical_id,
                                     "display_track_id": display_track_id,
+                                    "frame_id": frame_idx,
+                                    "frame_name": frame_name,
                                     "bbox": [int(v) for v in bbox],
                                     "score": det_score,
                                     "cls_id": cls_id,
@@ -1005,7 +1038,6 @@ def run_tracking(
                     processed += 1
 
                     if track_logger is not None:
-                        timestamp_s = frame_idx / max(fps, 1e-6)
                         track_logger.log_frame(frame_idx=frame_idx, tracks=tracks_for_json, timestamp_s=timestamp_s)
 
                     if frame_callback is not None:
