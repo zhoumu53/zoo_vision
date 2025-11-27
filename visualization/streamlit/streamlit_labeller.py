@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 from ultralytics import YOLO
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -21,7 +22,8 @@ for path in (THIS_DIR, VIS_DIR, ROOT):
 
 import analysis  # type: ignore
 import fixer  # type: ignore
-import video_tracks_reid_improved as tracker  # type: ignore
+# import video_tracks_reid_improved as tracker  # type: ignore
+import video_tracks_reid_improved_with_behavior as tracker  # type: ignore
 
 
 st.set_page_config(page_title="Tracking Labeller", layout="wide")
@@ -111,6 +113,7 @@ def _build_args_from_ui(
     max_frames: int | None,
     frame_skip: int,
     disable_stitching: bool,
+    behavior_model: str = "",
 ) -> object:
     cli_args = [
         "--video",
@@ -135,6 +138,8 @@ def _build_args_from_ui(
         str(Path(output_dir) / "tracks.jsonl"),
         "--log-level",
         "INFO",
+        "--behavior-model",
+        behavior_model,
     ]
     if max_frames is not None and max_frames > 0:
         cli_args.extend(["--max-frames", str(max_frames)])
@@ -211,6 +216,10 @@ def main() -> None:
             "ReID checkpoint (.pth)",
             "/media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth",
         )
+        behavior_model = st.text_input(
+            "Behavior model (.pt) (optional)",
+            "/media/mu/zoo_vision/models/sleep/vit/v2_no_validation/config.ptc",
+        )
         max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=2000, step=10)
         frame_skip = st.number_input("Frame skip", min_value=1, value=5, step=1)
         disable_stitch = st.checkbox("Disable ReID stitching (raw ByteTrack IDs only)", value=False)
@@ -231,6 +240,7 @@ def main() -> None:
                     max_frames,
                     int(frame_skip),
                     disable_stitch,
+                    behavior_model
                 )
                 _start_tracker(args)
 
@@ -241,8 +251,8 @@ def main() -> None:
         if st.session_state.tracks_json_path:
             st.write(f"Current track log: {st.session_state.tracks_json_path}")
 
-    tab_live, tab_fix, tab_analysis, tab_yolo = st.tabs(
-        ["Live preview", "Fix tracks", "Analysis", "YOLO stream"]
+    tab_live, tab_analysis = st.tabs(
+        ["Live preview","Analysis"]
     )
 
     with tab_live:
@@ -250,7 +260,7 @@ def main() -> None:
         auto_refresh = st.checkbox("Auto-refresh while tracking", value=True)
         if st.session_state.is_running and auto_refresh:
             # Trigger a rerun every second while the tracker is running
-            st.autorefresh(interval=1000, key="live_autorefresh")
+            st_autorefresh(interval=1000, key="live_autorefresh")
         latest = st.session_state.latest_frame
         if latest is None:
             st.info("Start the tracker or load a track log to see frames.")
@@ -264,112 +274,6 @@ def main() -> None:
             if st.button("Refresh live frame"):
                 _drain_frame_queue()
                 st.experimental_rerun()
-
-        # Playback of the saved annotated video once available
-        if st.session_state.output_video and Path(st.session_state.output_video).exists():
-            st.markdown("### Saved annotated video")
-            st.video(st.session_state.output_video)
-
-    with tab_fix:
-        st.subheader("Load and relabel tracks")
-        tracks_path = st.text_input(
-            "Track log (.jsonl)", value=st.session_state.tracks_json_path, key="tracks_path_input"
-        )
-        load_btn = st.button("Load track log")
-        if load_btn and tracks_path:
-            _load_tracks_if_available(tracks_path)
-
-        df: Optional[pd.DataFrame] = st.session_state.tracks_df
-        if df is None or df.empty:
-            st.info("No track log loaded yet.")
-        else:
-            applied = fixer.apply_fixes(df, st.session_state.fixes)
-            min_frame, max_frame = int(applied["frame_idx"].min()), int(applied["frame_idx"].max())
-            frame_idx = st.slider("Frame index", min_value=min_frame, max_value=max_frame, value=min_frame)
-            _show_frame_image(st.session_state.frames_dir, frame_idx)
-
-            frame_df = fixer.frame_tracks(applied, frame_idx)
-            st.dataframe(frame_df)
-
-            st.markdown("### Manual ID fixes")
-            fixes = dict(st.session_state.fixes)
-            for tid in sorted(frame_df["canonical_track_id"].unique()):
-                new_val = st.text_input(
-                    f"Canonical ID {tid} →", value=str(fixes.get(int(tid), tid)), key=f"fix_{tid}_{frame_idx}"
-                )
-                try:
-                    fixes[int(tid)] = int(new_val)
-                except ValueError:
-                    st.warning(f"Invalid ID for track {tid}, keeping original.")
-            st.session_state.fixes = fixes
-            fixes_path = st.text_input(
-                "Fix file path",
-                value=st.session_state.fixes_path or str(Path(tracks_path).with_name(fixer.DEFAULT_FIXES_NAME)),
-            )
-            if st.button("Save fixes"):
-                fixer.save_fixes(fixes_path, st.session_state.fixes)
-                st.success(f"Saved fixes to {fixes_path}")
-                st.session_state.fixes_path = fixes_path
-
-    with tab_analysis:
-        st.subheader("Tracking summary")
-        df = st.session_state.tracks_df
-        if df is None or df.empty:
-            st.info("Load a track log to see analytics.")
-        else:
-            applied = fixer.apply_fixes(df, st.session_state.fixes)
-            st.write("Per-track summary")
-            st.dataframe(analysis.summarize_tracks(applied))
-            st.write("Class breakdown")
-            st.dataframe(analysis.class_breakdown(applied))
-
-    with tab_yolo:
-        st.subheader("Quick YOLO stream (no ReID stitching)")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            yolo_video = st.text_input("Video/source", value="0")
-        with col2:
-            yolo_weights = st.text_input("YOLO weights", value="yolov8n.pt")
-        with col3:
-            yolo_conf = st.slider("Confidence", 0.1, 0.9, 0.4, 0.05)
-        max_frames_stream = st.number_input("Max frames to preview", min_value=10, max_value=2000, value=300, step=10)
-        start_stream = st.button("Start YOLO stream")
-        stop_stream = st.button("Stop stream")
-
-        if start_stream:
-            st.session_state.yolo_stream_running = True
-            st.session_state.yolo_stream_stop = False
-        if stop_stream:
-            st.session_state.yolo_stream_stop = True
-
-        if st.session_state.yolo_stream_running:
-            placeholder = st.empty()
-            status = st.empty()
-            try:
-                model = YOLO(yolo_weights)
-                for idx, res in enumerate(
-                    model.predict(
-                        source=yolo_video,
-                        stream=True,
-                        conf=float(yolo_conf),
-                        imgsz=640,
-                        show=False,
-                        verbose=False,
-                    )
-                ):
-                    if st.session_state.yolo_stream_stop or idx >= int(max_frames_stream):
-                        break
-                    frame = res.plot()  # annotated BGR
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    placeholder.image(frame, channels="RGB", use_column_width=True)
-                    status.write(f"Frame {idx}")
-                status.write("Stream finished.")
-            except Exception as exc:
-                st.error(f"Stream failed: {exc}")
-            finally:
-                st.session_state.yolo_stream_running = False
-                st.session_state.yolo_stream_stop = False
-
 
 if __name__ == "__main__":
     main()

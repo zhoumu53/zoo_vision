@@ -9,7 +9,10 @@ def main() -> None:
     root = Path(__file__).resolve().parent
     app_path = root / "streamlit_labeller.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path)]
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        print("Streamlit run interrupted, exiting cleanly.")
 
 
 if __name__ == "__main__":
