@@ -40,6 +40,8 @@ def _init_state() -> None:
         st.session_state.tracks_json_path = ""
     if "frames_dir" not in st.session_state:
         st.session_state.frames_dir = ""
+    if "output_video" not in st.session_state:
+        st.session_state.output_video = ""
     if "tracks_df" not in st.session_state:
         st.session_state.tracks_df: Optional[pd.DataFrame] = None
     if "track_meta" not in st.session_state:
@@ -96,6 +98,7 @@ def _start_tracker(args) -> None:
     st.session_state.is_running = True
     st.session_state.tracks_json_path = args.tracks_json
     st.session_state.frames_dir = args.frames_dir or str(Path(args.output) / Path(args.video).stem)
+    st.session_state.output_video = str(Path(args.output) / f"{Path(args.video).stem}_tracks.mp4")
 
 
 def _build_args_from_ui(
@@ -244,6 +247,10 @@ def main() -> None:
 
     with tab_live:
         st.subheader("Live annotated frames")
+        auto_refresh = st.checkbox("Auto-refresh while tracking", value=True)
+        if st.session_state.is_running and auto_refresh:
+            # Trigger a rerun every second while the tracker is running
+            st.autorefresh(interval=1000, key="live_autorefresh")
         latest = st.session_state.latest_frame
         if latest is None:
             st.info("Start the tracker or load a track log to see frames.")
@@ -252,10 +259,16 @@ def main() -> None:
             st.image(frame_rgb, caption=f"Live frame {frame_idx}", use_column_width=True)
             if tracks:
                 st.dataframe(pd.DataFrame(tracks))
-        if st.session_state.is_running:
+        if st.session_state.is_running and not auto_refresh:
             st.info("Tracker running in background. Click this button to refresh live frame.")
             if st.button("Refresh live frame"):
                 _drain_frame_queue()
+                st.experimental_rerun()
+
+        # Playback of the saved annotated video once available
+        if st.session_state.output_video and Path(st.session_state.output_video).exists():
+            st.markdown("### Saved annotated video")
+            st.video(st.session_state.output_video)
 
     with tab_fix:
         st.subheader("Load and relabel tracks")
