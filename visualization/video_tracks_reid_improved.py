@@ -312,6 +312,11 @@ def parse_args() -> argparse.Namespace:
         default=4096,
         help="Chunk size along gallery dimension when matching against the hub.",
     )
+    parser.add_argument(
+        "--no-new-stitching",
+        action="store_true",
+        help="Disable lightweight ReID stitching and keep raw YOLO+ByteTrack track IDs.",
+    )
 
     return parser.parse_args()
 
@@ -372,22 +377,29 @@ def main() -> None:
         yolo_model.to(args.yolo_device)
     logger.info("Loaded YOLO model from %s on %s", args.yolo_model, args.yolo_device)
 
-    # ReID 这里只当特征提取器用，不需要 num_classes
-    reid_model, transform = build_reid_model(
-        args.reid_config,
-        args.reid_checkpoint,
-        num_classes=5,
-        device=device,
-        logger=logger,
-    )
-    logger.info("Loaded ReID checkpoint from %s", args.reid_checkpoint)
-    
-    reid_model.eval()
-    with torch.no_grad():
-        dummy = torch.zeros(1, 3, 224, 224, device=device)  # or whatever your model expects
-        dummy_feat = extract_features(reid_model, dummy)
-        feat_dim = int(dummy_feat.shape[1])
-    feature_hub = TrackFeatureHub(feat_dim=feat_dim)
+    reid_model = None
+    transform = None
+    feature_hub: TrackFeatureHub | None = None
+
+    if args.no_new_stitching:
+        logger.info("no-new-stitching enabled: skipping ReID model and stitching logic.")
+    else:
+        # ReID 这里只当特征提取器用，不需要 num_classes
+        reid_model, transform = build_reid_model(
+            args.reid_config,
+            args.reid_checkpoint,
+            num_classes=5,
+            device=device,
+            logger=logger,
+        )
+        logger.info("Loaded ReID checkpoint from %s", args.reid_checkpoint)
+
+        reid_model.eval()
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, 224, 224, device=device)  # or whatever your model expects
+            dummy_feat = extract_features(reid_model, dummy)
+            feat_dim = int(dummy_feat.shape[1])
+        feature_hub = TrackFeatureHub(feat_dim=feat_dim)
 
     # 2) 视频读取（decord）
     try:
@@ -493,184 +505,218 @@ def main() -> None:
                 detections: List[DetectionResult] = []
 
                 if boxes.size != 0:
-                    # 预处理 patch（这一步只做一次，后面 ReID 只用其中一部分）
-                    tensors, kept_boxes, kept_indices = preprocess_patches(
-                        frame_bgr, boxes, transform
-                    )
+                    if args.no_new_stitching:
+                        for det_idx, bbox in enumerate(boxes):
+                            raw_track_id = (
+                                int(track_ids[det_idx])
+                                if det_idx < len(track_ids)
+                                else -1
+                            )
+                            cls_id = cls_ids[det_idx] if det_idx < len(cls_ids) else -1
+                            cls_name = (
+                                class_names[cls_id]
+                                if 0 <= cls_id < len(class_names)
+                                else f"id_{cls_id}"
+                            )
+                            det_score = (
+                                float(det_scores[det_idx])
+                                if det_idx < len(det_scores)
+                                else 0.0
+                            )
 
-                    # ------------------ 只对“新 raw_track_id” 准备 ReID ------------------
-                    reid_tensors: List[torch.Tensor] = []
-                    reid_meta: List[Tuple[int, int, Tuple[float, float], int]] = []
-                    new_count = 0
-
-                    for idx, bbox in enumerate(kept_boxes):
-                        det_idx = kept_indices[idx]
-                        raw_track_id = (
-                            int(track_ids[det_idx])
-                            if det_idx < len(track_ids)
-                            else -1
-                        )
-                        if raw_track_id == -1:
-                            continue
-                        # 已经有 alias 的老轨迹：不需要再跑 ReID
-                        if raw_track_id in track_alias:
-                            continue
-
-                        # 限制每帧最多跑多少个新 ID
-                        if new_count >= args.max_new_reid_per_frame:
-                            break
-
-                        x1, y1, x2, y2 = bbox
-                        cx = 0.5 * (x1 + x2)
-                        cy = 0.5 * (y1 + y2)
-                        center = (float(cx), float(cy))
-
-                        reid_tensors.append(tensors[idx])
-                        reid_meta.append((idx, raw_track_id, center, frame_idx))
-                        new_count += 1
-
-                    # ------------------ 只在满足 interval 时，对这些新 ID 跑 ReID ------------------
-                    feats_for_new: Dict[int, torch.Tensor] = {}  # raw_track_id -> feat (CPU)
-                    run_reid_this_frame = (
-                        processed % max(args.reid_interval, 1) == 0
-                    )
-
-                    if reid_tensors and run_reid_this_frame:
-                        batch = torch.stack(reid_tensors).to(
-                            device, non_blocking=True
-                        )
-                        feats_batch = extract_features(reid_model, batch)  # [M, D]
-                        feats_batch = F.normalize(feats_batch, dim=1)
-                        feats_batch = feats_batch.cpu()
-
-                        for feat_vec, (idx_in_kept, raw_id, center, fidx) in zip(
-                            feats_batch, reid_meta
-                        ):
-                            feats_for_new[raw_id] = feat_vec
-                            feature_hub.add(track_id=raw_id, feat=feat_vec, frame_idx=fidx)
-
-
-                    # ------------------ 构建 DetectionResult，并在这里做 stitching ------------------
-                    for idx, bbox in enumerate(kept_boxes):
-                        det_idx = kept_indices[idx]
-                        raw_track_id = (
-                            int(track_ids[det_idx])
-                            if det_idx < len(track_ids)
-                            else -1
-                        )
-
-                        cls_id = cls_ids[det_idx] if det_idx < len(cls_ids) else -1
-                        cls_name = (
-                            class_names[cls_id]
-                            if 0 <= cls_id < len(class_names)
-                            else f"id_{cls_id}"
-                        )
-                        det_score = (
-                            float(det_scores[det_idx])
-                            if det_idx < len(det_scores)
-                            else 0.0
-                        )
-
-                        x1, y1, x2, y2 = bbox
-                        cx = 0.5 * (x1 + x2)
-                        cy = 0.5 * (y1 + y2)
-                        center = (float(cx), float(cy))
-
-                        display_track_id = raw_track_id
-
-                        # 情况 0：没有 tracker ID，直接用 raw_track_id（一般是 -1）
-                        if raw_track_id == -1:
-                            pass
-
-                        # 情况 1：老轨迹，之前已经 stitch 过
-                        elif raw_track_id in track_alias:
-                            
-                            canonical_id = track_alias[raw_track_id]  # internal stitched ID
-                            # （可选）这里可以按一定间隔更新 prototype，目前先省略
-                            visual_id = get_or_create_visual_id(canonical_id)
-                            display_track_id = visual_id
-
-                        # 情况 2：这是一个“新 raw ID”，并且这一帧对它跑了 ReID
-                        elif raw_track_id in feats_for_new:
-                            feat_vec = feats_for_new[raw_track_id]  # CPU 上的 1D 向量 (normalized)
-                            best_id = None
-                            best_sim = -1.0
-
-                            # --- Mode A: match against hub history (if flag is on) ---
-                            if args.online_reid_from_hub:
-                                hub_best_id, hub_best_sim = feature_hub.match_best(
-                                    feat_vec,
-                                    top_k=1,
-                                    chunk_size=args.hub_chunk_size,
+                            detections.append(
+                                DetectionResult(
+                                    bbox=tuple(int(v) for v in bbox),
+                                    score=det_score,
+                                    cls_id=cls_id,
+                                    cls_name=cls_name,
+                                    track_id=raw_track_id,
+                                    display_track_id=raw_track_id,
+                                    identity_label=None,
+                                    identity_score=None,
+                                    matches=[],
+                                    predictions=[],
                                 )
+                            )
+                    else:
+                        if reid_model is None or transform is None:
+                            raise RuntimeError("ReID model/transform missing while stitching is enabled.")
+                        if feature_hub is None:
+                            raise RuntimeError("Feature hub is not initialized while stitching is enabled.")
 
-                                best_id = hub_best_id
-                                best_sim = hub_best_sim
+                        # 预处理 patch（这一步只做一次，后面 ReID 只用其中一部分）
+                        tensors, kept_boxes, kept_indices = preprocess_patches(
+                            frame_bgr, boxes, transform
+                        )
 
-                            # --- Mode B: fallback / prototype-only (if no hub match or flag off) ---
-                            if best_id is None or best_sim < args.reid_sim_thres:
-                                for cand_id, proto in track_prototypes.items():
-                                    if (
-                                        frame_idx - proto.last_frame
-                                        > args.reid_max_gap_frames
-                                    ):
-                                        continue
-                                    proto_feat = F.normalize(
-                                        proto.feat.unsqueeze(0), dim=1
-                                    )[0]
-                                    sim = float(torch.dot(feat_vec, proto_feat).item())
-                                    if sim > best_sim:
-                                        best_sim = sim
-                                        best_id = cand_id
+                        # ------------------ 只对“新 raw_track_id” 准备 ReID ------------------
+                        reid_tensors: List[torch.Tensor] = []
+                        reid_meta: List[Tuple[int, int, Tuple[float, float], int]] = []
+                        new_count = 0
 
-                            # --- Decide stitching (canonical_id) ---
-                            if best_id is not None and best_sim >= args.reid_sim_thres:
-                                # 合并到已有 stitched 轨迹
-                                canonical_id = best_id
-                                track_alias[raw_track_id] = canonical_id
-                                if canonical_id not in track_prototypes:
+                        for idx, bbox in enumerate(kept_boxes):
+                            det_idx = kept_indices[idx]
+                            raw_track_id = (
+                                int(track_ids[det_idx])
+                                if det_idx < len(track_ids)
+                                else -1
+                            )
+                            if raw_track_id == -1:
+                                continue
+                            # 已经有 alias 的老轨迹：不需要再跑 ReID
+                            if raw_track_id in track_alias:
+                                continue
+
+                            # 限制每帧最多跑多少个新 ID
+                            if new_count >= args.max_new_reid_per_frame:
+                                break
+
+                            x1, y1, x2, y2 = bbox
+                            cx = 0.5 * (x1 + x2)
+                            cy = 0.5 * (y1 + y2)
+                            center = (float(cx), float(cy))
+
+                            reid_tensors.append(tensors[idx])
+                            reid_meta.append((idx, raw_track_id, center, frame_idx))
+                            new_count += 1
+
+                        # ------------------ 只在满足 interval 时，对这些新 ID 跑 ReID ------------------
+                        feats_for_new: Dict[int, torch.Tensor] = {}  # raw_track_id -> feat (CPU)
+                        run_reid_this_frame = processed % max(args.reid_interval, 1) == 0
+
+                        if reid_tensors and run_reid_this_frame:
+                            batch = torch.stack(reid_tensors).to(
+                                device, non_blocking=True
+                            )
+                            feats_batch = extract_features(reid_model, batch)  # [M, D]
+                            feats_batch = F.normalize(feats_batch, dim=1)
+                            feats_batch = feats_batch.cpu()
+
+                            for feat_vec, (idx_in_kept, raw_id, center, fidx) in zip(
+                                feats_batch, reid_meta
+                            ):
+                                feats_for_new[raw_id] = feat_vec
+                                feature_hub.add(track_id=raw_id, feat=feat_vec, frame_idx=fidx)
+
+                        # ------------------ 构建 DetectionResult，并在这里做 stitching ------------------
+                        for idx, bbox in enumerate(kept_boxes):
+                            det_idx = kept_indices[idx]
+                            raw_track_id = (
+                                int(track_ids[det_idx])
+                                if det_idx < len(track_ids)
+                                else -1
+                            )
+
+                            cls_id = cls_ids[det_idx] if det_idx < len(cls_ids) else -1
+                            cls_name = (
+                                class_names[cls_id]
+                                if 0 <= cls_id < len(class_names)
+                                else f"id_{cls_id}"
+                            )
+                            det_score = (
+                                float(det_scores[det_idx])
+                                if det_idx < len(det_scores)
+                                else 0.0
+                            )
+
+                            x1, y1, x2, y2 = bbox
+                            cx = 0.5 * (x1 + x2)
+                            cy = 0.5 * (y1 + y2)
+                            center = (float(cx), float(cy))
+
+                            display_track_id = raw_track_id
+
+                            # 情况 0：没有 tracker ID，直接用 raw_track_id（一般是 -1）
+                            if raw_track_id == -1:
+                                pass
+
+                            # 情况 1：老轨迹，之前已经 stitch 过
+                            elif raw_track_id in track_alias:
+                                canonical_id = track_alias[raw_track_id]  # internal stitched ID
+                                # （可选）这里可以按一定间隔更新 prototype，目前先省略
+                                visual_id = get_or_create_visual_id(canonical_id)
+                                display_track_id = visual_id
+
+                            # 情况 2：这是一个“新 raw ID”，并且这一帧对它跑了 ReID
+                            elif raw_track_id in feats_for_new:
+                                feat_vec = feats_for_new[raw_track_id]  # CPU 上的 1D 向量 (normalized)
+                                best_id = None
+                                best_sim = -1.0
+
+                                # --- Mode A: match against hub history (if flag is on) ---
+                                if args.online_reid_from_hub:
+                                    hub_best_id, hub_best_sim = feature_hub.match_best(
+                                        feat_vec,
+                                        top_k=1,
+                                        chunk_size=args.hub_chunk_size,
+                                    )
+
+                                    best_id = hub_best_id
+                                    best_sim = hub_best_sim
+
+                                # --- Mode B: fallback / prototype-only (if no hub match or flag off) ---
+                                if best_id is None or best_sim < args.reid_sim_thres:
+                                    for cand_id, proto in track_prototypes.items():
+                                        if (
+                                            frame_idx - proto.last_frame
+                                            > args.reid_max_gap_frames
+                                        ):
+                                            continue
+                                        proto_feat = F.normalize(
+                                            proto.feat.unsqueeze(0), dim=1
+                                        )[0]
+                                        sim = float(torch.dot(feat_vec, proto_feat).item())
+                                        if sim > best_sim:
+                                            best_sim = sim
+                                            best_id = cand_id
+
+                                # --- Decide stitching (canonical_id) ---
+                                if best_id is not None and best_sim >= args.reid_sim_thres:
+                                    # 合并到已有 stitched 轨迹
+                                    canonical_id = best_id
+                                    track_alias[raw_track_id] = canonical_id
+                                    if canonical_id not in track_prototypes:
+                                        track_prototypes[canonical_id] = TrackPrototype(
+                                            feat_vec, frame_idx, center
+                                        )
+                                    else:
+                                        track_prototypes[canonical_id].update(
+                                            feat_vec, frame_idx, center
+                                        )
+                                else:
+                                    # 创建新的 stitched 轨迹
+                                    canonical_id = raw_track_id
+                                    track_alias[raw_track_id] = canonical_id
                                     track_prototypes[canonical_id] = TrackPrototype(
                                         feat_vec, frame_idx, center
                                     )
-                                else:
-                                    track_prototypes[canonical_id].update(
-                                        feat_vec, frame_idx, center
-                                    )
-                            else:
-                                # 创建新的 stitched 轨迹
-                                canonical_id = raw_track_id
-                                track_alias[raw_track_id] = canonical_id
-                                track_prototypes[canonical_id] = TrackPrototype(
-                                    feat_vec, frame_idx, center
+
+                                # 现在 canonical_id 已经确定，给它一个压缩的可视化 ID
+                                visual_id = get_or_create_visual_id(canonical_id)
+                                display_track_id = visual_id
+
+                                # 👉 Hub 里保存 canonical_id（真正 identity），不是 compact ID
+                                feature_hub.add(
+                                    track_id=canonical_id,
+                                    feat=feat_vec,
+                                    frame_idx=frame_idx,
                                 )
 
-                            # 现在 canonical_id 已经确定，给它一个压缩的可视化 ID
-                            visual_id = get_or_create_visual_id(canonical_id)
-                            display_track_id = visual_id
-
-                            # 👉 Hub 里保存 canonical_id（真正 identity），不是 compact ID
-                            feature_hub.add(
-                                track_id=canonical_id,
-                                feat=feat_vec,
-                                frame_idx=frame_idx,
+                            # 如果这个 raw ID 还没跑过 ReID（因为 interval 或 max_new 限制），就先用 raw_track_id
+                            detections.append(
+                                DetectionResult(
+                                    bbox=bbox,
+                                    score=det_score,
+                                    cls_id=cls_id,
+                                    cls_name=cls_name,
+                                    track_id=raw_track_id,
+                                    display_track_id=display_track_id,
+                                    identity_label=None,  # 不使用外部 identity
+                                    identity_score=None,
+                                    matches=[],  # 不显示 top-k gallery
+                                    predictions=[],
+                                )
                             )
-
-
-                        # 如果这个 raw ID 还没跑过 ReID（因为 interval 或 max_new 限制），就先用 raw_track_id
-                        detections.append(
-                            DetectionResult(
-                                bbox=bbox,
-                                score=det_score,
-                                cls_id=cls_id,
-                                cls_name=cls_name,
-                                track_id=raw_track_id,
-                                display_track_id=display_track_id,
-                                identity_label=None,  # 不使用外部 identity
-                                identity_score=None,
-                                matches=[],  # 不显示 top-k gallery
-                                predictions=[],
-                            )
-                        )
 
                     # 4) 画框 & 写视频
                     annotated = annotate_frame(frame_bgr.copy(), detections)
@@ -685,9 +731,10 @@ def main() -> None:
                             jpg_saved += 1
 
     writer.release()
-    hub_path = output_path.with_suffix(".npz")
-    feature_hub.save(hub_path)
-    logger.info("Track feature hub saved to %s", hub_path)
+    if feature_hub is not None:
+        hub_path = output_path.with_suffix(".npz")
+        feature_hub.save(hub_path)
+        logger.info("Track feature hub saved to %s", hub_path)
 
     logger.info(
         "Visualization saved to %s (processed %d frames)",
