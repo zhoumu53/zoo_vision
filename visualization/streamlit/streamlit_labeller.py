@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+import altair as alt
 from ultralytics import YOLO
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -290,23 +291,42 @@ def main() -> None:
             applied = fixer.apply_fixes(df, st.session_state.fixes)
             meta = st.session_state.track_meta
 
-            st.markdown("**Per-track summary**")
-            st.dataframe(analysis.summarize_tracks(applied))
-
-            st.markdown("**Class breakdown**")
-            st.dataframe(analysis.class_breakdown(applied))
-
-            st.markdown("**Behavior time per track (seconds)**")
+            st.markdown("**Track / Behavior summary**")
             st.dataframe(analysis.behavior_time_by_track(applied, meta))
 
             st.markdown("**Behavior heatmap (seconds by track x behavior)**")
             st.dataframe(analysis.behavior_heatmap(applied, meta))
 
-            st.markdown("**Overall behavior distribution**")
+            st.markdown("**Overall behavior distribution (seconds)**")
             overall = analysis.behavior_overall(applied, meta)
             st.dataframe(overall)
             if not overall.empty:
                 st.bar_chart(overall.set_index("behavior")["seconds"])
+
+            st.markdown("**Behavior timeline by track**")
+            segments = analysis.behavior_segments(applied, meta)
+            if segments.empty:
+                st.info("No behavior labels available for timeline.")
+            else:
+                chart = (
+                    alt.Chart(segments)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("start_s:Q", title="Time (s)"),
+                        x2="end_s:Q",
+                        y=alt.Y("track_id:O", title="Track ID"),
+                        color=alt.Color("behavior:N", title="Behavior"),
+                        tooltip=[
+                            alt.Tooltip("track_id:O", title="Track"),
+                            alt.Tooltip("behavior:N", title="Behavior"),
+                            alt.Tooltip("start_s:Q", title="Start (s)", format=".2f"),
+                            alt.Tooltip("end_s:Q", title="End (s)", format=".2f"),
+                            alt.Tooltip("seconds:Q", title="Duration (s)", format=".2f"),
+                        ],
+                    )
+                    .properties(height=400)
+                )
+                st.altair_chart(chart, use_container_width=True)
 
 if __name__ == "__main__":
     main()
