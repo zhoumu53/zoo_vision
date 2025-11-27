@@ -194,7 +194,7 @@ def main() -> None:
         st.header("Run tracker")
         video_path = st.text_input(
             "Video path",
-            "/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4",
+            "/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4",
         )
         output_dir = st.text_input(
             "Output directory",
@@ -220,7 +220,7 @@ def main() -> None:
             "Behavior model (.pt) (optional)",
             "/media/mu/zoo_vision/models/sleep/vit/v2_no_validation/config.ptc",
         )
-        max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=2000, step=10)
+        max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=100, step=10)
         frame_skip = st.number_input("Frame skip", min_value=1, value=5, step=1)
         disable_stitch = st.checkbox("Disable ReID stitching (raw ByteTrack IDs only)", value=False)
         start_btn = st.button("Start tracking", type="primary")

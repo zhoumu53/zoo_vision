@@ -565,7 +565,13 @@ class TrackJSONLogger:
         }
         self.fp.write(json.dumps(_ensure_json_serializable(meta)) + "\n")
 
-    def log_frame(self, frame_idx: int, tracks: List[Dict], timestamp_s: float | None = None) -> None:
+    def log_frame(
+        self,
+        frame_idx: int,
+        tracks: List[Dict],
+        timestamp_s: float | None = None,
+        timestamp_label: str | None = None,
+    ) -> None:
         payload = {
             "type": "frame",
             "frame_idx": int(frame_idx),
@@ -573,6 +579,8 @@ class TrackJSONLogger:
         }
         if timestamp_s is not None:
             payload["timestamp_s"] = float(timestamp_s)
+        if timestamp_label is not None:
+            payload["timestamp_label"] = str(timestamp_label)
         self.fp.write(json.dumps(payload) + "\n")
 
     def close(self) -> None:
@@ -740,15 +748,12 @@ def run_tracking(
                 frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
                 frame_bgr = maybe_resize(frame_bgr, args.resize_width)
                 timestamp_s = frame_idx / max(fps, 1e-6)
-                frame_timestamp_str = None
                 if video_start_dt is not None:
-                    dt = video_start_dt + timedelta(seconds=timestamp_s)
-                    frame_timestamp_str = dt.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-                frame_name = (
-                    f"{Path(args.video).stem}_{frame_timestamp_str}"
-                    if frame_timestamp_str
-                    else f"{Path(args.video).stem}_{frame_idx:06d}"
-                )
+                    frame_dt = video_start_dt + timedelta(seconds=timestamp_s)
+                else:
+                    frame_dt = datetime.now()
+                frame_timestamp_str = frame_dt.strftime("%Y.%m.%d_%H.%M.%S")
+                frame_name = f"{Path(args.video).stem}_{frame_timestamp_str}"
 
                 # YOLO + ByteTrack
                 boxes, det_scores, cls_ids, track_ids = run_yolo_byteTrack(
@@ -1038,7 +1043,12 @@ def run_tracking(
                     processed += 1
 
                     if track_logger is not None:
-                        track_logger.log_frame(frame_idx=frame_idx, tracks=tracks_for_json, timestamp_s=timestamp_s)
+                        track_logger.log_frame(
+                            frame_idx=frame_idx,
+                            tracks=tracks_for_json,
+                            timestamp_s=timestamp_s,
+                            timestamp_label=frame_timestamp_str,
+                        )
 
                     if frame_callback is not None:
                         try:
