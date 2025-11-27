@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import sys
+import threading
+from pathlib import Path
+from queue import Empty, Full, Queue
+from typing import Dict, Optional
+
+import cv2
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+THIS_DIR = Path(__file__).resolve().parent
+VIS_DIR = THIS_DIR.parent
+ROOT = VIS_DIR.parent
+for path in (THIS_DIR, VIS_DIR, ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import analysis  # type: ignore
+import fixer  # type: ignore
+import video_tracks_reid_improved as tracker  # type: ignore
+
+
+st.set_page_config(page_title="Tracking Labeller", layout="wide")
+
+
+def _init_state() -> None:
+    if "frame_queue" not in st.session_state:
+        st.session_state.frame_queue = Queue(maxsize=4)
+    if "latest_frame" not in st.session_state:
+        st.session_state.latest_frame: Optional[tuple[int, np.ndarray, list]] = None
+    if "runner_thread" not in st.session_state:
+        st.session_state.runner_thread: Optional[threading.Thread] = None
+    if "is_running" not in st.session_state:
+        st.session_state.is_running = False
+    if "tracks_json_path" not in st.session_state:
+        st.session_state.tracks_json_path = ""
+    if "frames_dir" not in st.session_state:
+        st.session_state.frames_dir = ""
+    if "tracks_df" not in st.session_state:
+        st.session_state.tracks_df: Optional[pd.DataFrame] = None
+    if "track_meta" not in st.session_state:
+        st.session_state.track_meta: Dict = {}
+    if "fixes" not in st.session_state:
+        st.session_state.fixes: Dict[int, int] = {}
+    if "fixes_path" not in st.session_state:
+        st.session_state.fixes_path = ""
+
+
+def _drain_frame_queue() -> None:
+    """Move the newest frame from the queue into session_state."""
+    q: Queue = st.session_state.frame_queue
+    latest = st.session_state.get("latest_frame")
+    while True:
+        try:
+            latest = q.get_nowait()
+        except Empty:
+            break
+    if latest is not None:
+        st.session_state.latest_frame = latest
+
+
+def _make_frame_callback() -> callable:
+    q: Queue = st.session_state.frame_queue
+
+    def on_frame(frame_idx: int, frame_bgr: np.ndarray, tracks: list) -> None:
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        try:
+            q.put_nowait((frame_idx, frame_rgb, tracks))
+        except Full:
+            try:
+                q.get_nowait()
+            except Empty:
+                pass
+            q.put_nowait((frame_idx, frame_rgb, tracks))
+
+    return on_frame
+
+
+def _start_tracker(args) -> None:
+    if st.session_state.is_running and st.session_state.runner_thread is not None:
+        st.warning("Tracker already running.")
+        return
+
+    cb = _make_frame_callback()
+    runner = threading.Thread(target=tracker.run_tracking, args=(args,), kwargs={"frame_callback": cb}, daemon=True)
+    runner.start()
+    st.session_state.runner_thread = runner
+    st.session_state.is_running = True
+    st.session_state.tracks_json_path = args.tracks_json
+    st.session_state.frames_dir = args.frames_dir or str(Path(args.output) / Path(args.video).stem)
+
+
+def _build_args_from_ui(
+    video_path: str,
+    output_dir: str,
+    yolo_model: str,
+    class_names: str,
+    reid_config: str,
+    reid_ckpt: str,
+    max_frames: int | None,
+    frame_skip: int,
+    disable_stitching: bool,
+) -> object:
+    args = tracker.parse_args([])
+    args.video = video_path
+    args.output = output_dir
+    args.yolo_model = yolo_model
+    args.class_names = class_names
+    args.reid_config = reid_config
+    args.reid_checkpoint = reid_ckpt
+    args.frame_skip = frame_skip
+    args.max_frames = max_frames
+    args.save_jpg = True
+    args.jpg_interval = 1
+    args.frames_dir = str(Path(output_dir) / "frames")
+    args.tracks_json = str(Path(output_dir) / "tracks.jsonl")
+    args.no_new_stitching = disable_stitching
+    return args
+
+
+def _load_tracks_if_available(path_str: str) -> None:
+    if not path_str:
+        return
+    try:
+        df, meta = fixer.load_track_log(path_str)
+    except FileNotFoundError:
+        st.warning(f"Could not find track log at {path_str}")
+        return
+    st.session_state.tracks_df = df
+    st.session_state.track_meta = meta
+    fixes_path = Path(path_str).with_name(fixer.DEFAULT_FIXES_NAME)
+    st.session_state.fixes_path = str(fixes_path)
+    st.session_state.fixes = fixer.load_fixes(fixes_path)
+
+
+def _show_frame_image(frames_dir: str, frame_idx: int) -> None:
+    if not frames_dir:
+        st.info("No frames directory configured yet.")
+        return
+    frame_path = Path(frames_dir) / f"frame_{frame_idx:06d}.jpg"
+    if not frame_path.exists():
+        st.info(f"Frame image not found at {frame_path}")
+        return
+    img = cv2.imread(str(frame_path))
+    if img is None:
+        st.warning(f"Failed to load {frame_path}")
+        return
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    st.image(img, caption=f"Frame {frame_idx}", use_column_width=True)
+
+
+def main() -> None:
+    _init_state()
+    _drain_frame_queue()
+
+    st.title("Streamlit Tracking Labeller")
+    st.caption(
+        "Run the lightweight tracker, preview annotated frames live, relabel bad tracks, and export summaries."
+    )
+
+    with st.sidebar:
+        st.header("Run tracker")
+        video_path = st.text_input("Video path", "")
+        output_dir = st.text_input("Output directory", "outputs/streamlit_run")
+        yolo_model = st.text_input("YOLO weights (.pt / .onnx)", "")
+        class_names = st.text_input("Class names txt", "")
+        reid_config = st.text_input("ReID config (.yml)", "")
+        reid_ckpt = st.text_input("ReID checkpoint (.pth)", "")
+        max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=200, step=10)
+        frame_skip = st.number_input("Frame skip", min_value=1, value=1, step=1)
+        disable_stitch = st.checkbox("Disable ReID stitching (raw ByteTrack IDs only)", value=False)
+        start_btn = st.button("Start tracking", type="primary")
+
+        if start_btn:
+            if not all([video_path, output_dir, yolo_model, class_names]):
+                st.error("Fill video, output, YOLO weights, and class names to start.")
+            else:
+                max_frames = None if max_frames_val == 0 else int(max_frames_val)
+                args = _build_args_from_ui(
+                    video_path,
+                    output_dir,
+                    yolo_model,
+                    class_names,
+                    reid_config,
+                    reid_ckpt,
+                    max_frames,
+                    int(frame_skip),
+                    disable_stitch,
+                )
+                _start_tracker(args)
+
+        if st.session_state.runner_thread is not None and not st.session_state.runner_thread.is_alive():
+            st.session_state.is_running = False
+
+        st.write(f"Tracker status: {'Running' if st.session_state.is_running else 'Idle'}")
+        if st.session_state.tracks_json_path:
+            st.write(f"Current track log: {st.session_state.tracks_json_path}")
+
+    tab_live, tab_fix, tab_analysis = st.tabs(["Live preview", "Fix tracks", "Analysis"])
+
+    with tab_live:
+        st.subheader("Live annotated frames")
+        latest = st.session_state.latest_frame
+        if latest is None:
+            st.info("Start the tracker or load a track log to see frames.")
+        else:
+            frame_idx, frame_rgb, tracks = latest
+            st.image(frame_rgb, caption=f"Live frame {frame_idx}", use_column_width=True)
+            if tracks:
+                st.dataframe(pd.DataFrame(tracks))
+        if st.session_state.is_running:
+            st.info("Tracker running in background. Click this button to refresh live frame.")
+            if st.button("Refresh live frame"):
+                _drain_frame_queue()
+                st.experimental_rerun()
+
+    with tab_fix:
+        st.subheader("Load and relabel tracks")
+        tracks_path = st.text_input(
+            "Track log (.jsonl)", value=st.session_state.tracks_json_path, key="tracks_path_input"
+        )
+        load_btn = st.button("Load track log")
+        if load_btn and tracks_path:
+            _load_tracks_if_available(tracks_path)
+
+        df: Optional[pd.DataFrame] = st.session_state.tracks_df
+        if df is None or df.empty:
+            st.info("No track log loaded yet.")
+        else:
+            applied = fixer.apply_fixes(df, st.session_state.fixes)
+            min_frame, max_frame = int(applied["frame_idx"].min()), int(applied["frame_idx"].max())
+            frame_idx = st.slider("Frame index", min_value=min_frame, max_value=max_frame, value=min_frame)
+            _show_frame_image(st.session_state.frames_dir, frame_idx)
+
+            frame_df = fixer.frame_tracks(applied, frame_idx)
+            st.dataframe(frame_df)
+
+            st.markdown("### Manual ID fixes")
+            fixes = dict(st.session_state.fixes)
+            for tid in sorted(frame_df["canonical_track_id"].unique()):
+                new_val = st.text_input(
+                    f"Canonical ID {tid} →", value=str(fixes.get(int(tid), tid)), key=f"fix_{tid}_{frame_idx}"
+                )
+                try:
+                    fixes[int(tid)] = int(new_val)
+                except ValueError:
+                    st.warning(f"Invalid ID for track {tid}, keeping original.")
+            st.session_state.fixes = fixes
+            fixes_path = st.text_input(
+                "Fix file path",
+                value=st.session_state.fixes_path or str(Path(tracks_path).with_name(fixer.DEFAULT_FIXES_NAME)),
+            )
+            if st.button("Save fixes"):
+                fixer.save_fixes(fixes_path, st.session_state.fixes)
+                st.success(f"Saved fixes to {fixes_path}")
+                st.session_state.fixes_path = fixes_path
+
+    with tab_analysis:
+        st.subheader("Tracking summary")
+        df = st.session_state.tracks_df
+        if df is None or df.empty:
+            st.info("Load a track log to see analytics.")
+        else:
+            applied = fixer.apply_fixes(df, st.session_state.fixes)
+            st.write("Per-track summary")
+            st.dataframe(analysis.summarize_tracks(applied))
+            st.write("Class breakdown")
+            st.dataframe(analysis.class_breakdown(applied))
+
+
+if __name__ == "__main__":
+    main()

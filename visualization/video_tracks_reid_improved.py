@@ -20,10 +20,11 @@ Result:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -195,7 +196,7 @@ class TrackPrototype:
 # ------------------ CLI & logger ------------------
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Visualize YOLO+ByteTrack with lightweight online ReID stitching (within one video)."
     )
@@ -301,6 +302,16 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of JPG frames to save.",
     )
     parser.add_argument(
+        "--frames-dir",
+        default=None,
+        help="Directory to dump annotated frames (default: <output>/<video_name> without extension).",
+    )
+    parser.add_argument(
+        "--tracks-json",
+        default=None,
+        help="Optional JSONL file to record per-frame tracks for Streamlit review/fixing.",
+    )
+    parser.add_argument(
         "--online-reid-from-hub",
         action="store_true",
         help="If set, match new tracks against the history stored in the feature hub "
@@ -318,7 +329,7 @@ def parse_args() -> argparse.Namespace:
         help="Disable lightweight ReID stitching and keep raw YOLO+ByteTrack track IDs.",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(args=argv)
 
 
 def setup_logger(level: str) -> logging.Logger:
@@ -361,8 +372,52 @@ def annotate_frame(
 # ------------------ 主流程：YOLO + ByteTrack + 轻量 ReID stitching ------------------
 
 
-def main() -> None:
-    args = parse_args()
+class TrackJSONLogger:
+    """Write per-frame tracking results to a JSONL file for labeling/analysis."""
+
+    def __init__(
+        self,
+        path: Path,
+        video: str,
+        fps: float,
+        width: int,
+        height: int,
+        class_names: List[str],
+    ) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fp = self.path.open("w", encoding="utf-8")
+        meta = {
+            "type": "meta",
+            "video": video,
+            "fps": fps,
+            "width": width,
+            "height": height,
+            "classes": class_names,
+        }
+        self.fp.write(json.dumps(meta) + "\n")
+
+    def log_frame(self, frame_idx: int, tracks: List[Dict], timestamp_s: float | None = None) -> None:
+        payload = {
+            "type": "frame",
+            "frame_idx": frame_idx,
+            "tracks": tracks,
+        }
+        if timestamp_s is not None:
+            payload["timestamp_s"] = timestamp_s
+        self.fp.write(json.dumps(payload) + "\n")
+
+    def close(self) -> None:
+        try:
+            self.fp.close()
+        except Exception:
+            pass
+
+
+def run_tracking(
+    args: argparse.Namespace,
+    frame_callback: Callable[[int, np.ndarray, List[Dict]], None] | None = None,
+) -> None:
     logger = setup_logger(args.log_level)
 
     device = torch.device(args.device)
@@ -439,8 +494,10 @@ def main() -> None:
 
     # JPG 保存目录
     jpg_dir = output_path.with_suffix("")
+    if args.frames_dir:
+        jpg_dir = Path(args.frames_dir)
     jpg_saved = 0
-    if args.save_jpg:
+    if args.save_jpg or frame_callback is not None:
         import shutil
 
         if jpg_dir.exists():
@@ -468,6 +525,22 @@ def main() -> None:
         args.frame_skip,
         args.max_frames,
     )
+
+    tracks_json_path = Path(args.tracks_json) if args.tracks_json else output_path.with_suffix(".tracks.jsonl")
+    track_logger: TrackJSONLogger | None = None
+    try:
+        track_logger = TrackJSONLogger(
+            path=tracks_json_path,
+            video=args.video,
+            fps=fps,
+            width=width,
+            height=height,
+            class_names=class_names,
+        )
+        logger.info("Per-frame tracks will be logged to %s", tracks_json_path)
+    except Exception as exc:
+        logger.warning("Failed to open track logger at %s: %s", tracks_json_path, exc)
+        track_logger = None
 
     with torch.no_grad():
         with tqdm(total=len(frame_indices), desc="Frames") as pbar:
@@ -503,6 +576,7 @@ def main() -> None:
                 )
 
                 detections: List[DetectionResult] = []
+                tracks_for_json: List[Dict] = []
 
                 if boxes.size != 0:
                     if args.no_new_stitching:
@@ -537,6 +611,17 @@ def main() -> None:
                                     matches=[],
                                     predictions=[],
                                 )
+                            )
+                            tracks_for_json.append(
+                                {
+                                    "raw_track_id": raw_track_id,
+                                    "canonical_track_id": raw_track_id,
+                                    "display_track_id": raw_track_id,
+                                    "bbox": [int(v) for v in bbox],
+                                    "score": det_score,
+                                    "cls_id": cls_id,
+                                    "cls_name": cls_name,
+                                }
                             )
                     else:
                         if reid_model is None or transform is None:
@@ -625,6 +710,7 @@ def main() -> None:
                             center = (float(cx), float(cy))
 
                             display_track_id = raw_track_id
+                            canonical_id = raw_track_id
 
                             # 情况 0：没有 tracker ID，直接用 raw_track_id（一般是 -1）
                             if raw_track_id == -1:
@@ -717,20 +803,43 @@ def main() -> None:
                                     predictions=[],
                                 )
                             )
+                            tracks_for_json.append(
+                                {
+                                    "raw_track_id": raw_track_id,
+                                    "canonical_track_id": canonical_id,
+                                    "display_track_id": display_track_id,
+                                    "bbox": [int(v) for v in bbox],
+                                    "score": det_score,
+                                    "cls_id": cls_id,
+                                    "cls_name": cls_name,
+                                }
+                            )
 
                     # 4) 画框 & 写视频
                     annotated = annotate_frame(frame_bgr.copy(), detections)
                     writer.write(annotated)
                     processed += 1
 
+                    if track_logger is not None:
+                        timestamp_s = frame_idx / max(fps, 1e-6)
+                        track_logger.log_frame(frame_idx=frame_idx, tracks=tracks_for_json, timestamp_s=timestamp_s)
+
+                    if frame_callback is not None:
+                        try:
+                            frame_callback(frame_idx, annotated, tracks_for_json)
+                        except Exception as exc:
+                            logger.warning("Frame callback failed at frame %d: %s", frame_idx, exc)
+
                     # 可选：保存部分 JPG 检查
-                    if args.save_jpg and jpg_saved < args.jpg_max_count:
+                    if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
                         if processed % args.jpg_interval == 0:
-                            jpg_path = jpg_dir / f"frame_{processed:06d}.jpg"
+                            jpg_path = jpg_dir / f"frame_{frame_idx:06d}.jpg"
                             cv2.imwrite(str(jpg_path), annotated)
                             jpg_saved += 1
 
     writer.release()
+    if track_logger is not None:
+        track_logger.close()
     if feature_hub is not None:
         hub_path = output_path.with_suffix(".npz")
         feature_hub.save(hub_path)
@@ -741,6 +850,10 @@ def main() -> None:
         args.output,
         processed,
     )
+
+
+def main() -> None:
+    run_tracking(parse_args())
 
 
 if __name__ == "__main__":
