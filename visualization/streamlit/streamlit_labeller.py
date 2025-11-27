@@ -104,20 +104,36 @@ def _build_args_from_ui(
     frame_skip: int,
     disable_stitching: bool,
 ) -> object:
-    args = tracker.parse_args([])
-    args.video = video_path
-    args.output = output_dir
-    args.yolo_model = yolo_model
-    args.class_names = class_names
-    args.reid_config = reid_config
-    args.reid_checkpoint = reid_ckpt
-    args.frame_skip = frame_skip
-    args.max_frames = max_frames
-    args.save_jpg = True
-    args.jpg_interval = 1
-    args.frames_dir = str(Path(output_dir) / "frames")
-    args.tracks_json = str(Path(output_dir) / "tracks.jsonl")
-    args.no_new_stitching = disable_stitching
+    cli_args = [
+        "--video",
+        video_path,
+        "--output",
+        output_dir,
+        "--yolo-model",
+        yolo_model,
+        "--class-names",
+        class_names,
+        "--reid-config",
+        reid_config,
+        "--reid-checkpoint",
+        reid_ckpt,
+        "--frame-skip",
+        str(frame_skip),
+        "--jpg-interval",
+        "1",
+        "--frames-dir",
+        str(Path(output_dir) / "frames"),
+        "--tracks-json",
+        str(Path(output_dir) / "tracks.jsonl"),
+        "--log-level",
+        "INFO",
+    ]
+    if max_frames is not None and max_frames > 0:
+        cli_args.extend(["--max-frames", str(max_frames)])
+    if disable_stitching:
+        cli_args.append("--no-new-stitching")
+    cli_args.append("--save-jpg")
+    args = tracker.parse_args(cli_args)
     return args
 
 
@@ -163,14 +179,32 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Run tracker")
-        video_path = st.text_input("Video path", "")
-        output_dir = st.text_input("Output directory", "outputs/streamlit_run")
-        yolo_model = st.text_input("YOLO weights (.pt / .onnx)", "")
-        class_names = st.text_input("Class names txt", "")
-        reid_config = st.text_input("ReID config (.yml)", "")
-        reid_ckpt = st.text_input("ReID checkpoint (.pth)", "")
-        max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=200, step=10)
-        frame_skip = st.number_input("Frame skip", min_value=1, value=1, step=1)
+        video_path = st.text_input(
+            "Video path",
+            "/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4",
+        )
+        output_dir = st.text_input(
+            "Output directory",
+            "/home/mu/Desktop/comparison_videos/test_steamlit",
+        )
+        yolo_model = st.text_input(
+            "YOLO weights (.pt / .onnx)",
+            "/media/mu/zoo_vision/models/segmentation/yolo/all_v3/weights/best.pt",
+        )
+        class_names = st.text_input(
+            "Class names txt",
+            "/media/mu/zoo_vision/models/segmentation/yolo/class_names.txt",
+        )
+        reid_config = st.text_input(
+            "ReID config (.yml)",
+            "/media/mu/zoo_vision/training/PoseGuidedReID/configs/elephant_resnet.yml",
+        )
+        reid_ckpt = st.text_input(
+            "ReID checkpoint (.pth)",
+            "/media/mu/zoo_vision/training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth",
+        )
+        max_frames_val = st.number_input("Max frames (optional)", min_value=0, value=2000, step=10)
+        frame_skip = st.number_input("Frame skip", min_value=1, value=5, step=1)
         disable_stitch = st.checkbox("Disable ReID stitching (raw ByteTrack IDs only)", value=False)
         start_btn = st.button("Start tracking", type="primary")
 
@@ -215,7 +249,6 @@ def main() -> None:
             st.info("Tracker running in background. Click this button to refresh live frame.")
             if st.button("Refresh live frame"):
                 _drain_frame_queue()
-                st.experimental_rerun()
 
     with tab_fix:
         st.subheader("Load and relabel tracks")
