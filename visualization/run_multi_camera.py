@@ -268,6 +268,7 @@ def main() -> None:
                 args.yolo_device,
                 "--device",
                 args.device,
+                "--no-new-stitching",
                 "--frame-skip",
                 "5",
                 "--max-dets",

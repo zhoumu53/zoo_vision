@@ -63,11 +63,12 @@ max_frames=10000
 video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4'
 
 cmd=video_id_classification
+cmd=video_tracks_reid_improved
 
 python3 visualization/run_multi_camera.py \
   --video "$video" \
   --cmd "$cmd" \
-  --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_empty \
+  --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_no_stitching \
   --class-names models/segmentation/yolo/class_names.txt \
   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
@@ -79,7 +80,7 @@ python3 visualization/run_multi_camera.py \
   --device cuda \
   --yolo-device cuda \
   --gallery-device cpu \
-  --max-frames 100 \
+  --max-frames 10000 \
 
 
 

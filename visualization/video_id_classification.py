@@ -418,14 +418,14 @@ def main() -> None:
                                 )
                             )
 
-                annotated = annotate_frame(frame_bgr.copy(), detections, label_to_color)
-                writer.write(annotated)
-                processed += 1
-                if args.save_jpg and jpg_saved < args.jpg_max_count:
-                    if processed % args.jpg_interval == 0:
-                        jpg_path = jpg_dir / f"frame_{processed:06d}.jpg"
-                        cv2.imwrite(str(jpg_path), annotated)
-                        jpg_saved += 1
+                    annotated = annotate_frame(frame_bgr.copy(), detections, label_to_color)
+                    writer.write(annotated)
+                    processed += 1
+                    if args.save_jpg and jpg_saved < args.jpg_max_count:
+                        if processed % args.jpg_interval == 0:
+                            jpg_path = jpg_dir / f"frame_{processed:06d}.jpg"
+                            cv2.imwrite(str(jpg_path), annotated)
+                            jpg_saved += 1
 
     writer.release()
     logger.info(
