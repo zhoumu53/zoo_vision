@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List
 
@@ -36,7 +37,7 @@ def setup_logger(level: str) -> logging.Logger:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare multiple visualization pipelines.")
     parser.add_argument("--video", required=True, help="Input video path.")
-    parser.add_argument("--cmd", required=True, choices=['video_tracks_reid_improved', 'video_id_classification'], help="Which visualization pipeline to run.")
+    parser.add_argument("--cmd", required=True, choices=['video_tracks_reid_improved', 'video_id_classification', 'video_tracks_reid_improved_with_behavior'], help="Which visualization pipeline to run.")
     parser.add_argument("--track-outdir", default="/home/mu/Desktop/comparison_videos", help="Output path for tracking+ReID pipeline.")
     parser.add_argument("--class-names", required=True, help="Path to YOLO class names file.")
     parser.add_argument("--yolo-model", required=True, help="Path to YOLO checkpoint.")
@@ -53,6 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracker-config", default="bytetrack.yaml", help="Tracker config for track pipeline.")
     parser.add_argument("--min-similarity", type=float, default=0.5, help="Min similarity to lock identity in track pipeline.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logger verbosity.")
+    parser.add_argument(
+        "--max-parallel",
+        type=int,
+        default=2,
+        help="Maximum number of tracking jobs to run in parallel.",
+    )
     return parser.parse_args()
 
 
@@ -153,29 +160,31 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
 
 
 
-def get_output_filename(video_path, track_outdir, max_frames) -> str:
+def get_output_filename(video_path, track_outdir, max_frames, date=None) -> str:
     filename = os.path.basename(video_path)
-    filename = filename.replace('.mp4', f'_{max_frames}.mp4')
-    return os.path.join(track_outdir, filename)
+    suffix = '' if max_frames is None else f'_{max_frames}'
+    filename = filename.replace('.mp4', suffix)
+    if date is None:
+        date = extract_metadata_from_video_path(video_path)[1]
+    return os.path.join(track_outdir, date, filename)
 
 
 
-def main() -> None:
-    args = parse_args()
+def run_cameras(args, video, date=None) -> None:
     logger = setup_logger(args.log_level)
 
-    camera_id, date, time, ampm = extract_metadata_from_video_path(args.video)
+    camera_id, date, time, ampm = extract_metadata_from_video_path(video)
     other_camera_ids = set(CAMERA_PARIS) - {camera_id}
 
     print("other camera ids:", other_camera_ids)
 
     other_video_paths = [extract_other_cameras(camera_id, date, time, ampm, raw_video_dir='/mnt/camera_nas') for camera_id in other_camera_ids]    
-    all_video_paths = [args.video] + other_video_paths
-    all_output_paths = [get_output_filename(path, args.track_outdir, args.max_frames) for path in all_video_paths]
-    print("all video paths:", all_output_paths)
+    all_video_paths = [video] + other_video_paths
+    track_output_paths = [get_output_filename(path, args.track_outdir, args.max_frames) for path in all_video_paths]
 
+    commands_to_run: List[tuple[str, str, List[str]]] = []
 
-    for idx, (video_path, track_output) in enumerate(zip(all_video_paths, all_output_paths)):
+    for idx, (video_path, track_output) in enumerate(zip(all_video_paths, track_output_paths)):
 
         if not os.path.exists(video_path):
             logger.warning("Video path does not exist: %s. Skipping.", video_path)
@@ -286,28 +295,100 @@ def main() -> None:
                 "--max-new-reid-per-frame",
                 "5"
             ]
+        elif args.cmd == 'video_tracks_reid_improved_with_behavior':
+            track_cmd = [
+                sys.executable,
+                str(THIS_DIR / f"{args.cmd}.py"),
+                "--video",
+                video_path,
+                "--output",
+                track_output,
+                "--yolo-model",
+                args.yolo_model,
+                "--class-names",
+                args.class_names,
+                "--reid-config",
+                args.reid_config,
+                "--reid-checkpoint",
+                args.reid_checkpoint,
+                "--yolo-device",
+                args.yolo_device,
+                "--device",
+                args.device,
+                "--frame-skip",
+                "1",
+                "--max-dets",
+                "20",
+                "--reid-sim-thres",
+                "0.9",
+                "--reid-max-gap-frames",
+                "300",
+                "--save-jpg",
+                "--jpg-interval",
+                "25",
+                "--jpg-max-count",
+                "50000",
+                "--online-reid-from-hub",
+                "--max-new-reid-per-frame",
+                "5",
+                "--behavior-model",
+                "models/sleep/vit/v2_no_validation/config.ptc"
+            ]
+
 
         add_runtime_flags(track_cmd, args)
-        run_pipeline(track_cmd, logger)
+        commands_to_run.append((video_path, track_output, track_cmd))
+
+    if commands_to_run:
+        max_workers = max(1, min(args.max_parallel, len(commands_to_run)))
+        logger.info("Running %d tracking jobs in parallel (max_workers=%d)", len(commands_to_run), max_workers)
+        failures: List[tuple[str, Exception]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {
+                executor.submit(run_pipeline, cmd, logger): (video_path, track_output)
+                for video_path, track_output, cmd in commands_to_run
+            }
+            for future in as_completed(future_to_task):
+                video_path, track_output = future_to_task[future]
+                try:
+                    future.result()
+                    logger.info("Completed tracking for %s -> %s", video_path, track_output)
+                except Exception as exc:
+                    logger.error("Tracking failed for %s: %s", video_path, exc)
+                    failures.append((video_path, exc))
+        if failures:
+            raise RuntimeError(f"{len(failures)} tracking job(s) failed; see logs for details.")
 
     ### titles
 
-    print("all video paths for titles:", all_video_paths)
-    print("all output paths for titles:", all_output_paths)
-
     ### if any output path is dir, get new mp4 path inside dir
-    new_all_output_paths = []
-    for path in all_output_paths:
+    new_track_output_paths = []
+    for path in track_output_paths:
         if os.path.isdir(path):
             suffix = 'tracks' if args.cmd == 'video_tracks_reid_improved' else 'idcls'
             path = os.path.join(path, os.path.basename(path).replace(str(args.max_frames),  suffix))
-        new_all_output_paths.append(path)
-    all_output_paths = new_all_output_paths if len(new_all_output_paths) == len(all_output_paths) else all_output_paths
+        new_track_output_paths.append(path)
+    track_output_paths = new_track_output_paths if len(new_track_output_paths) == len(all_output_paths) else all_output_paths
 
     all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
-    stream_and_write(all_output_paths, all_titles, os.path.join(args.track_outdir, 'comparison_video.mp4'))
+    stream_and_write(track_output_paths, all_titles, os.path.join(args.track_outdir, 'comparison_video.mp4'))
     logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, 'comparison_video.mp4'))
 
 
 if __name__ == "__main__":
-    main()
+
+    args = parse_args()
+
+    video = args.video
+
+    ### if run whole day -- extract camera id, date, time, ampm
+    camera_id, date, time, ampm = extract_metadata_from_video_path(video)
+
+    ### 
+    ## extract all videos from this camera id, from this day
+
+    single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
+
+    for video in single_cam_single_day_videos:
+        print("Processing video:", video)
+        run_cameras(args, video=video)

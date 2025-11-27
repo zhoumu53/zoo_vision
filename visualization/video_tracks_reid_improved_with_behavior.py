@@ -364,7 +364,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="cpu",  # ⚠ 默认用 CPU 做 ReID，尽量减少对 GPU / 桌面的压力
         help="Device for ReID model inference (cpu / cuda / cuda:0).",
     )
-    parser.add_argument("--conf-thres", type=float, default=0.4, help="YOLO confidence threshold.")
+    parser.add_argument("--conf-thres", type=float, default=0.65, help="YOLO confidence threshold.")
     parser.add_argument("--iou-thres", type=float, default=0.65, help="YOLO IOU threshold.")
     parser.add_argument("--max-dets", type=int, default=50, help="Max detections per frame.")
     parser.add_argument(

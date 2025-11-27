@@ -195,7 +195,7 @@ def main() -> None:
         st.header("Run tracker")
         video_path = st.text_input(
             "Video path",
-            "/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4",
+            '/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4',
         )
         output_dir = st.text_input(
             "Output directory",
