@@ -33,10 +33,13 @@ def load_track_log(path: str | Path) -> Tuple[pd.DataFrame, dict]:
             frame_idx = int(obj.get("frame_idx", -1))
             timestamp_s = obj.get("timestamp_s")
             for trk in obj.get("tracks", []):
+                behavior = trk.get("behavior") if isinstance(trk, dict) else None
                 rows.append(
                     {
                         "frame_idx": frame_idx,
                         "timestamp_s": timestamp_s,
+                        "frame_name": trk.get("frame_name"),
+                        "frame_id": trk.get("frame_id", frame_idx),
                         "raw_track_id": int(trk.get("raw_track_id", -1)),
                         "canonical_track_id": int(
                             trk.get("canonical_track_id", trk.get("raw_track_id", -1))
@@ -48,6 +51,8 @@ def load_track_log(path: str | Path) -> Tuple[pd.DataFrame, dict]:
                         "score": trk.get("score"),
                         "cls_id": trk.get("cls_id"),
                         "cls_name": trk.get("cls_name"),
+                        "behavior_label": behavior.get("label") if isinstance(behavior, dict) else None,
+                        "behavior_prob": behavior.get("prob") if isinstance(behavior, dict) else None,
                     }
                 )
 
