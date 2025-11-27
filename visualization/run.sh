@@ -62,26 +62,47 @@ max_frames=10000
 
 video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-224718-1725569238475-7.mp4'
 
-cmd=video_id_classification
-cmd=video_tracks_reid_improved
+# cmd=video_id_classification
+# cmd=video_tracks_reid_improved
 
-python3 visualization/run_multi_camera.py \
+# python3 visualization/run_multi_camera.py \
+#   --video "$video" \
+#   --cmd "$cmd" \
+#   --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_no_stitching \
+#   --class-names models/segmentation/yolo/class_names.txt \
+#   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
+#   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
+#   --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
+#   --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
+#   --id-checkpoint ../models/identity/vit/v4/config.ptc \
+#   --tracker-config bytetrack.yaml \
+#   --frame-skip 15 \
+#   --device cuda \
+#   --yolo-device cuda \
+#   --gallery-device cpu \
+#   --max-frames 10000 \
+
+
+python3 visualization/video_tracks_reid_improved_with_behavior.py \
   --video "$video" \
-  --cmd "$cmd" \
-  --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_no_stitching \
-  --class-names models/segmentation/yolo/class_names.txt \
+  --output /home/mu/Desktop/comparison_videos/reid_behavior \
   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
+  --class-names models/segmentation/yolo/class_names.txt \
   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
   --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
-  --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
-  --id-checkpoint ../models/identity/vit/v4/config.ptc \
-  --tracker-config bytetrack.yaml \
-  --frame-skip 15 \
-  --device cuda \
+  --device cpu \
+  --behavior-model models/sleep/vit/v2_no_validation/config.ptc \
+  --behavior-device cuda \
   --yolo-device cuda \
-  --gallery-device cpu \
-  --max-frames 10000 \
-
+  --frame-skip 5 \
+  --max-frames 2000 \
+  --max-dets 20 \
+  --reid-sim-thres 0.7 \
+  --reid-max-gap-frames 300 \
+  --reid-interval 1 \
+  --max-new-reid-per-frame 3 \
+  --online-reid-from-hub \
+  --save-jpg --jpg-interval 20 --jpg-max-count 20000
 
 
 
