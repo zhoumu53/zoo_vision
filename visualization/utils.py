@@ -136,6 +136,28 @@ def extract_metadata_from_video_path(videopath) -> Tuple[str, str, str, str]:
     ampm = time2ampm(time)
     return camera_id, date, time, ampm
 
+def extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas') -> List[str]:
+    """
+    Extract all video file paths for a given camera and date.
+    Arguments:
+        raw_video_dir: str, base directory where raw videos are stored
+        camera_id: str, camera ID extracted from the filename
+        date: str, date extracted from the filename in 'YYYYMMDD' format
+    Returns:
+        video_files: List[str], list of matched video file paths
+    """
+    
+    video_dir = f'{raw_video_dir}/ZAG-ELP-CAM-{camera_id}/{date}AM'
+
+    video_files_am = [os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.startswith(f'ZAG-ELP-CAM-{camera_id}-{date}')]
+    
+    video_dir_pm = f'{raw_video_dir}/ZAG-ELP-CAM-{camera_id}/{date}PM'
+    video_files_pm = [os.path.join(video_dir_pm, f) for f in os.listdir(video_dir_pm) if f.startswith(f'ZAG-ELP-CAM-{camera_id}-{date}')]
+
+    video_files = video_files_am + video_files_pm
+
+    return video_files
+
 
 def extract_metadata_from_file_path(filepath) -> Tuple[str, str, str, str]:
     """
