@@ -307,7 +307,7 @@ def run_cameras(args, video) -> None:
                 args.yolo_device,
                 "--device",
                 args.device,
-                "--frame-skip", "1",
+                "--frame-skip", "5",
                 "--max-dets", "20",
                 "--reid-sim-thres", "0.9",
                 "--reid-max-gap-frames", "300",
@@ -317,8 +317,6 @@ def run_cameras(args, video) -> None:
                 "--online-reid-from-hub",
                 "--max-new-reid-per-frame", "5",
                 "--behavior-model", "models/sleep/vit/v2_no_validation/config.ptc",
-                "--hub-snapshot-interval-seconds", "5",
-                "--hub-prune-interval-frames", "1000",
             ]
 
 
@@ -369,29 +367,19 @@ if __name__ == "__main__":
     ## extract all videos from this camera id, from this day
 
     camera_id = '016'  #ZAG-ELP-CAM-016
-    dates = [
-             '20250702',
-             '20250703',
-             '20250708',
-             '20250709',
-            '20250825',
-            '20250826',
-            '20250827',
-            '20250828',
-            '20250829',
-            '20250830',
-            '20250831',
-            '20240904',
-             '20240905',
-             '20240906'
-             ]  #, '202409
-    for date in dates:
+    dates = os.listdir('/mnt/camera_nas/ZAG-ELP-CAM-016')
 
-        single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
+    unique_dates = set([date[:-2] for date in dates if date.startswith('2025')])
 
-        for video in single_cam_single_day_videos:
+    print("dates:", unique_dates)
+    
+    for date in unique_dates:
 
-            print("processing video:", video)
-
-
-            run_cameras(args, video=video)
+        try:
+            single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
+            for video in single_cam_single_day_videos:
+                print("processing video:", video)
+                run_cameras(args, video=video)
+        except Exception as e:
+            print(f"Error processing date {date} for camera {camera_id}: {e}")
+            continue

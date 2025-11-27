@@ -65,140 +65,179 @@ def get_track_color(track_id: int) -> Tuple[int, int, int]:
 
 # ------------------ Per-video feature hub (memory-optimized) ------------------
 
+# ------------------ Per-video feature hub (disk-backed, low RAM) ------------------
+# ------------------ Sliding-Window Disk Hub (bounded memory) ------------------
+
+# ------------------ Sliding-Window Disk Hub + Centroid Merge ------------------
+
+# ======================================================================
+# Sliding-Window Disk Hub (per-track centroid clusters)
+# ======================================================================
+
 class TrackFeatureHub:
     """
-    Per-video feature gallery.
-
-    Stores sparse snapshots:
-      - feats:  [N, D] float32
-      - ids:    [N]   int64  (canonical track IDs)
-      - frames: [N]   int64
-
-    This version is memory-friendlier:
-      - Only snapshot canonical prototypes every K seconds (configurable).
-      - Keeps Python lists as the source of truth.
-      - Uses cached NumPy arrays to avoid re-stacking on every match.
-      - Supports pruning old entries by frame gap.
+    Disk-backed, memory-safe feature hub.
+    - Each canonical track ID maintains its own centroid list.
+    - Each centroid is a merged feature vector (to avoid redundant features).
+    - Only stores a sliding window (per-track) in RAM.
+    - Periodically flushes to disk & clears RAM.
+    - On-demand load for matching.
     """
 
-    def __init__(self, feat_dim: int):
-        self.feats: List[np.ndarray] = []
-        self.ids: List[int] = []
-        self.frames: List[int] = []
-        self.feat_dim = feat_dim
-
-        # Cached numpy arrays
-        self._feats_np: Optional[np.ndarray] = None
-        self._ids_np: Optional[np.ndarray] = None
-        self._frames_np: Optional[np.ndarray] = None
-        self._dirty: bool = False
-
-    def add(self, track_id: int, feat: torch.Tensor, frame_idx: int) -> None:
-        """
-        Add a single feature snapshot (already on CPU & typically normalized).
-        track_id is the canonical track id here.
-        """
-        f = feat.detach().cpu().float().numpy().reshape(-1)
-        if f.shape[0] != self.feat_dim:
-            raise ValueError(
-                f"Feature dim mismatch: got {f.shape[0]}, expected {self.feat_dim}"
-            )
-        self.feats.append(f)
-        self.ids.append(int(track_id))
-        self.frames.append(int(frame_idx))
-        self._dirty = True
-
-    def _refresh_cache(self) -> None:
-        """Rebuild cached NumPy arrays if dirty or not initialized."""
-        if (self._feats_np is not None) and (not self._dirty):
-            return
-
-        if not self.feats:
-            # no features yet -> empty arrays
-            self._feats_np = np.zeros((0, self.feat_dim), dtype=np.float32)
-            self._ids_np = np.zeros((0,), dtype=np.int64)
-            self._frames_np = np.zeros((0,), dtype=np.int64)
-        else:
-            self._feats_np = np.stack(self.feats, axis=0).astype(np.float32)
-            self._ids_np = np.array(self.ids, dtype=np.int64)
-            self._frames_np = np.array(self.frames, dtype=np.int64)
-
-        self._dirty = False
-
-    def as_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        self._refresh_cache()
-        return (
-            self._feats_np,
-            self._ids_np,
-            self._frames_np,
-        )
-
-    def save(self, path: Path) -> None:
-        feats, ids, frames = self.as_arrays()
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            path,
-            feats=feats,
-            ids=ids,
-            frames=frames,
-        )
-
-    def prune(self, current_frame: int, max_gap_frames: int) -> None:
-        """
-        Drop features whose frame index is older than current_frame - max_gap_frames.
-
-        This bounds memory over long videos: only recent history is kept.
-        """
-        if not self.feats:
-            return
-
-        feats_np, ids_np, frames_np = self.as_arrays()
-        valid_mask = (current_frame - frames_np) <= max_gap_frames
-        if valid_mask.all():
-            return
-
-        # Rebuild Python lists with only valid entries
-        self.feats = [f for f, v in zip(self.feats, valid_mask) if v]
-        self.ids = [i for i, v in zip(self.ids, valid_mask) if v]
-        self.frames = [fr for fr, v in zip(self.frames, valid_mask) if v]
-        self._dirty = True
-
-    def match_best(
+    def __init__(
         self,
-        feat: torch.Tensor,
-        top_k: int = 1,
-        chunk_size: int = 4096,
-    ) -> Tuple[int | None, float]:
-        """
-        Match a single feature against all history in the hub.
+        feat_dim: int,
+        hub_path: Path,
+        max_window_size: int = 2000,
+        merge_sim_threshold: float = 0.92,
+    ):
+        self.feat_dim = feat_dim
+        self.hub_path = Path(hub_path)
+        self.max_window_size = max_window_size
+        self.merge_sim_threshold = merge_sim_threshold
 
-        Returns:
-          best_id, best_sim
-        where best_id is the canonical track id stored in the hub.
-        If hub empty, returns (None, -1.0).
-        Assumes all feats are L2-normalized; feat should also be normalized.
-        """
-        feats, ids, frames = self.as_arrays()
-        if feats.shape[0] == 0 or feats is None:
+        # Per-track storage:
+        # canonical_id → list of centroid features
+        # canonical_id → list of merge counts
+        # canonical_id → list of frames
+        self.centers: Dict[int, List[np.ndarray]] = {}
+        self.merge_counts: Dict[int, List[int]] = {}
+        self.frames: Dict[int, List[int]] = {}
+
+        # Load previous data if exists
+        if self.hub_path.exists():
+            data = np.load(self.hub_path, allow_pickle=True)
+            self.centers = data["centers"].item()
+            self.merge_counts = data["merge_counts"].item()
+            self.frames = data["frames"].item()
+
+    # --------------------------------------------------------------
+    # Save hub to disk (entire dicts)
+    # --------------------------------------------------------------
+    def save_window(self):
+        np.savez_compressed(
+            self.hub_path,
+            centers=self.centers,
+            merge_counts=self.merge_counts,
+            frames=self.frames,
+        )
+
+    # --------------------------------------------------------------
+    # Clear RAM window (keep only minimal)
+    # --------------------------------------------------------------
+    def clear_ram(self):
+        for cid in list(self.centers.keys()):
+            if len(self.centers[cid]) > self.max_window_size:
+                drop = len(self.centers[cid]) - self.max_window_size
+                self.centers[cid] = self.centers[cid][drop:]
+                self.merge_counts[cid] = self.merge_counts[cid][drop:]
+                self.frames[cid] = self.frames[cid][drop:]
+
+    # --------------------------------------------------------------
+    # Merge new feature into this track's centroids
+    # --------------------------------------------------------------
+    def _merge_into_track(self, canonical_id: int, feat: np.ndarray, frame_idx: int):
+        if canonical_id not in self.centers:
+            self.centers[canonical_id] = []
+            self.merge_counts[canonical_id] = []
+            self.frames[canonical_id] = []
+
+        centers = self.centers[canonical_id]
+
+        if len(centers) == 0:
+            self.centers[canonical_id].append(feat)
+            self.merge_counts[canonical_id].append(1)
+            self.frames[canonical_id].append(frame_idx)
+            return
+
+        sims = [float(np.dot(c, feat)) for c in centers]
+        best_idx = int(np.argmax(sims))
+        best_sim = sims[best_idx]
+
+        if best_sim >= self.merge_sim_threshold:
+            w = self.merge_counts[canonical_id][best_idx]
+            updated = (centers[best_idx] * w + feat) / (w + 1)
+            updated = updated / (np.linalg.norm(updated) + 1e-9)
+
+            self.centers[canonical_id][best_idx] = updated
+            self.merge_counts[canonical_id][best_idx] = w + 1
+            self.frames[canonical_id][best_idx] = frame_idx
+        else:
+            self.centers[canonical_id].append(feat)
+            self.merge_counts[canonical_id].append(1)
+            self.frames[canonical_id].append(frame_idx)
+
+    # --------------------------------------------------------------
+    # Public add() called by run_tracking
+    # --------------------------------------------------------------
+    def add(self, canonical_id: int, feat: torch.Tensor, frame_idx: int):
+        f = feat.detach().cpu().float().numpy().reshape(-1)
+        f = f / (np.linalg.norm(f) + 1e-9)
+        self._merge_into_track(canonical_id, f, frame_idx)
+
+        # Keep sliding window small
+        self.clear_ram()
+
+    # --------------------------------------------------------------
+    # On-demand matching: load data, match per-track
+    # --------------------------------------------------------------
+    def match_best(self, canonical_id: int, feat: torch.Tensor):
+        if canonical_id not in self.centers:
             return None, -1.0
 
         q = feat.detach().cpu().float().numpy().reshape(-1)
-        best_sim = -1.0
-        best_id: int | None = None
+        q = q / (np.linalg.norm(q) + 1e-9)
 
-        N = feats.shape[0]
-        for start in range(0, N, chunk_size):
-            end = min(start + chunk_size, N)
-            chunk = feats[start:end]  # [B, D]
-            sims = np.dot(chunk, q)  # cosine similarity
-            idx = int(np.argmax(sims))
-            sim = float(sims[idx])
+        best_sim = -1.0
+        best_idx = None
+
+        for idx, c in enumerate(self.centers[canonical_id]):
+            sim = float(np.dot(c, q))
             if sim > best_sim:
                 best_sim = sim
-                best_id = int(ids[start + idx])
+                best_idx = idx
 
-        return best_id, best_sim
+        return canonical_id, best_sim
+    
+    def prune(self, current_frame: int, max_gap_frames: int) -> None:
+        """
+        Remove centroids whose frame index is older than current_frame - max_gap_frames.
+        This keeps the hub bounded in time (sliding window over frames).
+        """
+        if max_gap_frames <= 0:
+            return
+
+        for cid in list(self.centers.keys()):
+            centers = self.centers[cid]
+            frames = self.frames[cid]
+            counts = self.merge_counts[cid]
+
+            if not centers:
+                continue
+
+            keep_mask = [
+                (current_frame - f) <= max_gap_frames
+                for f in frames
+            ]
+
+            if not any(keep_mask):
+                # drop whole track
+                self.centers.pop(cid, None)
+                self.frames.pop(cid, None)
+                self.merge_counts.pop(cid, None)
+                continue
+
+            # filter lists in-place
+            self.centers[cid] = [
+                c for c, k in zip(centers, keep_mask) if k
+            ]
+            self.frames[cid] = [
+                f for f, k in zip(frames, keep_mask) if k
+            ]
+            self.merge_counts[cid] = [
+                w for w, k in zip(counts, keep_mask) if k
+            ]
+
 
 
 class TrackPrototype:
@@ -498,8 +537,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--hub-prune-interval-frames",
         type=int,
-        default=10000,
+        default=500,
         help="How often (in frames) to prune old entries from the hub by reid-max-gap-frames.",
+    )
+    parser.add_argument(
+        "--hub-max-features",
+        type=int,
+        default=None,
+        help="Optional cap on the number of feature snapshots kept in the hub. "
+             "Once reached, new snapshots are skipped to save CPU memory.",
     )
     parser.add_argument(
         "--no-new-stitching",
@@ -662,11 +708,11 @@ def run_tracking(
     behaviour_model, behaviour_processor, behaviour_id2label = load_behavior_model(
         args.behavior_model, behaviour_device, logger
     )
-
     # ReID model & feature hub
     reid_model = None
     transform = None
     feature_hub: TrackFeatureHub | None = None
+    feat_dim: Optional[int] = None
 
     if args.no_new_stitching:
         logger.info("no-new-stitching enabled: skipping ReID model and stitching logic.")
@@ -686,13 +732,7 @@ def run_tracking(
             dummy = torch.zeros(1, 3, 224, 224, device=device)
             dummy_feat = extract_features(reid_model, dummy)
             feat_dim = int(dummy_feat.shape[1])
-
-        # Only allocate a feature hub if we actually want hub-based matching
-        if args.online_reid_from_hub:
-            feature_hub = TrackFeatureHub(feat_dim=feat_dim)
-            logger.info("Online ReID from hub is enabled (feat_dim=%d)", feat_dim)
-        else:
-            logger.info("online-reid-from-hub is disabled: feature hub will not be used.")
+        logger.info("ReID feature dim = %d", feat_dim)
 
     # Open video with decord
     try:
@@ -725,6 +765,20 @@ def run_tracking(
     output_dir = output_root / subdir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # If we want an online hub, create a disk-backed hub inside this output_dir
+    if (not args.no_new_stitching) and args.online_reid_from_hub:
+        if feat_dim is None:
+            raise RuntimeError("feat_dim is None while online_reid_from_hub is enabled.")
+        hub_file = output_dir / "feature_window.npz"
+        feature_hub = TrackFeatureHub(
+             feat_dim=feat_dim,
+             hub_path=hub_file,
+             max_window_size=2000,   # Bounded RAM window (tunable)
+             merge_sim_threshold=0.92,
+         )
+    else:
+        logger.info("online-reid-from-hub is disabled or stitching disabled: feature hub will not be used.")
+
     video_output_path = output_dir / f"{Path(args.video).stem}_tracks.mp4"
     writer = cv2.VideoWriter(
         str(video_output_path),
@@ -750,6 +804,7 @@ def run_tracking(
     track_prototypes: Dict[int, TrackPrototype] = {}   # canonical_id -> prototype
     track_alias: Dict[int, int] = {}                  # raw_track_id -> canonical_id
     last_hub_update_frame: Dict[int, int] = {}        # canonical_id -> last frame snapshot into hub
+    hub_limit_warning_emitted = False
 
     processed = 0
     rendered_frames = 0
@@ -796,6 +851,14 @@ def run_tracking(
         with tqdm(total=len(frames), desc="Frames") as pbar:
             for frame_idx in frames:
                 pbar.update(1)
+                if (
+                    feature_hub is not None
+                    and frame_idx > 0
+                    and frame_idx % 2000 == 0
+                ):
+                    feature_hub.save_window()
+                    feature_hub.clear_ram()
+
                 render_frame = (frame_idx % max(args.frame_skip, 1) == 0)
 
                 # Periodic pruning of the feature hub (if any)
@@ -1009,9 +1072,7 @@ def run_tracking(
                                 # Mode A: match against hub history (if enabled)
                                 if args.online_reid_from_hub and feature_hub is not None and feat_vec is not None:
                                     hub_best_id, hub_best_sim = feature_hub.match_best(
-                                        feat_vec,
-                                        top_k=1,
-                                        chunk_size=args.hub_chunk_size,
+                                        canonical_id, feat_vec
                                     )
                                     best_id = hub_best_id
                                     best_sim = hub_best_sim
@@ -1057,20 +1118,32 @@ def run_tracking(
 
                                 # Sparse feature hub snapshot: one snapshot per canonical track every K seconds
                                 if args.online_reid_from_hub and feature_hub is not None:
-                                    proto = track_prototypes[canonical_id]
-                                    last_snapshot_frame = last_hub_update_frame.get(
-                                        canonical_id, -10**9
+                                    hub_is_full = (
+                                        args.hub_max_features is not None
+                                        and len(feature_hub) >= args.hub_max_features
                                     )
-                                    if frame_idx - last_snapshot_frame >= hub_snapshot_interval_frames:
-                                        proto_feat_norm = F.normalize(
-                                            proto.feat.unsqueeze(0), dim=1
-                                        )[0]
-                                        feature_hub.add(
-                                            track_id=canonical_id,
-                                            feat=proto_feat_norm,
-                                            frame_idx=frame_idx,
+                                    if hub_is_full:
+                                        if not hub_limit_warning_emitted:
+                                            logger.warning(
+                                                "Feature hub reached the cap of %d snapshots; skipping new ones to save memory.",
+                                                args.hub_max_features,
+                                            )
+                                            hub_limit_warning_emitted = True
+                                    else:
+                                        proto = track_prototypes[canonical_id]
+                                        last_snapshot_frame = last_hub_update_frame.get(
+                                            canonical_id, -10**9
                                         )
-                                        last_hub_update_frame[canonical_id] = frame_idx
+                                        if frame_idx - last_snapshot_frame >= hub_snapshot_interval_frames:
+                                            proto_feat_norm = F.normalize(
+                                                proto.feat.unsqueeze(0), dim=1
+                                            )[0]
+                                            feature_hub.add(
+                                                canonical_id,
+                                                proto_feat_norm,
+                                                frame_idx,
+                                            )
+                                            last_hub_update_frame[canonical_id] = frame_idx
 
                             # Build detection object
                             detections.append(
@@ -1162,9 +1235,8 @@ def run_tracking(
     if track_logger is not None:
         track_logger.close()
     if feature_hub is not None:
-        hub_path = video_output_path.with_suffix(".npz")
-        feature_hub.save(hub_path)
-        logger.info("Track feature hub saved to %s", hub_path)
+        feature_hub.save_window()
+        logger.info("Saved sliding-window feature hub to %s", hub_file)
 
     logger.info(
         "Visualization saved to %s (processed %d frames)",
