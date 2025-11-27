@@ -83,6 +83,7 @@ video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-22471
 #   --max-frames 10000 \
 
 
+video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4'
 python3 visualization/video_tracks_reid_improved_with_behavior.py \
   --video "$video" \
   --output /home/mu/Desktop/comparison_videos/reid_behavior \
@@ -95,14 +96,14 @@ python3 visualization/video_tracks_reid_improved_with_behavior.py \
   --behavior-device cuda \
   --yolo-device cuda \
   --frame-skip 5 \
-  --max-frames 2000 \
+  --max-frames 100 \
   --max-dets 20 \
   --reid-sim-thres 0.7 \
   --reid-max-gap-frames 300 \
   --reid-interval 1 \
   --max-new-reid-per-frame 3 \
   --online-reid-from-hub \
-  --save-jpg --jpg-interval 20 --jpg-max-count 20000
+  --save-jpg --jpg-interval 1 --jpg-max-count 20000
 
 
 
