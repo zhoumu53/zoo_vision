@@ -37,7 +37,6 @@ from decord import VideoReader, cpu
 from tqdm import tqdm
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-# 这里假设你的 utils.py 里定义了这些函数/类
 from utils import (
     DetectionResult,
     build_reid_model,
@@ -47,6 +46,7 @@ from utils import (
     preprocess_patches,
     extract_features,
 )
+from visualization.tracklet_extraction import extract_tracklets
 
 
 # ------------------ 轨迹颜色：给每个 stitched ID 稳定一个颜色 ------------------
@@ -482,6 +482,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=1.1,
         help="Context scale applied around each bbox before cropping for behaviour classification.",
     )
+    ## save tracklets  ## default true
+    parser.add_argument(
+        "--save-tracklets",
+        action="store_true",
+        help="Save tracklet images for each tracked object.",
+    )
+    parser.set_defaults(save_tracklets=True)
 
     return parser.parse_args(args=argv)
 
@@ -556,14 +563,13 @@ class TrackJSONLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.fp = self.path.open("w", encoding="utf-8")
         meta = {
-            "type": "meta",
             "video": video,
             "fps": fps,
             "width": width,
             "height": height,
             "classes": class_names,
         }
-        self.fp.write(json.dumps(_ensure_json_serializable(meta)) + "\n")
+        self.fp.write(json.dumps({"meta": _ensure_json_serializable(meta)}) + "\n")
 
     def log_frame(
         self,
@@ -572,13 +578,12 @@ class TrackJSONLogger:
         frame_timestamp: str | None = None,
     ) -> None:
         payload = {
-            "type": "frame",
             "frame_idx": int(frame_idx),
             "tracks": [_ensure_json_serializable(track) for track in tracks],
         }
         if frame_timestamp is not None:
             payload["timestamp"] = str(frame_timestamp)
-        self.fp.write(json.dumps(payload) + "\n")
+        self.fp.write(json.dumps({"results": payload}) + "\n")
 
     def close(self) -> None:
         try:
@@ -661,7 +666,7 @@ def run_tracking(
 
     videoname = Path(args.video).stem + "_tracks.mp4"
     # create output directory if not exists
-    output_dir = Path(args.output) / (Path(args.video).stem + "_tracks")
+    output_dir = Path(args.output) / (Path(args.video).stem + f"_max{args.max_frames if args.max_frames else ''}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -808,7 +813,6 @@ def run_tracking(
                                     "raw_track_id": raw_track_id,
                                     "canonical_track_id": canonical_id,
                                     "display_track_id": raw_track_id,
-                                    "frame_id": frame_idx,
                                     "frame_name": frame_name,
                                     "bbox": [int(v) for v in bbox],
                                     "score": det_score,
@@ -1002,7 +1006,6 @@ def run_tracking(
                                     "raw_track_id": raw_track_id,
                                     "canonical_track_id": canonical_id,
                                     "display_track_id": display_track_id,
-                                    "frame_id": frame_idx,
                                     "frame_name": frame_name,
                                     "bbox": [int(v) for v in bbox],
                                     "score": det_score,
@@ -1075,6 +1078,16 @@ def run_tracking(
         args.output,
         processed,
     )
+
+
+    if args.save_tracklets:
+        tracklets_output_dir = output_dir / "tracklets"
+        extract_tracklets(
+            tracks_json_path=tracks_json_path,
+            video_path=args.video,
+            output_dir=tracklets_output_dir,
+        )
+        logger.info("Tracklets saved to %s", tracklets_output_dir)
 
 
 def main() -> None:

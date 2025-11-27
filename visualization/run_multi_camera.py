@@ -111,6 +111,7 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
 
     try:
         for path in outputs:
+            print("path:", path)
             cap = cv2.VideoCapture(path)
             if not cap.isOpened():
                 raise FileNotFoundError(f"Cannot open video: {path}")
@@ -162,7 +163,7 @@ def stream_and_write(outputs: List[str], titles: List[str], output_path: str) ->
 
 def get_output_filename(video_path, track_outdir, max_frames, date=None) -> str:
     filename = os.path.basename(video_path)
-    suffix = '' if max_frames is None else f'_{max_frames}'
+    suffix = '' if max_frames is None else f'_max{max_frames}'
     filename = filename.replace('.mp4', suffix)
     if date is None:
         date = extract_metadata_from_video_path(video_path)[1]
@@ -189,14 +190,14 @@ def run_cameras(args, video, date=None) -> None:
         if not os.path.exists(video_path):
             logger.warning("Video path does not exist: %s. Skipping.", video_path)
             continue
-        if os.path.exists(track_output):
-            logger.info("Output already exists for %s at %s. Skipping.", video_path, track_output)
-            continue
+        # if os.path.exists(track_output):
+        #     logger.info("Output already exists for %s at %s. Skipping.", video_path, track_output)
+        #     continue
 
-        ### if track_output is dir, and exists, skip
-        if os.path.isdir(track_output) and os.path.exists(track_output):
-            logger.info("Output directory already exists for %s at %s. Skipping.", video_path, track_output)
-            continue
+        # ### if track_output is dir, and exists, skip
+        # if os.path.isdir(track_output) and os.path.exists(track_output):
+        #     logger.info("Output directory already exists for %s at %s. Skipping.", video_path, track_output)
+        #     continue
 
          ### ReID + Track
 
@@ -365,14 +366,16 @@ def run_cameras(args, video, date=None) -> None:
     new_track_output_paths = []
     for path in track_output_paths:
         if os.path.isdir(path):
-            suffix = 'tracks' if args.cmd == 'video_tracks_reid_improved' else 'idcls'
-            path = os.path.join(path, os.path.basename(path).replace(str(args.max_frames),  suffix))
+            suffix = 'tracks' if 'video_tracks_reid_improved' in args.cmd else 'idcls'
+            filename = os.path.basename(path).replace(str(args.max_frames),  suffix)
+            path = os.path.join(path, filename , filename+'.mp4')
         new_track_output_paths.append(path)
-    track_output_paths = new_track_output_paths if len(new_track_output_paths) == len(all_output_paths) else all_output_paths
+    track_output_paths = new_track_output_paths if len(new_track_output_paths) == len(track_output_paths) else all_output_paths
 
     all_titles = [f"Camera {extract_metadata_from_video_path(path)[0]} "  for path in all_video_paths]
-    stream_and_write(track_output_paths, all_titles, os.path.join(args.track_outdir, 'comparison_video.mp4'))
-    logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, 'comparison_video.mp4'))
+    combined_video = f'{extract_metadata_from_video_path(video)[2]}_comparison_video.mp4'
+    stream_and_write(track_output_paths, all_titles, os.path.join(args.track_outdir, date, combined_video))
+    logger.info("Comparison video saved to %s", os.path.join(args.track_outdir, date, combined_video))
 
 
 if __name__ == "__main__":
@@ -390,5 +393,4 @@ if __name__ == "__main__":
     single_cam_single_day_videos = extract_all_videos_single_camera_single_day(camera_id, date, raw_video_dir='/mnt/camera_nas')
 
     for video in single_cam_single_day_videos:
-        print("Processing video:", video)
-        run_cameras(args, video=video)
+        run_cameras(args, video=video, date=date)

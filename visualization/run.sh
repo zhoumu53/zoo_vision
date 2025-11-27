@@ -69,7 +69,7 @@ cmd=video_tracks_reid_improved_with_behavior
 python3 visualization/run_multi_camera.py \
   --video "$video" \
   --cmd "$cmd" \
-  --track-outdir /home/mu/Desktop/comparison_videos/"$cmd"_4cams \
+  --track-outdir /media/mu/tracking_results/tracking_w_behavior_4cams \
   --class-names models/segmentation/yolo/class_names.txt \
   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
@@ -80,7 +80,8 @@ python3 visualization/run_multi_camera.py \
   --frame-skip 15 \
   --device cuda \
   --yolo-device cuda \
-  --gallery-device cpu
+  --gallery-device cpu \
+  --max-frames 400
 
 
 # video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4'
