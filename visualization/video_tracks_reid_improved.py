@@ -24,7 +24,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -372,6 +372,18 @@ def annotate_frame(
 # ------------------ 主流程：YOLO + ByteTrack + 轻量 ReID stitching ------------------
 
 
+def _ensure_json_serializable(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {key: _ensure_json_serializable(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_ensure_json_serializable(value) for value in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    return obj
+
+
 class TrackJSONLogger:
     """Write per-frame tracking results to a JSONL file for labeling/analysis."""
 
@@ -395,16 +407,16 @@ class TrackJSONLogger:
             "height": height,
             "classes": class_names,
         }
-        self.fp.write(json.dumps(meta) + "\n")
+        self.fp.write(json.dumps(_ensure_json_serializable(meta)) + "\n")
 
     def log_frame(self, frame_idx: int, tracks: List[Dict], timestamp_s: float | None = None) -> None:
         payload = {
             "type": "frame",
-            "frame_idx": frame_idx,
-            "tracks": tracks,
+            "frame_idx": int(frame_idx),
+            "tracks": [_ensure_json_serializable(track) for track in tracks],
         }
         if timestamp_s is not None:
-            payload["timestamp_s"] = timestamp_s
+            payload["timestamp_s"] = float(timestamp_s)
         self.fp.write(json.dumps(payload) + "\n")
 
     def close(self) -> None:
@@ -815,27 +827,27 @@ def run_tracking(
                                 }
                             )
 
-                    # 4) 画框 & 写视频
-                    annotated = annotate_frame(frame_bgr.copy(), detections)
-                    writer.write(annotated)
-                    processed += 1
+                # 4) 画框 & 写视频（即使没有检测也写原始帧）
+                annotated = annotate_frame(frame_bgr.copy(), detections)
+                writer.write(annotated)
+                processed += 1
 
-                    if track_logger is not None:
-                        timestamp_s = frame_idx / max(fps, 1e-6)
-                        track_logger.log_frame(frame_idx=frame_idx, tracks=tracks_for_json, timestamp_s=timestamp_s)
+                if track_logger is not None:
+                    timestamp_s = frame_idx / max(fps, 1e-6)
+                    track_logger.log_frame(frame_idx=frame_idx, tracks=tracks_for_json, timestamp_s=timestamp_s)
 
-                    if frame_callback is not None:
-                        try:
-                            frame_callback(frame_idx, annotated, tracks_for_json)
-                        except Exception as exc:
-                            logger.warning("Frame callback failed at frame %d: %s", frame_idx, exc)
+                if frame_callback is not None:
+                    try:
+                        frame_callback(frame_idx, annotated, tracks_for_json)
+                    except Exception as exc:
+                        logger.warning("Frame callback failed at frame %d: %s", frame_idx, exc)
 
-                    # 可选：保存部分 JPG 检查
-                    if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
-                        if processed % args.jpg_interval == 0:
-                            jpg_path = jpg_dir / f"frame_{frame_idx:06d}.jpg"
-                            cv2.imwrite(str(jpg_path), annotated)
-                            jpg_saved += 1
+                # 可选：保存部分 JPG 检查
+                if (args.save_jpg or frame_callback is not None) and jpg_saved < args.jpg_max_count:
+                    if processed % args.jpg_interval == 0:
+                        jpg_path = jpg_dir / f"frame_{frame_idx:06d}.jpg"
+                        cv2.imwrite(str(jpg_path), annotated)
+                        jpg_saved += 1
 
     writer.release()
     if track_logger is not None:
