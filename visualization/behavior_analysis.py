@@ -434,12 +434,284 @@ def fix_single_track_identity_switches(
                     
                     if in_debug_range:
                         logger.info(f"  DECISION: Fixed {fixes_made} identity switches to '{most_common_identity}'")
+                    else:
+                        logger.debug(
+                            f"Fixed {fixes_made} identity switches in single-detection sequence "
+                            f"(camera {camera_id}, {start_time.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')}) "
+                            f"to '{most_common_identity}'"
+                        )
         
         fixed_data.append((camera_id, frames))
     
     logger.info(f"Removed {total_removed} spurious detections")
     logger.info(f"Fixed {total_fixed} identity switches")
     return fixed_data
+
+
+def smooth_behavior_labels(
+    video_data: List[Tuple[str, List[Dict[str, Any]]]],
+    logger: logging.Logger,
+    time_window_seconds: float = 1.5,
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Smooth behavior labels within time windows for the same track.
+    
+    When the same elephant appears in consecutive frames (within time_window_seconds),
+    sudden behavior jumps are likely detection errors. This function replaces brief
+    behavior anomalies with the dominant behavior in the local time window.
+    
+    Args:
+        video_data: List of (camera_id, frames) tuples
+        logger: Logger instance
+        time_window_seconds: Time window to check for behavior consistency (default: 1.5s)
+    
+    Returns:
+        video_data with smoothed behavior labels
+    """
+    logger.info("Smoothing behavior labels...")
+    logger.info(f"  Time window: {time_window_seconds}s")
+    
+    smoothed_data = []
+    total_smoothed = 0
+    
+    for camera_id, frames in video_data:
+        # Group frames by stitched_track_id
+        track_frames = defaultdict(list)
+        
+        for frame_idx, frame in enumerate(frames):
+            timestamp = parse_timestamp(frame.get("timestamp", ""))
+            tracks = frame.get("tracks", [])
+            
+            for track in tracks:
+                stitched_id = track.get("stitched_track_id", -1)
+                if stitched_id != -1:
+                    track_frames[stitched_id].append({
+                        "frame_idx": frame_idx,
+                        "timestamp": timestamp,
+                        "track": track,
+                    })
+        
+        # Process each track's timeline
+        for stitched_id, track_timeline in track_frames.items():
+            # Sort by timestamp
+            track_timeline.sort(key=lambda x: x["timestamp"])
+            
+            # For each frame, look at neighbors within time window
+            for i, entry in enumerate(track_timeline):
+                track = entry["track"]
+                timestamp = entry["timestamp"]
+                
+                # Get behavior from nested dict
+                behavior_dict = track.get("behavior", {})
+                if not isinstance(behavior_dict, dict):
+                    continue
+                
+                current_behavior = behavior_dict.get("label", "unknown")
+                
+                # Skip if already a valid behavior with high confidence
+                current_prob = behavior_dict.get("prob", 0.0)
+                if current_behavior not in ["invalid", "unknown"] and current_prob > 0.6:
+                    continue
+                
+                # Collect behaviors from neighbors within time window
+                neighbor_behaviors = []
+                
+                # Look backward
+                for j in range(i - 1, -1, -1):
+                    neighbor = track_timeline[j]
+                    time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
+                    if time_diff > time_window_seconds:
+                        break
+                    
+                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                    if isinstance(neighbor_behavior_dict, dict):
+                        neighbor_behavior = neighbor_behavior_dict.get("label", "unknown")
+                        neighbor_prob = neighbor_behavior_dict.get("prob", 0.0)
+                        if neighbor_behavior not in ["invalid", "unknown"]:
+                            neighbor_behaviors.append((neighbor_behavior, neighbor_prob))
+                
+                # Look forward
+                for j in range(i + 1, len(track_timeline)):
+                    neighbor = track_timeline[j]
+                    time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
+                    if time_diff > time_window_seconds:
+                        break
+                    
+                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                    if isinstance(neighbor_behavior_dict, dict):
+                        neighbor_behavior = neighbor_behavior_dict.get("label", "unknown")
+                        neighbor_prob = neighbor_behavior_dict.get("prob", 0.0)
+                        if neighbor_behavior not in ["invalid", "unknown"]:
+                            neighbor_behaviors.append((neighbor_behavior, neighbor_prob))
+                
+                # If we have valid neighbors, use the most common valid behavior
+                if neighbor_behaviors:
+                    # Count behaviors weighted by probability
+                    behavior_scores = defaultdict(float)
+                    for behavior, prob in neighbor_behaviors:
+                        behavior_scores[behavior] += prob
+                    
+                    # Get the behavior with highest total score
+                    best_behavior = max(behavior_scores.items(), key=lambda x: x[1])[0]
+                    
+                    # Update if different
+                    if best_behavior != current_behavior:
+                        behavior_dict["label"] = best_behavior
+                        # Keep the original probability or use average of neighbors
+                        avg_neighbor_prob = sum(p for b, p in neighbor_behaviors if b == best_behavior) / \
+                                           sum(1 for b, p in neighbor_behaviors if b == best_behavior)
+                        behavior_dict["prob"] = avg_neighbor_prob
+                        total_smoothed += 1
+        
+        smoothed_data.append((camera_id, frames))
+    
+    logger.info(f"Smoothed {total_smoothed} behavior labels")
+    return smoothed_data
+
+
+def fix_invalid_behaviors_cross_camera(
+    video_data: List[Tuple[str, List[Dict[str, Any]]]],
+    logger: logging.Logger,
+    time_tolerance_seconds: float = 2.0,
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Fix invalid behaviors by checking paired cameras in the same room.
+    
+    If the same elephant (by stitched_track_id and gallery_identity) appears in both
+    cameras of a room pair at approximately the same time, and one camera shows 'invalid'
+    behavior while the other shows a valid behavior, use the valid behavior.
+    
+    Args:
+        video_data: List of (camera_id, frames) tuples
+        logger: Logger instance
+        time_tolerance_seconds: Time tolerance for considering frames simultaneous (default: 2.0s)
+    
+    Returns:
+        video_data with invalid behaviors fixed using cross-camera information
+    """
+    logger.info("Fixing invalid behaviors using cross-camera information...")
+    logger.info(f"  Time tolerance: {time_tolerance_seconds}s")
+    
+    # Build index: room -> timestamp -> track_id -> (camera_id, track_info)
+    room_index = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    camera_to_frames = {}
+    
+    for camera_id, frames in video_data:
+        camera_to_frames[camera_id] = frames
+        room = CAMERA_TO_ROOM.get(camera_id, "unknown")
+        
+        for frame_idx, frame in enumerate(frames):
+            timestamp = parse_timestamp(frame.get("timestamp", ""))
+            tracks = frame.get("tracks", [])
+            
+            for track in tracks:
+                stitched_id = track.get("stitched_track_id", -1)
+                gallery_identity = track.get("gallery_identity")
+                
+                # Use both stitched_id and gallery_identity as key
+                if stitched_id != -1:
+                    track_key = (stitched_id, gallery_identity) if gallery_identity else (stitched_id, None)
+                    
+                    room_index[room][timestamp][track_key].append({
+                        "camera_id": camera_id,
+                        "frame_idx": frame_idx,
+                        "track": track,
+                    })
+    
+    total_fixed = 0
+    
+    # Process each room
+    for room, room_data in room_index.items():
+        if room == "unknown":
+            continue
+        
+        cameras_in_room = ROOM_PAIRS.get(room, [])
+        if len(cameras_in_room) != 2:
+            continue
+        
+        logger.debug(f"Processing room {room} with cameras {cameras_in_room}")
+        
+        # Get all timestamps for this room
+        all_timestamps = sorted(room_data.keys())
+        
+        # For each timestamp, check if we have the same track in both cameras
+        for timestamp in all_timestamps:
+            tracks_at_time = room_data[timestamp]
+            
+            # Check each track that appears at this timestamp
+            for track_key, detections in tracks_at_time.items():
+                stitched_id, gallery_identity = track_key
+                
+                # If track appears in only one camera, check nearby timestamps in other camera
+                cameras_present = {det["camera_id"] for det in detections}
+                
+                # Collect all detections within time tolerance
+                all_detections = []
+                
+                for det in detections:
+                    all_detections.append({
+                        "timestamp": timestamp,
+                        **det
+                    })
+                
+                # Look for same track in nearby timestamps
+                for other_timestamp in all_timestamps:
+                    time_diff = abs((other_timestamp - timestamp).total_seconds())
+                    if time_diff > time_tolerance_seconds or time_diff == 0:
+                        continue
+                    
+                    if track_key in room_data[other_timestamp]:
+                        for det in room_data[other_timestamp][track_key]:
+                            all_detections.append({
+                                "timestamp": other_timestamp,
+                                **det
+                            })
+                
+                # If we have detections from both cameras, check behaviors
+                cameras_in_detections = {det["camera_id"] for det in all_detections}
+                
+                if len(cameras_in_detections) >= 2:
+                    # Collect behaviors from all detections
+                    behaviors = []
+                    invalid_detections = []
+                    
+                    for det in all_detections:
+                        track = det["track"]
+                        behavior_dict = track.get("behavior", {})
+                        
+                        if isinstance(behavior_dict, dict):
+                            behavior = behavior_dict.get("label", "unknown")
+                            prob = behavior_dict.get("prob", 0.0)
+                            
+                            if behavior == "invalid":
+                                invalid_detections.append(det)
+                            elif behavior != "unknown":
+                                behaviors.append((behavior, prob, det))
+                    
+                    # If we have invalid detections and valid behaviors, fix them
+                    if invalid_detections and behaviors:
+                        # Find the most confident valid behavior
+                        best_behavior, best_prob, best_det = max(behaviors, key=lambda x: x[1])
+                        
+                        # Update all invalid detections with the best valid behavior
+                        for invalid_det in invalid_detections:
+                            invalid_track = invalid_det["track"]
+                            invalid_behavior_dict = invalid_track.get("behavior", {})
+                            
+                            if isinstance(invalid_behavior_dict, dict):
+                                old_behavior = invalid_behavior_dict.get("label", "unknown")
+                                invalid_behavior_dict["label"] = best_behavior
+                                invalid_behavior_dict["prob"] = best_prob
+                                total_fixed += 1
+                                
+                                logger.debug(
+                                    f"Fixed invalid behavior for track {stitched_id} "
+                                    f"({gallery_identity if gallery_identity else 'no ID'}) "
+                                    f"in camera {invalid_det['camera_id']} at "
+                                    f"{invalid_det['timestamp'].strftime('%H:%M:%S')} "
+                                    f"-> {best_behavior} (from camera {best_det['camera_id']})"
+                                )
+    
+    logger.info(f"Fixed {total_fixed} invalid behaviors using cross-camera information")
+    return video_data
 
 
 def filter_identity_jumps(
@@ -1074,7 +1346,11 @@ def generate_camera_dashboard(
     video_data: List[Tuple[str, List[Dict[str, Any]]]],
     logger: logging.Logger,
 ) -> go.Figure:
-    """Generate interactive behavior timeline for a single camera."""
+    """Generate interactive behavior timeline for a single camera.
+    
+    Creates precise timeline visualization where each track's behavior is shown
+    with accurate start and end timestamps at 1-second granularity.
+    """
     
     if px is None or go is None:
         raise ImportError("Plotly is required for dashboards. Install with: pip install plotly")
@@ -1087,7 +1363,6 @@ def generate_camera_dashboard(
             break
     
     if not camera_frames:
-        # Empty figure
         fig = go.Figure()
         fig.update_layout(title=f"Camera {camera_id} - No Data")
         return fig
@@ -1095,9 +1370,8 @@ def generate_camera_dashboard(
     # Get room for this camera
     room = CAMERA_TO_ROOM.get(camera_id, "unknown")
     
-    # Build timeline data for this camera - only include elephants detected in this camera's room
-    timeline_records = []
-    elephants_in_room = set()  # Track which elephants appear in this room
+    # Build track timelines: (elephant_id, stitched_track_id) -> list of (timestamp, behavior)
+    track_timelines = defaultdict(list)
     
     for frame in camera_frames:
         timestamp = parse_timestamp(frame.get("timestamp", ""))
@@ -1108,13 +1382,13 @@ def generate_camera_dashboard(
             if stitched_id == -1:
                 continue
             
-            # Use gallery_identity if available, otherwise use stitched_id
+            # Use gallery_identity if available, otherwise mark as Invalid
             gallery_identity = track.get("gallery_identity")
             if gallery_identity:
                 elephant_id = gallery_identity
             else:
-                elephant_id = f"Invalid"
-
+                elephant_id = "Invalid"
+            
             # Get behavior from nested dict
             behavior_dict = track.get("behavior", {})
             if isinstance(behavior_dict, dict):
@@ -1122,57 +1396,60 @@ def generate_camera_dashboard(
             else:
                 behavior_label = "unknown"
             
-            elephants_in_room.add(elephant_id)
-            
-            timeline_records.append({
+            # Store with combined key (elephant_id, stitched_track_id) to handle identity switches
+            track_key = f"{elephant_id}_{stitched_id}"
+            track_timelines[track_key].append({
                 "timestamp": timestamp,
-                "elephant_id": elephant_id,
                 "behavior": behavior_label,
+                "elephant_id": elephant_id,
+                "stitched_id": stitched_id,
             })
-
-    if not timeline_records:
+    
+    if not track_timelines:
         fig = go.Figure()
         fig.update_layout(title=f"Camera {camera_id} - No Tracks")
         return fig
     
-    # Convert to DataFrame
-    df = pd.DataFrame(timeline_records)
-    
-    # Compute behavior segments (consecutive same behavior with temporal continuity)
-    # Max gap of 5 seconds to consider frames as continuous
-    MAX_TEMPORAL_GAP = pd.Timedelta(seconds=5)
-    
+    # Process each track timeline to create precise segments
     segments = []
-    df_sorted = df.sort_values(by=["elephant_id", "timestamp"])
     
-    for elephant_id in df_sorted["elephant_id"].unique():
-        elephant_data = df_sorted[df_sorted["elephant_id"] == elephant_id].copy()
-        elephant_data = elephant_data.sort_values("timestamp").reset_index(drop=True)
+    for track_key, timeline in track_timelines.items():
+        # Sort by timestamp
+        timeline.sort(key=lambda x: x["timestamp"])
         
+        elephant_id = timeline[0]["elephant_id"]
+        
+        # Group by consecutive behavior with strict 1-second precision
         current_behavior = None
         segment_start = None
         prev_timestamp = None
         
-        for idx, row in elephant_data.iterrows():
-            behavior = row["behavior"]
-            timestamp = row["timestamp"]
+        for entry in timeline:
+            timestamp = entry["timestamp"]
+            behavior = entry["behavior"]
             
-            # Check if there's a temporal gap (missing frames)
-            temporal_gap = False
+            # Check if behavior changed or if there's a time gap > 1 second
+            behavior_changed = (behavior != current_behavior)
+            time_gap = False
+            
             if prev_timestamp is not None:
-                time_diff = timestamp - prev_timestamp
-                if time_diff > MAX_TEMPORAL_GAP:
-                    temporal_gap = True
+                # Check if gap is more than 1 second (allowing small tolerance for frame rate)
+                gap_seconds = (timestamp - prev_timestamp).total_seconds()
+                if gap_seconds > 1.5:  # Allow 1.5s tolerance for ~1 fps
+                    time_gap = True
             
-            # Start new segment if behavior changes OR temporal gap detected
-            if behavior != current_behavior or temporal_gap:
-                # End previous segment
-                if current_behavior is not None and segment_start is not None:
+            if behavior_changed or time_gap:
+                # Close previous segment
+                if current_behavior is not None and segment_start is not None and prev_timestamp is not None:
+                    # End time is the last observation timestamp + 1 second to show full duration
+                    end_time = prev_timestamp + timedelta(seconds=1)
+                    
                     segments.append({
                         "elephant_id": elephant_id,
                         "start_time": segment_start,
-                        "end_time": prev_timestamp,
+                        "end_time": end_time,
                         "behavior": current_behavior,
+                        "duration_seconds": (end_time - segment_start).total_seconds(),
                     })
                 
                 # Start new segment
@@ -1183,11 +1460,13 @@ def generate_camera_dashboard(
         
         # Add final segment
         if current_behavior is not None and segment_start is not None and prev_timestamp is not None:
+            end_time = prev_timestamp + timedelta(seconds=1)
             segments.append({
                 "elephant_id": elephant_id,
                 "start_time": segment_start,
-                "end_time": prev_timestamp,
+                "end_time": end_time,
                 "behavior": current_behavior,
+                "duration_seconds": (end_time - segment_start).total_seconds(),
             })
     
     if not segments:
@@ -1202,7 +1481,6 @@ def generate_camera_dashboard(
     segments_df["end_time"] = pd.to_datetime(segments_df["end_time"])
     
     # Create Gantt chart
-    room = CAMERA_TO_ROOM.get(camera_id, "unknown")
     elephants_list = sorted(segments_df["elephant_id"].unique())
     title_text = f"Camera {camera_id} ({room.upper()}) - Elephants: {', '.join(elephants_list)}"
     
@@ -1215,6 +1493,7 @@ def generate_camera_dashboard(
         color_discrete_map=BEHAVIOR_COLORS,
         title=title_text,
         labels={"elephant_id": "Elephant", "behavior": "Behavior"},
+        hover_data=["duration_seconds"],
     )
     
     fig.update_yaxes(autorange="reversed")
@@ -1304,20 +1583,28 @@ def save_combined_camera_dashboard(
 
 def plot_room_occupancy(
     room_timelines: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    video_data_original: List[Tuple[str, List[Dict[str, Any]]]],
+    video_data_fixed: List[Tuple[str, List[Dict[str, Any]]]],
     output_path: Path,
     logger: logging.Logger,
 ) -> None:
-    """Create room occupancy visualization showing which elephants are in each room over time."""
+    """Create interactive room occupancy visualization showing which elephants are in each room over time."""
+    
+    if px is None or go is None:
+        logger.error("Plotly is required for visualizations. Install with: pip install plotly")
+        return
     
     num_rooms = len(room_timelines)
-    fig, axes = plt.subplots(num_rooms, 1, figsize=(16, 4 * num_rooms), sharex=True)
     
-    if num_rooms == 1:
-        axes = [axes]
+    # Create subplots
+    fig = make_subplots(
+        rows=num_rooms, cols=1,
+        subplot_titles=[f'{room.upper()} - Cameras: {", ".join(ROOM_PAIRS.get(room, []))}' 
+                       for room in sorted(room_timelines.keys())],
+        vertical_spacing=0.12,
+    )
     
-    for idx, (room, individuals) in enumerate(sorted(room_timelines.items())):
-        ax = axes[idx]
-        
+    for idx, (room, individuals) in enumerate(sorted(room_timelines.items()), start=1):
         # Create time bins (5-minute intervals)
         all_times = []
         for timeline in individuals.values():
@@ -1330,8 +1617,11 @@ def plot_room_occupancy(
         max_time = max(all_times)
         time_bins = pd.date_range(min_time, max_time, freq='5min')
         
-        # Count track IDs and unique identities per time bin
-        track_id_counts = []
+        # Get cameras for this room
+        room_cameras = ROOM_PAIRS.get(room, [])
+        
+        # Count track IDs and unique identities per time bin (after fixing)
+        track_id_counts_fixed = []
         identity_counts = []
         
         for bin_time in time_bins:
@@ -1347,33 +1637,78 @@ def plot_room_occupancy(
                             present_identities.add(obs["gallery_identity"])
                         break
             
-            track_id_counts.append(len(present_track_ids))
+            track_id_counts_fixed.append(len(present_track_ids))
             identity_counts.append(len(present_identities))
         
-        # Plot both metrics
-        ax.plot(time_bins, track_id_counts, linewidth=2, label='Total track IDs', color='#2196F3')
-        ax.fill_between(time_bins, track_id_counts, alpha=0.3, color='#2196F3')
-        ax.plot(time_bins, identity_counts, linewidth=2, label='Unique identities (gallery matched)', 
-               color='#4CAF50', linestyle='--')
+        # Count original track IDs (before fixing)
+        track_id_counts_original = []
         
-        ax.set_ylabel('Count', fontsize=12, fontweight='bold')
-        ax.set_title(f'{room.upper()} - Cameras: {", ".join(ROOM_PAIRS.get(room, []))}', 
-                    fontsize=14, fontweight='bold')
-        ax.grid(alpha=0.3)
-        ax.legend(loc='upper right')
-        ax.set_ylim(bottom=0)
+        for bin_time in time_bins:
+            bin_end = bin_time + pd.Timedelta(minutes=5)
+            present_track_ids_orig = set()
+            
+            for camera_id, frames in video_data_original:
+                if camera_id not in room_cameras:
+                    continue
+                
+                for frame in frames:
+                    timestamp = parse_timestamp(frame.get("timestamp", ""))
+                    if bin_time <= timestamp < bin_end:
+                        tracks = frame.get("tracks", [])
+                        for track in tracks:
+                            stitched_id = track.get("stitched_track_id", -1)
+                            if stitched_id != -1:
+                                present_track_ids_orig.add(stitched_id)
+            
+            track_id_counts_original.append(len(present_track_ids_orig))
+        
+        # Add traces for this room
+        show_legend = (idx == 1)  # Only show legend for first subplot
+        
+        # Unique identities
+        fig.add_trace(
+            go.Scatter(
+                x=time_bins, y=identity_counts,
+                mode='lines',
+                name='Unique identities (gallery matched)',
+                line=dict(color='#4CAF50', width=2, dash='dash'),
+                showlegend=show_legend,
+                legendgroup='identities',
+            ),
+            row=idx, col=1
+        )
+        
+        # Original track IDs
+        fig.add_trace(
+            go.Scatter(
+                x=time_bins, y=track_id_counts_original,
+                mode='lines',
+                name='Track IDs (original)',
+                line=dict(color='#FF9800', width=1.5, dash='dot'),
+                opacity=0.7,
+                showlegend=show_legend,
+                legendgroup='original',
+            ),
+            row=idx, col=1
+        )
+        
+        # Update y-axis for this subplot
+        fig.update_yaxes(title_text='Count', row=idx, col=1, rangemode='tozero')
     
-    # Format x-axis
-    axes[-1].xaxis.set_major_formatter(DateFormatter('%H:%M'))
-    axes[-1].xaxis.set_major_locator(HourLocator())
-    axes[-1].set_xlabel('Time', fontsize=12, fontweight='bold')
+    # Update layout
+    fig.update_xaxes(title_text='Time', row=num_rooms, col=1)
+    fig.update_layout(
+        title_text='Room Occupancy Over Time',
+        height=400 * num_rooms,
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+    )
     
-    plt.suptitle('Room Occupancy Over Time', fontsize=16, fontweight='bold', y=0.995)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    # Save as HTML
+    fig.write_html(output_path)
     
-    logger.info(f"Created room occupancy plot: {output_path}")
+    logger.info(f"Created interactive room occupancy plot: {output_path}")
 
 
 def plot_behavior_distribution(
@@ -1381,7 +1716,11 @@ def plot_behavior_distribution(
     output_path: Path,
     logger: logging.Logger,
 ) -> None:
-    """Create behavior distribution pie charts for each identified elephant."""
+    """Create interactive behavior distribution visualization for each identified elephant."""
+    
+    if px is None or go is None:
+        logger.error("Plotly is required for visualizations. Install with: pip install plotly")
+        return
     
     # Group by identity
     identity_timelines = defaultdict(list)
@@ -1397,14 +1736,29 @@ def plot_behavior_distribution(
     cols = min(3, num_identities)
     rows = (num_identities + cols - 1) // cols
     
-    fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 6 * rows))
+    # Create subplot titles
+    subplot_titles = []
+    for identity, timeline in sorted(identity_timelines.items()):
+        behavior_counts = defaultdict(int)
+        for obs in timeline:
+            behavior = obs["behavior_label"]
+            if behavior != "invalid":
+                behavior_counts[behavior] += 1
+        total = sum(behavior_counts.values())
+        subplot_titles.append(f'{identity}<br>({total} observations)')
     
-    if num_identities == 1:
-        axes = np.array([axes])
-    axes = axes.flatten()
+    # Create subplots
+    fig = make_subplots(
+        rows=rows, cols=cols,
+        specs=[[{'type': 'pie'}] * cols for _ in range(rows)],
+        subplot_titles=subplot_titles,
+        vertical_spacing=0.15,
+        horizontal_spacing=0.05,
+    )
     
     for idx, (identity, timeline) in enumerate(sorted(identity_timelines.items())):
-        ax = axes[idx]
+        row = idx // cols + 1
+        col = idx % cols + 1
         
         # Count behaviors
         behavior_counts = defaultdict(int)
@@ -1414,7 +1768,6 @@ def plot_behavior_distribution(
                 behavior_counts[behavior] += 1
         
         if not behavior_counts:
-            ax.axis('off')
             continue
         
         # Prepare data
@@ -1422,41 +1775,43 @@ def plot_behavior_distribution(
         counts = list(behavior_counts.values())
         colors = [BEHAVIOR_COLORS.get(b, "#000000") for b in behaviors]
         
-        # Create pie chart
-        wedges, texts, autotexts = ax.pie(
-            counts, 
-            labels=behaviors, 
-            colors=colors,
-            autopct='%1.1f%%',
-            startangle=90,
-            textprops={'fontsize': 10}
+        # Add pie chart
+        fig.add_trace(
+            go.Pie(
+                labels=behaviors,
+                values=counts,
+                marker=dict(colors=colors),
+                textposition='inside',
+                textinfo='label+percent',
+                hovertemplate='%{label}<br>%{value} observations<br>%{percent}<extra></extra>',
+            ),
+            row=row, col=col
         )
-        
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_fontweight('bold')
-        
-        ax.set_title(f'{identity}\n({sum(counts)} observations)', 
-                    fontsize=12, fontweight='bold')
     
-    # Hide unused subplots
-    for idx in range(num_identities, len(axes)):
-        axes[idx].axis('off')
+    # Update layout
+    fig.update_layout(
+        title_text='Behavior Distribution by Individual',
+        height=400 * rows,
+        showlegend=False,
+    )
     
-    plt.suptitle('Behavior Distribution by Individual', fontsize=16, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    # Save as HTML
+    fig.write_html(output_path)
     
-    logger.info(f"Created behavior distribution plot: {output_path}")
+    logger.info(f"Created interactive behavior distribution plot: {output_path}")
 
 
 def plot_camera_occupancy(
     video_data: List[Tuple[str, List[Dict[str, Any]]]],
+    video_data_original: List[Tuple[str, List[Dict[str, Any]]]],
     output_path: Path,
     logger: logging.Logger,
 ) -> None:
-    """Create camera occupancy visualization showing elephant count per camera over time."""
+    """Create interactive camera occupancy visualization showing elephant count per camera over time."""
+    
+    if px is None or go is None:
+        logger.error("Plotly is required for visualizations. Install with: pip install plotly")
+        return
     
     # Extract all cameras
     camera_ids = sorted([cam_id for cam_id, _ in video_data])
@@ -1466,37 +1821,39 @@ def plot_camera_occupancy(
         logger.warning("No cameras found for occupancy plot")
         return
     
-    fig, axes = plt.subplots(num_cameras, 1, figsize=(16, 4 * num_cameras), sharex=True)
+    # Create subplots
+    subplot_titles = [f'Camera {cam_id} ({CAMERA_TO_ROOM.get(cam_id, "unknown").upper()})' 
+                      for cam_id in camera_ids]
     
-    if num_cameras == 1:
-        axes = [axes]
+    fig = make_subplots(
+        rows=num_cameras, cols=1,
+        subplot_titles=subplot_titles,
+        vertical_spacing=0.08,
+    )
     
-    for idx, camera_id in enumerate(camera_ids):
-        ax = axes[idx]
-        
-        # Find camera data
+    for idx, camera_id in enumerate(camera_ids, start=1):
+        # Find camera data (fixed)
         camera_frames = None
         for cam_id, frames in video_data:
             if cam_id == camera_id:
                 camera_frames = frames
                 break
         
-        if not camera_frames:
+        # Find original camera data
+        camera_frames_original = None
+        for cam_id, frames in video_data_original:
+            if cam_id == camera_id:
+                camera_frames_original = frames
+                break
+        
+        if not camera_frames or not camera_frames_original:
             continue
         
-        # Extract all timestamps and detections
+        # Extract all timestamps from fixed data
         all_times = []
-        camera_detections = []
-        
         for frame in camera_frames:
             timestamp = parse_timestamp(frame.get("timestamp", ""))
-            tracks = frame.get("tracks", [])
-            
             all_times.append(timestamp)
-            camera_detections.append({
-                "timestamp": timestamp,
-                "tracks": tracks,
-            })
         
         if not all_times:
             continue
@@ -1506,8 +1863,8 @@ def plot_camera_occupancy(
         max_time = max(all_times)
         time_bins = pd.date_range(min_time, max_time, freq='5min')
         
-        # Count track IDs and unique identities per time bin
-        track_id_counts = []
+        # Count metrics from FIXED data
+        track_id_counts_fixed = []
         identity_counts = []
         
         for bin_time in time_bins:
@@ -1515,45 +1872,85 @@ def plot_camera_occupancy(
             present_track_ids = set()
             present_identities = set()
             
-            for frame_data in camera_detections:
-                timestamp = frame_data["timestamp"]
+            for frame in camera_frames:
+                timestamp = parse_timestamp(frame.get("timestamp", ""))
                 if bin_time <= timestamp < bin_end:
-                    for track in frame_data["tracks"]:
+                    for track in frame.get("tracks", []):
                         stitched_id = track.get("stitched_track_id", -1)
                         if stitched_id != -1:
                             present_track_ids.add(stitched_id)
-                            
                             gallery_identity = track.get("gallery_identity")
                             if gallery_identity:
                                 present_identities.add(gallery_identity)
             
-            track_id_counts.append(len(present_track_ids))
+            track_id_counts_fixed.append(len(present_track_ids))
             identity_counts.append(len(present_identities))
         
-        # Plot both metrics
-        ax.plot(time_bins, track_id_counts, linewidth=2, label='Total track IDs', color='#2196F3')
-        ax.fill_between(time_bins, track_id_counts, alpha=0.3, color='#2196F3')
-        ax.plot(time_bins, identity_counts, linewidth=2, label='Unique identities (gallery matched)', 
-               color='#4CAF50', linestyle='--')
+        # Count metrics from ORIGINAL data
+        track_id_counts_original = []
         
-        room = CAMERA_TO_ROOM.get(camera_id, "unknown")
-        ax.set_ylabel('Count', fontsize=12, fontweight='bold')
-        ax.set_title(f'Camera {camera_id} ({room.upper()})', fontsize=14, fontweight='bold')
-        ax.grid(alpha=0.3)
-        ax.legend(loc='upper right')
-        ax.set_ylim(bottom=0)
+        for bin_time in time_bins:
+            bin_end = bin_time + pd.Timedelta(minutes=5)
+            present_track_ids_orig = set()
+            
+            for frame in camera_frames_original:
+                timestamp = parse_timestamp(frame.get("timestamp", ""))
+                if bin_time <= timestamp < bin_end:
+                    tracks = frame.get("tracks", [])
+                    for track in tracks:
+                        stitched_id = track.get("stitched_track_id", -1)
+                        if stitched_id != -1:
+                            present_track_ids_orig.add(stitched_id)
+            
+            track_id_counts_original.append(len(present_track_ids_orig))
+        
+        # Add traces for this camera
+        show_legend = (idx == 1)  # Only show legend for first subplot
+        
+        # Unique identities
+        fig.add_trace(
+            go.Scatter(
+                x=time_bins, y=identity_counts,
+                mode='lines',
+                name='Unique identities (gallery matched)',
+                line=dict(color='#4CAF50', width=2, dash='dash'),
+                showlegend=show_legend,
+                legendgroup='identities',
+            ),
+            row=idx, col=1
+        )
+        
+        # Original track IDs
+        fig.add_trace(
+            go.Scatter(
+                x=time_bins, y=track_id_counts_original,
+                mode='lines',
+                name='Track IDs (original)',
+                line=dict(color='#FF9800', width=1.5, dash='dot'),
+                opacity=0.7,
+                showlegend=show_legend,
+                legendgroup='original',
+            ),
+            row=idx, col=1
+        )
+        
+        # Update y-axis for this subplot
+        fig.update_yaxes(title_text='Count', row=idx, col=1, rangemode='tozero')
     
-    # Format x-axis
-    axes[-1].xaxis.set_major_formatter(DateFormatter('%H:%M'))
-    axes[-1].xaxis.set_major_locator(HourLocator())
-    axes[-1].set_xlabel('Time', fontsize=12, fontweight='bold')
+    # Update layout
+    fig.update_xaxes(title_text='Time', row=num_cameras, col=1)
+    fig.update_layout(
+        title_text='Camera Occupancy Over Time',
+        height=350 * num_cameras,
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+    )
     
-    plt.suptitle('Camera Occupancy Over Time', fontsize=16, fontweight='bold', y=0.995)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    # Save as HTML
+    fig.write_html(output_path)
     
-    logger.info(f"Created camera occupancy plot: {output_path}")
+    logger.info(f"Created interactive camera occupancy plot: {output_path}")
 
 
 # ==============================================================================
@@ -1600,6 +1997,10 @@ def main() -> None:
     # Load stitched data
     video_data = load_stitched_data(input_path, logger, invalid_zones_dir)
     
+    # Store original data for comparison (before fixing)
+    import copy
+    video_data_original = copy.deepcopy(video_data)
+    
     # Debug mode: focus on camera 019 at specific times
     debug_camera = "019"
     debug_time_ranges = [(18, 49), (19, 21)]  # (hour, minute) tuples
@@ -1610,6 +2011,20 @@ def main() -> None:
         logger,
         debug_camera=debug_camera,
         debug_time_ranges=debug_time_ranges,
+    )
+    
+    # Smooth behavior labels after identity fixing
+    video_data = smooth_behavior_labels(
+        video_data,
+        logger,
+        time_window_seconds=1.5,
+    )
+    
+    # Fix invalid behaviors using cross-camera information
+    video_data = fix_invalid_behaviors_cross_camera(
+        video_data,
+        logger,
+        time_tolerance_seconds=3.0,
     )
     
     # # # TODO -- improve this Filter identity jumps if requested
@@ -1660,21 +2075,24 @@ def main() -> None:
     # 4. Room occupancy visualization
     plot_room_occupancy(
         room_timelines,
-        output_dir / "room_occupancy.png",
+        video_data_original,
+        video_data,
+        output_dir / "room_occupancy.html",
         logger,
     )
     
     # 5. Camera occupancy visualization
     plot_camera_occupancy(
         video_data,
-        output_dir / "camera_occupancy.png",
+        video_data_original,
+        output_dir / "camera_occupancy.html",
         logger,
     )
     
     # 6. Behavior distribution
     plot_behavior_distribution(
         timelines,
-        output_dir / "behavior_distribution.png",
+        output_dir / "behavior_distribution.html",
         logger,
     )
     
@@ -1683,12 +2101,12 @@ def main() -> None:
     logger.info("ANALYSIS COMPLETE")
     logger.info("=" * 80)
     logger.info(f"Results saved to: {output_dir}")
-    logger.info("  - behavior_summary.txt     : Human-readable report for zookeepers")
-    logger.info("  - timeline_data.csv        : Detailed data for further analysis")
-    logger.info("  - behavior_dashboard.html  : Interactive dashboard (4 cameras)")
-    logger.info("  - room_occupancy.png       : Room occupancy over time")
-    logger.info("  - camera_occupancy.png     : Camera occupancy over time")
-    logger.info("  - behavior_distribution.png: Behavior breakdown per elephant")
+    logger.info("  - behavior_summary.txt      : Human-readable report for zookeepers")
+    logger.info("  - timeline_data.csv         : Detailed data for further analysis")
+    logger.info("  - behavior_dashboard.html   : Interactive dashboard (4 cameras)")
+    logger.info("  - room_occupancy.html       : Interactive room occupancy over time")
+    logger.info("  - camera_occupancy.html     : Interactive camera occupancy over time")
+    logger.info("  - behavior_distribution.html: Interactive behavior breakdown per elephant")
 
 
 if __name__ == "__main__":
