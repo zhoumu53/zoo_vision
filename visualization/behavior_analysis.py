@@ -515,8 +515,10 @@ def smooth_behavior_labels(
                 
                 current_behavior = behavior_dict.get("label", "unknown")
                 
-                # Use larger window for 'invalid' labels
+                # Use larger window for 'invalid' labels and for spike detection
+                # This ensures we can find neighbors even with small gaps in the timeline
                 window = invalid_window_seconds if current_behavior == "invalid" else time_window_seconds
+                spike_detection_window = invalid_window_seconds  # Always use larger window for spike detection
                 
                 # Collect behaviors from neighbors within time window (excluding current)
                 neighbor_behaviors = []
@@ -564,7 +566,7 @@ def smooth_behavior_labels(
                         total_smoothed += 1
                         continue
                     
-                    # 2. Detect brief spikes (≤3 consecutive frames with same behavior)
+                    # 2. Detect brief spikes (≤max_consecutive_frames with same behavior)
                     # Count consecutive frames with current behavior
                     consecutive_count = 1  # Current frame
                     
@@ -572,7 +574,7 @@ def smooth_behavior_labels(
                     for j in range(i - 1, -1, -1):
                         neighbor = track_timeline[j]
                         time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
-                        if time_diff > window:
+                        if time_diff > spike_detection_window:
                             break
                         neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                         if isinstance(neighbor_behavior_dict, dict):
@@ -586,7 +588,7 @@ def smooth_behavior_labels(
                     for j in range(i + 1, len(track_timeline)):
                         neighbor = track_timeline[j]
                         time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
-                        if time_diff > window:
+                        if time_diff > spike_detection_window:
                             break
                         neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                         if isinstance(neighbor_behavior_dict, dict):
@@ -598,12 +600,12 @@ def smooth_behavior_labels(
                     
                     # If it's a brief spike, check if neighbors agree on different behavior
                     if consecutive_count <= max_consecutive_frames:
-                        # Get behaviors before the spike (within window, excluding current behavior)
+                        # Get behaviors before the spike (within spike detection window, excluding current behavior)
                         behaviors_before_spike = []
                         for j in range(i - 1, -1, -1):
                             neighbor = track_timeline[j]
                             time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
-                            if time_diff > window:
+                            if time_diff > spike_detection_window:
                                 break
                             neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                             if isinstance(neighbor_behavior_dict, dict):
@@ -613,12 +615,12 @@ def smooth_behavior_labels(
                                     if len(behaviors_before_spike) >= 2:
                                         break
                         
-                        # Get behaviors after the spike (within window, excluding current behavior)
+                        # Get behaviors after the spike (within spike detection window, excluding current behavior)
                         behaviors_after_spike = []
                         for j in range(i + 1, len(track_timeline)):
                             neighbor = track_timeline[j]
                             time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
-                            if time_diff > window:
+                            if time_diff > spike_detection_window:
                                 break
                             neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                             if isinstance(neighbor_behavior_dict, dict):
