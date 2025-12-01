@@ -57,6 +57,11 @@ ID2NAMES = {
     '06': 'Zali',
 }
 
+SOCIAL_GROUPS = {
+    1: ['Chandra', 'Indi',],
+    2: ['Panang',  'Fahra'],
+}
+
 
 DEFAULT_IDENTITY_NAMES = [
     "01_Chandra",
@@ -129,7 +134,6 @@ def extract_metadata_from_video_path(videopath) -> Tuple[str, str, str, str]:
     
     filename = parts[-1]
     
-    print("Filename extracted:", filename)
     camera_id = filename.split('-')[3]
     date = filename.split('-')[4]
     time = filename.split('-')[5]
