@@ -29,7 +29,17 @@ GALLERY_TOP_K=3
 # Input directory containing tracking results
 # This should contain subdirectories with *_tracks.jsonl files
 # Example: /media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250729/20250729_18
-INPUT_DIR="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250729/20250729_18"
+
+
+date=$1
+time=$2
+if [ -z "$date" ] || [ -z "$time" ]; then
+    echo "Usage: bash run_offline_stitching.sh <date> <time>"
+    echo "Example: bash run_offline_stitching.sh 20250729 18"
+    exit 1
+fi
+
+INPUT_DIR="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/$date/${date}_$time"
 
 # Output directory (default: ${INPUT_DIR}/stitched_tracks)
 # Leave empty to use default
@@ -47,7 +57,7 @@ STAGE2_SIZE_RATIO=0.6         # Stricter size matching
 
 # Debug mode: limit frames processed (leave empty for full processing)
 # Example: MAX_FRAMES=100 for quick testing
-MAX_FRAMES=1000
+MAX_FRAMES=""
 
 # Social group validation (requires gallery matching to be enabled)
 # Set to "true" to enable, "" to disable
@@ -96,8 +106,6 @@ CMD="python3 offline_stitching.py \
     --stage2-sim-threshold \"$STAGE2_SIM_THRESHOLD\" \
     --stage2-time-gap \"$STAGE2_TIME_GAP\" \
     --stage2-size-ratio \"$STAGE2_SIZE_RATIO\" \
-    --visualize \
-    --vis-max-frames 50 \
     --log-level INFO"
 
 # Add output directory if specified
@@ -124,7 +132,7 @@ if [ "$USE_SOCIAL_GROUPS" = "true" ]; then
 fi
 
 # # Run offline stitching
-# eval $CMD
+eval $CMD
 
 # Determine actual output directory for final message
 if [ -z "$OUTPUT_DIR" ]; then
@@ -151,8 +159,8 @@ INPUT_JSONL="${ACTUAL_OUTPUT}/stitched_tracks.jsonl"
 # Output directory for visualization frames
 OUTPUT_DIR="${ACTUAL_OUTPUT}/visualizations_2x2"
 
-FPS=1.0              # Target FPS (1.0 = 1 frame per second)
-MAX_FRAMES=500       # Maximum number of frames to generate
+FPS=2              # Target FPS (1.0 = 1 frame per second)
+MAX_FRAMES=1000       # Maximum number of frames to generate
 
 # Run visualization
 python3 visualize_stitched_tracks.py \
