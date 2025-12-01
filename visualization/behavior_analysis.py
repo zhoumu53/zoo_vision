@@ -452,6 +452,7 @@ def smooth_behavior_labels(
     video_data: List[Tuple[str, List[Dict[str, Any]]]],
     logger: logging.Logger,
     time_window_seconds: float = 1.5,
+    invalid_window_seconds: float = 10.0,
 ) -> List[Tuple[str, List[Dict[str, Any]]]]:
     """Smooth behavior labels within time windows for the same track.
     
@@ -459,16 +460,20 @@ def smooth_behavior_labels(
     sudden behavior jumps are likely detection errors. This function replaces brief
     behavior anomalies with the dominant behavior in the local time window.
     
+    For 'invalid' labels, uses a larger time window to find valid behaviors.
+    
     Args:
         video_data: List of (camera_id, frames) tuples
         logger: Logger instance
         time_window_seconds: Time window to check for behavior consistency (default: 1.5s)
+        invalid_window_seconds: Larger window for finding valid behaviors around 'invalid' (default: 10.0s)
     
     Returns:
         video_data with smoothed behavior labels
     """
     logger.info("Smoothing behavior labels...")
     logger.info(f"  Time window: {time_window_seconds}s")
+    logger.info(f"  Invalid window: {invalid_window_seconds}s")
     
     smoothed_data = []
     total_smoothed = 0
@@ -507,43 +512,43 @@ def smooth_behavior_labels(
                 
                 current_behavior = behavior_dict.get("label", "unknown")
                 
-                # Skip if already a valid behavior with high confidence
-                current_prob = behavior_dict.get("prob", 0.0)
-                if current_behavior not in ["invalid", "unknown"] and current_prob > 0.6:
-                    continue
+                # Use larger window for 'invalid' labels
+                window = invalid_window_seconds if current_behavior == "invalid" else time_window_seconds
                 
-                # Collect behaviors from neighbors within time window
+                # Collect behaviors from neighbors within time window (excluding current)
                 neighbor_behaviors = []
                 
                 # Look backward
                 for j in range(i - 1, -1, -1):
                     neighbor = track_timeline[j]
                     time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
-                    if time_diff > time_window_seconds:
+                    if time_diff > window:
                         break
                     
                     neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                     if isinstance(neighbor_behavior_dict, dict):
                         neighbor_behavior = neighbor_behavior_dict.get("label", "unknown")
                         neighbor_prob = neighbor_behavior_dict.get("prob", 0.0)
-                        if neighbor_behavior not in ["invalid", "unknown"]:
+                        # Exclude 'invalid' behaviors from smoothing
+                        if neighbor_behavior != "invalid":
                             neighbor_behaviors.append((neighbor_behavior, neighbor_prob))
                 
                 # Look forward
                 for j in range(i + 1, len(track_timeline)):
                     neighbor = track_timeline[j]
                     time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
-                    if time_diff > time_window_seconds:
+                    if time_diff > window:
                         break
                     
                     neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                     if isinstance(neighbor_behavior_dict, dict):
                         neighbor_behavior = neighbor_behavior_dict.get("label", "unknown")
                         neighbor_prob = neighbor_behavior_dict.get("prob", 0.0)
-                        if neighbor_behavior not in ["invalid", "unknown"]:
+                        # Exclude 'invalid' behaviors from smoothing
+                        if neighbor_behavior != "invalid":
                             neighbor_behaviors.append((neighbor_behavior, neighbor_prob))
                 
-                # If we have valid neighbors, use the most common valid behavior
+                # If we have neighbors, check if current behavior should be smoothed
                 if neighbor_behaviors:
                     # Count behaviors weighted by probability
                     behavior_scores = defaultdict(float)
@@ -553,13 +558,62 @@ def smooth_behavior_labels(
                     # Get the behavior with highest total score
                     best_behavior = max(behavior_scores.items(), key=lambda x: x[1])[0]
                     
-                    # Update if different
-                    if best_behavior != current_behavior:
+                    # Smooth if:
+                    # 1. Current behavior is 'invalid' (always smooth these), OR
+                    # 2. Current behavior differs from dominant neighbor behavior AND appears isolated
+                    should_smooth = False
+                    
+                    if current_behavior == "invalid":
+                        should_smooth = True
+                    elif current_behavior != best_behavior:
+                        # Check if best_behavior appears before AND after current frame
+                        behaviors_before = []
+                        behaviors_after = []
+                        
+                        for j in range(i - 1, -1, -1):
+                            neighbor = track_timeline[j]
+                            time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
+                            if time_diff > time_window_seconds:
+                                break
+                            neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                            if isinstance(neighbor_behavior_dict, dict):
+                                nb = neighbor_behavior_dict.get("label", "unknown")
+                                if nb != "invalid":
+                                    behaviors_before.append(nb)
+                        
+                        for j in range(i + 1, len(track_timeline)):
+                            neighbor = track_timeline[j]
+                            time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
+                            if time_diff > time_window_seconds:
+                                break
+                            neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                            if isinstance(neighbor_behavior_dict, dict):
+                                nb = neighbor_behavior_dict.get("label", "unknown")
+                                if nb != "invalid":
+                                    behaviors_after.append(nb)
+                        
+                        # Smooth if:
+                        # - The same behavior appears both before and after, OR
+                        # - Current behavior has lower score than best_behavior and neighbors agree
+                        if behaviors_before and behaviors_after:
+                            common_behaviors = set(behaviors_before) & set(behaviors_after)
+                            if best_behavior in common_behaviors:
+                                should_smooth = True
+                            else:
+                                # Also smooth if current prob is low and neighbors have higher total score
+                                current_prob = behavior_dict.get("prob", 0.0)
+                                best_score = behavior_scores[best_behavior]
+                                # If neighbors strongly agree on a behavior and current prob is lower
+                                if len(neighbor_behaviors) >= 2 and current_prob < 0.5:
+                                    should_smooth = True
+                    
+                    # Update if we should smooth
+                    if should_smooth and best_behavior != current_behavior:
                         behavior_dict["label"] = best_behavior
-                        # Keep the original probability or use average of neighbors
-                        avg_neighbor_prob = sum(p for b, p in neighbor_behaviors if b == best_behavior) / \
-                                           sum(1 for b, p in neighbor_behaviors if b == best_behavior)
-                        behavior_dict["prob"] = avg_neighbor_prob
+                        # Use average probability of neighbors with this behavior
+                        matching_probs = [p for b, p in neighbor_behaviors if b == best_behavior]
+                        if matching_probs:
+                            behavior_dict["prob"] = sum(matching_probs) / len(matching_probs)
                         total_smoothed += 1
         
         smoothed_data.append((camera_id, frames))
@@ -2018,6 +2072,7 @@ def main() -> None:
         video_data,
         logger,
         time_window_seconds=1.5,
+        invalid_window_seconds=10.0,
     )
     
     # Fix invalid behaviors using cross-camera information

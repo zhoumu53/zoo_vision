@@ -4,9 +4,20 @@
 # This script analyzes elephant behavior from stitched tracking results
 
 # Input configuration
-INPUT_JSONL="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250729/20250729_18/stitched_tracks/stitched_tracks.jsonl"
-OUTPUT_DIR="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250729/20250729_18/behavior_analysis"
+date=$1
+time=$2
 
+if # provided date and time arguments; then
+    date=$1
+    time=$2
+else
+    echo "Usage: bash run_behavior_analysis.sh <date> <time>"
+    echo "Example: bash run_behavior_analysis.sh 20250729 22"
+    exit 1
+fi
+
+INPUT_JSONL="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/$date/${date}_$time/stitched_tracks/stitched_tracks.jsonl"
+OUTPUT_DIR="/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/$date/${date}_$time/behavior_analysis"
 # Log level (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL="INFO"
 
