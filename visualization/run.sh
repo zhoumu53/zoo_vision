@@ -66,21 +66,21 @@ video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240905PM/ZAG-ELP-CAM-016-20240905-22471
 # cmd=video_tracks_reid_improved
 cmd=video_tracks_reid_improved_with_behavior
 
-python3 visualization/run_multi_camera.py \
-  --video "$video" \
-  --cmd "$cmd" \
-  --track-outdir /media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams \
-  --class-names models/segmentation/yolo/class_names.txt \
-  --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
-  --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
-  --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
-  --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
-  --id-checkpoint ../models/identity/vit/v4/config.ptc \
-  --tracker-config bytetrack.yaml \
-  --frame-skip 5 \
-  --device cuda \
-  --yolo-device cuda \
-  --gallery-device cpu \
+# python3 visualization/run_multi_camera.py \
+#   --video "$video" \
+#   --cmd "$cmd" \
+#   --track-outdir /media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams \
+#   --class-names models/segmentation/yolo/class_names.txt \
+#   --yolo-model models/segmentation/yolo/all_v3/weights/best.pt \
+#   --reid-config training/PoseGuidedReID/configs/elephant_resnet.yml \
+#   --reid-checkpoint training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/net_best.pth \
+#   --gallery training/PoseGuidedReID/logs/elephant_resnet/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz \
+#   --id-checkpoint ../models/identity/vit/v4/config.ptc \
+#   --tracker-config bytetrack.yaml \
+#   --frame-skip 5 \
+#   --device cuda \
+#   --yolo-device cuda \
+#   --gallery-device cpu \
 
 # video='/mnt/camera_nas/ZAG-ELP-CAM-016/20240906PM/ZAG-ELP-CAM-016-20240906-184716-1725641236715-7.mp4'
 # python3 visualization/video_tracks_reid_improved_with_behavior.py \
@@ -139,3 +139,17 @@ python3 visualization/run_multi_camera.py \
 #   --max-new-reid-per-frame 3 \
 #   --online-reid-from-hub \
 #   --save-jpg --jpg-interval 20 --jpg-max-count 20000
+
+
+# python3 visualization/elephant_dashboard.py \
+#   --input-dir /media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250729/20250729_18 \
+#   --output-dashboard ./tmp/elephant_timeline_20250729.html \
+#   --output-summary ./tmp/behavior_summary_20250729.csv \
+#   --output-stitched-json ./tmp/stitched_results_20250729.jsonl \
+#   --gap-threshold 10
+
+# python3 visualization/generate_video.py \
+#   --stitched-json ./tmp/stitched_results_20250729.jsonl \
+#   --output-video ./tmp/output_video.mp4 \
+#   --fps 1 \
+#   --max-duration 100

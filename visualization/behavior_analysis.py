@@ -594,18 +594,53 @@ def smooth_behavior_labels(
                         
                         # Smooth if:
                         # - The same behavior appears both before and after, OR
-                        # - Current behavior has lower score than best_behavior and neighbors agree
+                        # - Current behavior has lower score than best_behavior and neighbors strongly agree, OR
+                        # - Current behavior appears very briefly (≤2 frames) and is surrounded by different behavior
                         if behaviors_before and behaviors_after:
                             common_behaviors = set(behaviors_before) & set(behaviors_after)
                             if best_behavior in common_behaviors:
                                 should_smooth = True
                             else:
-                                # Also smooth if current prob is low and neighbors have higher total score
-                                current_prob = behavior_dict.get("prob", 0.0)
-                                best_score = behavior_scores[best_behavior]
-                                # If neighbors strongly agree on a behavior and current prob is lower
-                                if len(neighbor_behaviors) >= 2 and current_prob < 0.5:
+                                # Check if current behavior appears isolated (brief spike)
+                                # Count consecutive frames with current behavior
+                                consecutive_count = 1  # Current frame
+                                
+                                # Count backward
+                                for j in range(i - 1, -1, -1):
+                                    neighbor = track_timeline[j]
+                                    time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
+                                    if time_diff > time_window_seconds:
+                                        break
+                                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                                    if isinstance(neighbor_behavior_dict, dict):
+                                        nb = neighbor_behavior_dict.get("label", "unknown")
+                                        if nb == current_behavior:
+                                            consecutive_count += 1
+                                        else:
+                                            break
+                                
+                                # Count forward
+                                for j in range(i + 1, len(track_timeline)):
+                                    neighbor = track_timeline[j]
+                                    time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
+                                    if time_diff > time_window_seconds:
+                                        break
+                                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                                    if isinstance(neighbor_behavior_dict, dict):
+                                        nb = neighbor_behavior_dict.get("label", "unknown")
+                                        if nb == current_behavior:
+                                            consecutive_count += 1
+                                        else:
+                                            break
+                                
+                                # Smooth if brief isolated spike (≤3 frames) and neighbors agree on different behavior
+                                if consecutive_count <= 3 and len(behaviors_before) >= 2 and len(behaviors_after) >= 2:
                                     should_smooth = True
+                                # Also smooth if current prob is low and neighbors have higher total score
+                                elif len(neighbor_behaviors) >= 2:
+                                    current_prob = behavior_dict.get("prob", 0.0)
+                                    if current_prob < 0.5:
+                                        should_smooth = True
                     
                     # Update if we should smooth
                     if should_smooth and best_behavior != current_behavior:

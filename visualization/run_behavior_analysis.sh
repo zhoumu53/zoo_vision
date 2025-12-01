@@ -7,7 +7,7 @@
 date=$1
 time=$2
 
-if # provided date and time arguments; then
+if [ $# -eq 2 ]; then
     date=$1
     time=$2
 else
