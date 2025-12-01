@@ -453,6 +453,7 @@ def smooth_behavior_labels(
     logger: logging.Logger,
     time_window_seconds: float = 1.5,
     invalid_window_seconds: float = 10.0,
+    max_consecutive_frames: int = 3,
 ) -> List[Tuple[str, List[Dict[str, Any]]]]:
     """Smooth behavior labels within time windows for the same track.
     
@@ -467,6 +468,7 @@ def smooth_behavior_labels(
         logger: Logger instance
         time_window_seconds: Time window to check for behavior consistency (default: 1.5s)
         invalid_window_seconds: Larger window for finding valid behaviors around 'invalid' (default: 10.0s)
+        max_consecutive_frames: Maximum consecutive frames to consider as a spike (default: 3)
     
     Returns:
         video_data with smoothed behavior labels
@@ -474,6 +476,7 @@ def smooth_behavior_labels(
     logger.info("Smoothing behavior labels...")
     logger.info(f"  Time window: {time_window_seconds}s")
     logger.info(f"  Invalid window: {invalid_window_seconds}s")
+    logger.info(f"  Max consecutive frames for spike detection: {max_consecutive_frames}")
     
     smoothed_data = []
     total_smoothed = 0
@@ -550,106 +553,88 @@ def smooth_behavior_labels(
                 
                 # If we have neighbors, check if current behavior should be smoothed
                 if neighbor_behaviors:
-                    # Count behaviors weighted by probability
-                    behavior_scores = defaultdict(float)
-                    for behavior, prob in neighbor_behaviors:
-                        behavior_scores[behavior] += prob
+                    # Extract just behavior labels (ignore probabilities)
+                    neighbor_labels = [b for b, p in neighbor_behaviors if b != "invalid"]
                     
-                    # Get the behavior with highest total score
-                    best_behavior = max(behavior_scores.items(), key=lambda x: x[1])[0]
+                    # 1. Always smooth 'invalid' labels with valid neighbors
+                    if current_behavior == "invalid" and neighbor_labels:
+                        # Use most common valid behavior
+                        most_common = max(set(neighbor_labels), key=neighbor_labels.count)
+                        behavior_dict["label"] = most_common
+                        total_smoothed += 1
+                        continue
                     
-                    # Smooth if:
-                    # 1. Current behavior is 'invalid' (always smooth these), OR
-                    # 2. Current behavior differs from dominant neighbor behavior AND appears isolated
-                    should_smooth = False
+                    # 2. Detect brief spikes (≤3 consecutive frames with same behavior)
+                    # Count consecutive frames with current behavior
+                    consecutive_count = 1  # Current frame
                     
-                    if current_behavior == "invalid":
-                        should_smooth = True
-                    elif current_behavior != best_behavior:
-                        # Check if best_behavior appears before AND after current frame
-                        behaviors_before = []
-                        behaviors_after = []
-                        
+                    # Count backward
+                    for j in range(i - 1, -1, -1):
+                        neighbor = track_timeline[j]
+                        time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
+                        if time_diff > window:
+                            break
+                        neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                        if isinstance(neighbor_behavior_dict, dict):
+                            nb = neighbor_behavior_dict.get("label", "unknown")
+                            if nb == current_behavior:
+                                consecutive_count += 1
+                            else:
+                                break
+                    
+                    # Count forward
+                    for j in range(i + 1, len(track_timeline)):
+                        neighbor = track_timeline[j]
+                        time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
+                        if time_diff > window:
+                            break
+                        neighbor_behavior_dict = neighbor["track"].get("behavior", {})
+                        if isinstance(neighbor_behavior_dict, dict):
+                            nb = neighbor_behavior_dict.get("label", "unknown")
+                            if nb == current_behavior:
+                                consecutive_count += 1
+                            else:
+                                break
+                    
+                    # If it's a brief spike, check if neighbors agree on different behavior
+                    if consecutive_count <= max_consecutive_frames:
+                        # Get behaviors before the spike (within window, excluding current behavior)
+                        behaviors_before_spike = []
                         for j in range(i - 1, -1, -1):
                             neighbor = track_timeline[j]
                             time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
-                            if time_diff > time_window_seconds:
+                            if time_diff > window:
                                 break
                             neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                             if isinstance(neighbor_behavior_dict, dict):
                                 nb = neighbor_behavior_dict.get("label", "unknown")
-                                if nb != "invalid":
-                                    behaviors_before.append(nb)
+                                if nb != current_behavior and nb != "invalid":
+                                    behaviors_before_spike.append(nb)
+                                    if len(behaviors_before_spike) >= 2:
+                                        break
                         
+                        # Get behaviors after the spike (within window, excluding current behavior)
+                        behaviors_after_spike = []
                         for j in range(i + 1, len(track_timeline)):
                             neighbor = track_timeline[j]
                             time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
-                            if time_diff > time_window_seconds:
+                            if time_diff > window:
                                 break
                             neighbor_behavior_dict = neighbor["track"].get("behavior", {})
                             if isinstance(neighbor_behavior_dict, dict):
                                 nb = neighbor_behavior_dict.get("label", "unknown")
-                                if nb != "invalid":
-                                    behaviors_after.append(nb)
+                                if nb != current_behavior and nb != "invalid":
+                                    behaviors_after_spike.append(nb)
+                                    if len(behaviors_after_spike) >= 2:
+                                        break
                         
-                        # Smooth if:
-                        # - The same behavior appears both before and after, OR
-                        # - Current behavior has lower score than best_behavior and neighbors strongly agree, OR
-                        # - Current behavior appears very briefly (≤2 frames) and is surrounded by different behavior
-                        if behaviors_before and behaviors_after:
-                            common_behaviors = set(behaviors_before) & set(behaviors_after)
-                            if best_behavior in common_behaviors:
-                                should_smooth = True
-                            else:
-                                # Check if current behavior appears isolated (brief spike)
-                                # Count consecutive frames with current behavior
-                                consecutive_count = 1  # Current frame
-                                
-                                # Count backward
-                                for j in range(i - 1, -1, -1):
-                                    neighbor = track_timeline[j]
-                                    time_diff = (timestamp - neighbor["timestamp"]).total_seconds()
-                                    if time_diff > time_window_seconds:
-                                        break
-                                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
-                                    if isinstance(neighbor_behavior_dict, dict):
-                                        nb = neighbor_behavior_dict.get("label", "unknown")
-                                        if nb == current_behavior:
-                                            consecutive_count += 1
-                                        else:
-                                            break
-                                
-                                # Count forward
-                                for j in range(i + 1, len(track_timeline)):
-                                    neighbor = track_timeline[j]
-                                    time_diff = (neighbor["timestamp"] - timestamp).total_seconds()
-                                    if time_diff > time_window_seconds:
-                                        break
-                                    neighbor_behavior_dict = neighbor["track"].get("behavior", {})
-                                    if isinstance(neighbor_behavior_dict, dict):
-                                        nb = neighbor_behavior_dict.get("label", "unknown")
-                                        if nb == current_behavior:
-                                            consecutive_count += 1
-                                        else:
-                                            break
-                                
-                                # Smooth if brief isolated spike (≤3 frames) and neighbors agree on different behavior
-                                if consecutive_count <= 3 and len(behaviors_before) >= 2 and len(behaviors_after) >= 2:
-                                    should_smooth = True
-                                # Also smooth if current prob is low and neighbors have higher total score
-                                elif len(neighbor_behaviors) >= 2:
-                                    current_prob = behavior_dict.get("prob", 0.0)
-                                    if current_prob < 0.5:
-                                        should_smooth = True
-                    
-                    # Update if we should smooth
-                    if should_smooth and best_behavior != current_behavior:
-                        behavior_dict["label"] = best_behavior
-                        # Use average probability of neighbors with this behavior
-                        matching_probs = [p for b, p in neighbor_behaviors if b == best_behavior]
-                        if matching_probs:
-                            behavior_dict["prob"] = sum(matching_probs) / len(matching_probs)
-                        total_smoothed += 1
+                        # If we have at least 2 neighbors on each side and they agree, smooth the spike
+                        if len(behaviors_before_spike) >= 2 and len(behaviors_after_spike) >= 2:
+                            all_surrounding = behaviors_before_spike + behaviors_after_spike
+                            most_common = max(set(all_surrounding), key=all_surrounding.count)
+                            if all_surrounding.count(most_common) >= 3:  # Majority agreement
+                                behavior_dict["label"] = most_common
+                                total_smoothed += 1
         
         smoothed_data.append((camera_id, frames))
     
@@ -2108,6 +2093,7 @@ def main() -> None:
         logger,
         time_window_seconds=1.5,
         invalid_window_seconds=10.0,
+        max_consecutive_frames=25,
     )
     
     # Fix invalid behaviors using cross-camera information
