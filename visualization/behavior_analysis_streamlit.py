@@ -30,6 +30,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# Import compression utilities
+from utils import compress_timeline_to_segments, decompress_segments_to_timeline
+
 # ==============================================================================
 # Configuration
 # ==============================================================================
@@ -50,6 +53,10 @@ CAMERA_TO_ROOM = {
     "019": "room1",
     "017": "room2",
     "018": "room2",
+    "16": "room1",
+    "19": "room1",
+    "17": "room2",
+    "18": "room2",
 }
 
 BEHAVIOR_COLORS = {
@@ -563,6 +570,7 @@ def generate_camera_dashboard(
     """Generate interactive behavior timeline for a single camera."""
     
     # Filter data for this camera
+    ### formating camera_id 's format
     camera_df = df[df['camera_id'] == camera_id].copy()
     
     if camera_df.empty:
@@ -628,6 +636,82 @@ def generate_camera_dashboard(
         title=title_text,
         labels={"elephant_id": "Elephant", "behavior": "Behavior"},
         hover_data=["duration_seconds"],
+    )
+    
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(
+        xaxis_title="Time (HH:MM:SS)",
+        yaxis_title="Elephant ID",
+        legend_title_text="Behavior",
+        height=400,
+        hovermode="closest",
+        xaxis=dict(tickformat="%H:%M:%S", type="date"),
+    )
+    
+    return fig
+
+
+def generate_camera_dashboard_from_segments(
+    camera_id: str,
+    segments_df: pd.DataFrame,
+) -> go.Figure:
+    """Generate camera dashboard directly from compressed segments (FASTER).
+    
+    This is optimized to work with pre-computed segments from compress_timeline_to_segments().
+    Significantly faster than generate_camera_dashboard() because segments are pre-computed.
+    
+    Args:
+        camera_id: Camera ID to display
+        segments_df: DataFrame from compress_timeline_to_segments() with columns:
+            - stitched_id, behavior, camera_id, room
+            - start_timestamp, end_timestamp, duration_seconds, frame_count
+            - gallery_identity (optional)
+    """
+    # Filter for this camera
+
+
+    # format segments_df['camera_id'] and camera_id both, into str without leading zeros
+    camera_segments = segments_df[segments_df['camera_id'].astype(str).str.lstrip('0') == str(camera_id).lstrip('0')].copy()
+    
+    if camera_segments.empty:
+        fig = go.Figure()
+        fig.update_layout(title=f"Camera {camera_id} - No Data")
+        return fig
+    
+    # Get room
+    room = CAMERA_TO_ROOM.get(camera_id, "unknown")
+    
+    # Create elephant_id from gallery_identity or stitched_id
+    if 'gallery_identity' in camera_segments.columns:
+        camera_segments['elephant_id'] = camera_segments['gallery_identity'].fillna(
+            'ID_' + camera_segments['stitched_id'].astype(str)
+        )
+    else:
+        camera_segments['elephant_id'] = 'ID_' + camera_segments['stitched_id'].astype(str)
+    
+    camera_segments['elephant_id'] = camera_segments['elephant_id'].fillna('Invalid')
+    
+    # Rename timestamp columns for plotly timeline
+    plot_df = camera_segments.copy()
+    plot_df['start_time'] = plot_df['start_timestamp']
+    plot_df['end_time'] = plot_df['end_timestamp']
+    # 'behavior' column should already exist from compression
+    
+    # Get unique elephants for title
+    elephants_list = sorted(plot_df['elephant_id'].unique())
+    title_text = f"Camera {camera_id} ({room.upper()}) - Elephants: {', '.join(str(e) for e in elephants_list)}"
+    
+    # Create timeline plot
+    fig = px.timeline(
+        plot_df,
+        x_start="start_time",
+        x_end="end_time",
+        y="elephant_id",
+        color="behavior",
+        color_discrete_map=BEHAVIOR_COLORS,
+        title=title_text,
+        labels={"elephant_id": "Elephant", "behavior": "Behavior"},
+        hover_data=["duration_seconds", "frame_count"],
     )
     
     fig.update_yaxes(autorange="reversed")
@@ -1017,6 +1101,7 @@ def get_result_files_from_datetime(
 def post_processing(
         result_json: Path, 
         timeline_csv: Path,
+        use_compression: bool = True,
         time_window_seconds: float = 1.5,
         invalid_window_seconds: float = 10.0,
         max_consecutive_frames: int = 3,
@@ -1024,19 +1109,20 @@ def post_processing(
         lookback_seconds: float = 60.0,
         verbose: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, float]]:
-    """Perform post-processing on the given JSONL file and save timeline CSV.
+    """Perform post-processing on the given JSONL file and save timeline CSV or compressed segments.
     
     This function handles the complete processing pipeline:
-    1. Load data from JSONL (or cached CSV if exists)
+    1. Load data from JSONL (or cached CSV/segments if exists)
     2. Fix identity switches
     3. Smooth behavior labels
     4. Fix invalid behaviors using cross-camera data
     5. Remove remaining invalid labels
-    6. Save processed data to CSV
+    6. Save processed data to CSV or compressed segments
     
     Args:
         result_json: Path to stitched_tracks.jsonl file
         timeline_csv: Path where timeline CSV should be saved
+        use_compression: If True, save compressed segments instead of full CSV (default: True)
         time_window_seconds: Time window for behavior smoothing (default: 1.5s)
         invalid_window_seconds: Larger window for invalid labels (default: 10.0s)
         max_consecutive_frames: Max consecutive frames to consider as spike (default: 3)
@@ -1050,28 +1136,88 @@ def post_processing(
     timing_stats = {}
     start_time = time.time()
     
-    # Check if CSV file exists - if so, skip processing and load directly
+    # Define paths for both formats
+    segments_csv = timeline_csv.parent / "timeline_segments.csv"
+    
+    # # PRIORITY 1: Check for compressed segments (fastest)
+    # if segments_csv.exists():
+    #     load_start = time.time()
+    #     if verbose:
+    #         print(f"✓ Loading compressed segments from {segments_csv.name}")
+        
+    #     segments = pd.read_csv(segments_csv, parse_dates=['start_timestamp', 'end_timestamp'])
+        
+    #     if verbose:
+    #         print(f"  Loaded {len(segments):,} segments")
+        
+    #     # Decompress to full timeline for processing
+    #     df = decompress_segments_to_timeline(segments, fps=6.0)
+        
+    #     # Add room column if missing
+    #     if 'room' not in df.columns:
+    #         df['room'] = df['camera_id'].map(CAMERA_TO_ROOM)
+        
+    #     timing_stats['load_segments'] = time.time() - load_start
+    #     timing_stats['total'] = time.time() - start_time
+        
+    #     if verbose:
+    #         print(f"  Decompressed to {len(df):,} rows")
+    #         print(f"✓ Loaded in {timing_stats['load_segments']:.2f}s")
+
+    #     ## TODO: remove this
+    #     if 'behavior_label' in df.columns and 'behavior' not in df.columns:
+    #         df = df.rename(columns={'behavior_label': 'behavior'})
+
+    #     return df, timing_stats
+    
+    # PRIORITY 2: Check for full timeline CSV
     if timeline_csv.exists():
-        print(f"Loading cached timeline CSV: {timeline_csv}")
         load_start = time.time()
         if verbose:
-            print(f"✓ Loading cached data from {timeline_csv.name}")
+            print(f"✓ Loading cached timeline from {timeline_csv}")
+        
         df = pd.read_csv(timeline_csv, parse_dates=['timestamp'])
         
         # Ensure all required columns exist
-        required_cols = ['timestamp', 'camera_id', 'stitched_id', 'behavior']
-        if not all(col in df.columns for col in required_cols):
+        # Data is already post-processed, just load and return
+        timing_stats['load_cached'] = time.time() - load_start
+        
+        # Add room column if missing
+        if 'room' not in df.columns:
+            df['room'] = df['camera_id'].map(CAMERA_TO_ROOM)
+        
+        # Optionally convert to compressed format
+        if use_compression:
             if verbose:
-                print("WARNING: Cached CSV missing required columns. Reprocessing...")
-        else:
-            timing_stats['load_cached'] = time.time() - load_start
-            timing_stats['total'] = time.time() - start_time
+                print(f"  Converting to compressed format...")
+            compress_start = time.time()
+
+            ### TODO -- change 'behavior_label' to 'behavior' if needed
+            if 'behavior_label' in df.columns and 'behavior' not in df.columns:
+                df = df.rename(columns={'behavior_label': 'behavior'})
+            ### if d camera_id is int, make it to '{camera_id:03d} -> str'
+            if 'camera_id' in df.columns and df['camera_id'].dtype == int:
+                df['camera_id'] = df['camera_id'].apply(lambda x: f"{x:03d}")
+
+            segments = compress_timeline_to_segments(
+                df,
+                groupby_cols=['stitched_id', 'behavior', 'camera_id', 'room'],
+                min_gap_seconds=1.0
+            )
+            segments.to_csv(segments_csv, index=False)
+            timing_stats['compress_conversion'] = time.time() - compress_start
             if verbose:
-                print(f"✓ Loaded in {timing_stats['load_cached']:.2f}s")
-            return df, timing_stats
-    
+                print(f"  ✓ Created {segments_csv.name} ({len(segments):,} segments)")
+                print(f"  ✓ Compression ratio: {len(df) / len(segments):.1f}x")
+
+        timing_stats['total'] = time.time() - start_time
+        if verbose:
+            print(f"✓ Loaded in {timing_stats['load_cached']:.2f}s")
+        return df, timing_stats
+
+    # PRIORITY 3: Process from raw JSONL
     if verbose:
-        print("Processing raw tracking data...")
+        print("Processing raw tracking data from JSONL...")
     
     # Ensure output directory exists
     timeline_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -1129,23 +1275,47 @@ def post_processing(
     if verbose:
         print(f"  - Remove invalid: {timing_stats['remove_invalid']:.2f}s")
     
-    # Save processed timeline data as CSV
+    # Add room and display_id columns before saving
+    if 'room' not in df.columns:
+        df['room'] = df['camera_id'].map(CAMERA_TO_ROOM)
+    if 'display_id' not in df.columns:
+        df['display_id'] = df['gallery_identity'].fillna('ID_' + df['stitched_id'].astype(str))
+    
+    # Save processed data
     save_start = time.time()
-    export_df = df.copy()
-    export_df['display_id'] = export_df['gallery_identity'].fillna(
-        'ID_' + export_df['stitched_id'].astype(str)
-    )
-    # Select only the columns we need for export
-    export_cols = ['timestamp', 'camera_id', 'stitched_id', 'gallery_identity', 
-                   'gallery_score', 'behavior', 'bbox', 'frame_idx', 'display_id']
-    export_df = export_df[export_cols]
-    export_df.to_csv(timeline_csv, index=False)
-    timing_stats['save_csv'] = time.time() - save_start
+    
+    if use_compression:
+        # Save compressed segments (PRIMARY FORMAT)
+        segments = compress_timeline_to_segments(
+            df,
+            groupby_cols=['stitched_id', 'behavior', 'camera_id', 'room'],
+            min_gap_seconds=1.0
+        )
+        segments_csv = timeline_csv.parent / "timeline_segments.csv"
+        segments.to_csv(segments_csv, index=False)
+        timing_stats['save_segments'] = time.time() - save_start
+        
+        if verbose:
+            print(f"✓ Saved {len(segments):,} segments to {segments_csv.name}")
+            print(f"  Compression ratio: {len(df) / len(segments):.1f}x")
+            print(f"  Space saved: {(1 - len(segments)/len(df)) * 100:.1f}%")
+    else:
+        # Save full timeline (LEGACY FORMAT)
+        export_df = df.copy()
+        export_cols = ['timestamp', 'camera_id', 'stitched_id', 'gallery_identity', 
+                       'gallery_score', 'behavior', 'bbox', 'frame_idx', 'display_id']
+        # Only include columns that exist
+        export_cols = [col for col in export_cols if col in export_df.columns]
+        export_df = export_df[export_cols]
+        export_df.to_csv(timeline_csv, index=False)
+        timing_stats['save_csv'] = time.time() - save_start
+        
+        if verbose:
+            print(f"✓ Saved timeline to {timeline_csv.name}")
     
     timing_stats['total'] = time.time() - start_time
     
     if verbose:
-        print(f"✓ Saved processed data to {timeline_csv.name}")
         print(f"✓ Total processing time: {timing_stats['total']:.2f}s")
     
     return df, timing_stats
@@ -1244,7 +1414,14 @@ def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = Non
     with st.spinner("Loading and processing tracking data..."):
         try:
             # Use post_processing function which handles caching and pipeline
-            df, timing_stats = post_processing(result_json, timeline_csv, verbose=False)
+            # Enable compression for faster loading and smaller storage
+            print("Starting data post-processing...")
+            df, timing_stats = post_processing(
+                result_json, 
+                timeline_csv, 
+                use_compression=True,  # Use compressed segments format
+                verbose=True
+            )
             
             if df is None or df.empty:
                 st.error("No data loaded from file.")
@@ -1253,8 +1430,14 @@ def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = Non
             # Show timing statistics in sidebar
             st.sidebar.success("✓ Data processing complete")
             with st.sidebar.expander("⏱️ Processing Timings", expanded=False):
-                if 'load_cached' in timing_stats:
+                if 'load_segments' in timing_stats:
+                    st.metric("Load Segments", f"{timing_stats['load_segments']:.2f}s")
+                    st.caption("📦 Using compressed format")
+                elif 'load_cached' in timing_stats:
                     st.metric("Cache Load", f"{timing_stats['load_cached']:.2f}s")
+                    if 'compress_conversion' in timing_stats:
+                        st.metric("Compress Convert", f"{timing_stats['compress_conversion']:.2f}s")
+                        st.caption("🔄 Converted to compressed format")
                 else:
                     if 'load_jsonl' in timing_stats:
                         st.metric("Load JSONL", f"{timing_stats['load_jsonl']:.2f}s")
@@ -1266,11 +1449,23 @@ def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = Non
                         st.metric("Cross-Camera Fix", f"{timing_stats['cross_camera_fix']:.2f}s")
                     if 'remove_invalid' in timing_stats:
                         st.metric("Remove Invalid", f"{timing_stats['remove_invalid']:.2f}s")
-                    if 'save_csv' in timing_stats:
+                    if 'save_segments' in timing_stats:
+                        st.metric("Save Segments", f"{timing_stats['save_segments']:.2f}s")
+                        st.caption("📦 Compressed format")
+                    elif 'save_csv' in timing_stats:
                         st.metric("Save CSV", f"{timing_stats['save_csv']:.2f}s")
                 
                 st.metric("**Total Time**", f"{timing_stats.get('total', 0):.2f}s", 
                          help="Total processing time including all steps")
+            
+            # Load segments if available for faster plotting
+            segments_csv = timeline_csv.parent / "timeline_segments.csv"
+            if segments_csv.exists():
+                segments = pd.read_csv(segments_csv, parse_dates=['start_timestamp', 'end_timestamp'])
+                use_segments = True
+            else:
+                segments = None
+                use_segments = False
             
             # Load original data for comparison
             df_original = load_stitched_data(result_json)
@@ -1280,9 +1475,13 @@ def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = Non
             
         except Exception as e:
             st.error(f"Error processing data: {e}")
+            import traceback
+            st.error(traceback.format_exc())
             return
     
     st.sidebar.success(f"✓ Loaded {df['camera_id'].nunique()} cameras, {len(timelines)} individuals")
+    if use_segments:
+        st.sidebar.success(f"✓ Using compressed format ({len(segments)} segments)")
     st.sidebar.success(f"✓ Data saved to {timeline_csv.parent.name}/")
     
     # Tab layout
@@ -1300,12 +1499,20 @@ def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = Non
         # Order cameras by room: room1 (016, 019), room2 (017, 018)
         camera_order = []
         for room in ROOM_ORDER:
+            print("room:", room, ROOM_PAIRS[room])
             camera_order.extend(ROOM_PAIRS[room])
         camera_ids = [cam for cam in camera_order if cam in df['camera_id'].unique()]
+        print("df camera_ids:", df['camera_id'].unique(), ROOM_ORDER, camera_ids,)
+        ## df camera - dtype print
+        print("df camera_id dtype:", df['camera_id'].dtype)
         
         for idx, camera_id in enumerate(camera_ids):
             with st.container():
-                fig = generate_camera_dashboard(camera_id, df)
+                # Use faster segment-based plotting when available
+                if use_segments:
+                    fig = generate_camera_dashboard_from_segments(camera_id, segments)
+                else:
+                    fig = generate_camera_dashboard(camera_id, df)
                 st.plotly_chart(fig, width='stretch')
                 
                 # Add divider after room1 cameras (016, 019) before room2 cameras
