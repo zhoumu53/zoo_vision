@@ -17,6 +17,7 @@ import streamlit as st
 import json
 import logging
 import copy
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -534,9 +535,13 @@ def fix_invalid_behaviors_cross_camera(
 
 def build_individual_timelines(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """Build timeline DataFrame for each identified individual (fast groupby)."""
-    # Add display_id column
+    if df.empty:
+        return {}
+    
+    # Add display_id column if it doesn't exist
     df = df.copy()
-    df['display_id'] = df['gallery_identity'].fillna('ID_' + df['stitched_id'].astype(str))
+    if 'display_id' not in df.columns:
+        df['display_id'] = df['gallery_identity'].fillna('ID_' + df['stitched_id'].astype(str))
     
     # Group by stitched_id and return dict of DataFrames
     timelines = {
@@ -654,6 +659,11 @@ def plot_room_occupancy(
     rooms = [room for room in ROOM_ORDER if room in df['room'].unique()]
     num_rooms = len(rooms)
     
+    if num_rooms == 0:
+        fig = go.Figure()
+        fig.update_layout(title="No room data available")
+        return fig
+    
     fig = make_subplots(
         rows=num_rooms, cols=1,
         subplot_titles=[f'{room.upper()} - Cameras: {", ".join(ROOM_PAIRS.get(room, []))}' 
@@ -730,6 +740,11 @@ def plot_behavior_distribution(
     timelines: Dict[str, pd.DataFrame],
 ) -> go.Figure:
     """Create behavior distribution visualization for each identified elephant (vectorized)."""
+    
+    if not timelines:
+        fig = go.Figure()
+        fig.update_layout(title="No timeline data available")
+        return fig
     
     # Combine all timelines and group by identity
     all_data = pd.concat(timelines.values(), ignore_index=True)
@@ -931,133 +946,344 @@ def get_annotated_frame(video_path: str, timestamp: datetime, tracks_now: List[D
 # Main Streamlit App
 # ==============================================================================
 
-def main():
+
+def scan_available_results(root_dir: Path) -> List[Tuple[str, str]]:
+    """Scan root directory for available processed results.
+    
+    Args:
+        root_dir: Root directory containing tracking results
+    
+    Returns:
+        List of (date, hour) tuples for available results with JSONL files
+    """
+    available = []
+    
+    if not root_dir.exists():
+        return available
+    
+    # Scan date directories (YYYYMMDD format)
+    for date_dir in sorted(root_dir.iterdir()):
+        if not date_dir.is_dir():
+            continue
+        
+        date_name = date_dir.name
+        if not date_name.isdigit() or len(date_name) != 8:
+            continue
+        
+        # Scan hour directories (YYYYMMDD_HH format)
+        for hour_dir in sorted(date_dir.iterdir()):
+            if not hour_dir.is_dir():
+                continue
+            
+            # Check if JSONL file exists
+            jsonl_path = hour_dir / "stitched_tracks" / "stitched_tracks.jsonl"
+            if jsonl_path.exists():
+                # Extract hour from directory name (YYYYMMDD_HH)
+                dir_parts = hour_dir.name.split('_')
+                if len(dir_parts) == 2 and dir_parts[1].isdigit():
+                    hour = dir_parts[1]
+                    available.append((date_name, hour))
+    
+    return available
+
+
+def get_result_files_from_datetime(
+        root_dir: Path = Path("/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams"), 
+        date: str = "20250729", 
+        hour: str = "18") -> Tuple[Path, Path]:
+    """Get JSONL file and timeline CSV path based on date and hour inputs.
+    
+    Args:
+        root_dir: Root directory containing tracking results
+        date: Date string in YYYYMMDD format
+        hour: Hour string in HH format (00-23)
+    
+    Returns:
+        Tuple of (result_json_path, timeline_csv_path)
+        
+    Example:
+        result_json, timeline_csv = get_result_files_from_datetime(
+            root_dir=Path("/data/tracking"),
+            date="20250729",
+            hour="18"
+        )
+    """
+    base_dir = root_dir / f"{date}" / f"{date}_{hour}"
+    result_json = base_dir / "stitched_tracks" / "stitched_tracks.jsonl"
+    timeline_csv = base_dir / "behavior_analysis" / "timeline_data.csv"
+    return result_json, timeline_csv
+
+
+def post_processing(
+        result_json: Path, 
+        timeline_csv: Path,
+        time_window_seconds: float = 1.5,
+        invalid_window_seconds: float = 10.0,
+        max_consecutive_frames: int = 3,
+        time_tolerance_seconds: float = 3.0,
+        lookback_seconds: float = 60.0,
+        verbose: bool = True,
+) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Perform post-processing on the given JSONL file and save timeline CSV.
+    
+    This function handles the complete processing pipeline:
+    1. Load data from JSONL (or cached CSV if exists)
+    2. Fix identity switches
+    3. Smooth behavior labels
+    4. Fix invalid behaviors using cross-camera data
+    5. Remove remaining invalid labels
+    6. Save processed data to CSV
+    
+    Args:
+        result_json: Path to stitched_tracks.jsonl file
+        timeline_csv: Path where timeline CSV should be saved
+        time_window_seconds: Time window for behavior smoothing (default: 1.5s)
+        invalid_window_seconds: Larger window for invalid labels (default: 10.0s)
+        max_consecutive_frames: Max consecutive frames to consider as spike (default: 3)
+        time_tolerance_seconds: Time tolerance for cross-camera matching (default: 3.0s)
+        lookback_seconds: How far to look back for valid behavior (default: 60.0s)
+        verbose: Whether to print progress messages (default: True)
+    
+    Returns:
+        Tuple of (processed DataFrame, timing statistics dict)
+    """
+    timing_stats = {}
+    start_time = time.time()
+    
+    # Check if CSV file exists - if so, skip processing and load directly
+    if timeline_csv.exists():
+        print(f"Loading cached timeline CSV: {timeline_csv}")
+        load_start = time.time()
+        if verbose:
+            print(f"✓ Loading cached data from {timeline_csv.name}")
+        df = pd.read_csv(timeline_csv, parse_dates=['timestamp'])
+        
+        # Ensure all required columns exist
+        required_cols = ['timestamp', 'camera_id', 'stitched_id', 'behavior']
+        if not all(col in df.columns for col in required_cols):
+            if verbose:
+                print("WARNING: Cached CSV missing required columns. Reprocessing...")
+        else:
+            timing_stats['load_cached'] = time.time() - load_start
+            timing_stats['total'] = time.time() - start_time
+            if verbose:
+                print(f"✓ Loaded in {timing_stats['load_cached']:.2f}s")
+            return df, timing_stats
+    
+    if verbose:
+        print("Processing raw tracking data...")
+    
+    # Ensure output directory exists
+    timeline_csv.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Load raw data
+    load_start = time.time()
+    df = load_stitched_data(result_json)
+    timing_stats['load_jsonl'] = time.time() - load_start
+    
+    if df.empty:
+        if verbose:
+            print("ERROR: No data loaded from file.")
+        return pd.DataFrame(), timing_stats
+    
+    if verbose:
+        print(f"✓ Loaded {len(df)} records in {timing_stats['load_jsonl']:.2f}s")
+        print("Applying corrections...")
+    
+    # 1. Fix single-track identity switches
+    step_start = time.time()
+    df = fix_single_track_identity_switches(df)
+    timing_stats['fix_identity_switches'] = time.time() - step_start
+    if verbose:
+        print(f"  - Identity switches: {timing_stats['fix_identity_switches']:.2f}s")
+    
+    # 2. Smooth behavior labels (detect and fix brief spikes)
+    step_start = time.time()
+    df = smooth_behavior_labels(
+        df,
+        time_window_seconds=time_window_seconds,
+        invalid_window_seconds=invalid_window_seconds,
+        max_consecutive_frames=max_consecutive_frames
+    )
+    timing_stats['smooth_behaviors'] = time.time() - step_start
+    if verbose:
+        print(f"  - Smooth behaviors: {timing_stats['smooth_behaviors']:.2f}s")
+    
+    # 3. Fix invalid behaviors using cross-camera information
+    step_start = time.time()
+    df = fix_invalid_behaviors_cross_camera(
+        df, 
+        time_tolerance_seconds=time_tolerance_seconds
+    )
+    timing_stats['cross_camera_fix'] = time.time() - step_start
+    if verbose:
+        print(f"  - Cross-camera fix: {timing_stats['cross_camera_fix']:.2f}s")
+    
+    # 4. Remove any remaining invalid labels (final cleanup)
+    step_start = time.time()
+    df = remove_remaining_invalid_labels(
+        df, 
+        lookback_seconds=lookback_seconds
+    )
+    timing_stats['remove_invalid'] = time.time() - step_start
+    if verbose:
+        print(f"  - Remove invalid: {timing_stats['remove_invalid']:.2f}s")
+    
+    # Save processed timeline data as CSV
+    save_start = time.time()
+    export_df = df.copy()
+    export_df['display_id'] = export_df['gallery_identity'].fillna(
+        'ID_' + export_df['stitched_id'].astype(str)
+    )
+    # Select only the columns we need for export
+    export_cols = ['timestamp', 'camera_id', 'stitched_id', 'gallery_identity', 
+                   'gallery_score', 'behavior', 'bbox', 'frame_idx', 'display_id']
+    export_df = export_df[export_cols]
+    export_df.to_csv(timeline_csv, index=False)
+    timing_stats['save_csv'] = time.time() - save_start
+    
+    timing_stats['total'] = time.time() - start_time
+    
+    if verbose:
+        print(f"✓ Saved processed data to {timeline_csv.name}")
+        print(f"✓ Total processing time: {timing_stats['total']:.2f}s")
+    
+    return df, timing_stats
+
+
+
+def app(date: str = "20250729", hour: str = "22", root_dir: Optional[Path] = None, **kwargs):
+    """Main Streamlit app for elephant behavior analysis.
+    
+    Args:
+        date: Date string in YYYYMMDD format
+        hour: Hour string in HH format (00-23)
+        root_dir: Root directory for tracking results
+        **kwargs: Additional configuration options
+    """
     st.title("🐘 Elephant Behavior Analysis Dashboard")
     
     # Sidebar
     st.sidebar.title("Settings")
     
-    # Data file mode selector
-    st.sidebar.subheader("Data Source")
-    data_mode = st.sidebar.radio(
-        "Select data mode:",
-        ["Single file", "Multiple files"],
-        index=0
+    # Root directory input
+    if root_dir is None:
+        root_dir = Path("/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams")
+    
+    root_dir_input = st.sidebar.text_input("Root directory:", str(root_dir))
+    root_dir = Path(root_dir_input)
+    
+    # Scan for available results
+    available_results = scan_available_results(root_dir)
+    
+    if not available_results:
+        st.error(f"No processed results found in {root_dir}")
+        st.info("Please ensure the directory contains subdirectories in format: YYYYMMDD/YYYYMMDD_HH/stitched_tracks/stitched_tracks.jsonl")
+        return
+    
+    # Date/Time selection
+    st.sidebar.subheader("Analysis Period")
+    
+    # Get unique dates and create mapping
+    dates_available = sorted(set(d for d, h in available_results))
+    date_options = {d: f"{d[:4]}-{d[4:6]}-{d[6:8]}" for d in dates_available}
+    
+    # Find default date index
+    default_date_idx = 0
+    if date in dates_available:
+        default_date_idx = dates_available.index(date)
+    
+    selected_date_display = st.sidebar.selectbox(
+        "Date:",
+        options=list(date_options.values()),
+        index=default_date_idx
     )
     
-    data_files = []
+    # Get actual date value (YYYYMMDD)
+    date_input = [k for k, v in date_options.items() if v == selected_date_display][0]
     
-    if data_mode == "Single file":
-        # Single file selector
-        default_path = Path("/Users/zhoumu/Documents/code_course/zoo_vision/data/tracking/stitched_tracks.jsonl")
-        data_file_str = st.sidebar.text_input("Data file path:", str(default_path))
-        data_file = Path(data_file_str)
-        
-        if not data_file.exists():
-            st.error(f"Data file not found: {data_file}")
-            return
-        
-        data_files = [data_file]
+    # Get available hours for selected date
+    hours_available = sorted([h for d, h in available_results if d == date_input])
+    hour_options = {h: f"{h}:00" for h in hours_available}
     
-    else:  # Multiple files
-        st.sidebar.write("Enter file paths (one per line):")
-        default_files = "/Users/zhoumu/Documents/code_course/zoo_vision/data/tracking/stitched_tracks.jsonl"
-        files_text = st.sidebar.text_area(
-            "File paths:",
-            value=default_files,
-            height=150,
-            help="Enter one file path per line"
+    # Find default hour index
+    default_hour_idx = 0
+    if hour in hours_available:
+        default_hour_idx = hours_available.index(hour)
+    
+    selected_hour_display = st.sidebar.selectbox(
+        "Hour:",
+        options=list(hour_options.values()),
+        index=default_hour_idx
+    )
+    
+    # Get actual hour value (HH)
+    hour_input = [k for k, v in hour_options.items() if v == selected_hour_display][0]
+    
+    # Get file paths from date/time
+    try:
+        result_json, timeline_csv = get_result_files_from_datetime(
+            root_dir=root_dir,
+            date=date_input,
+            hour=hour_input
         )
-        
-        # Parse file paths
-        file_paths = [line.strip() for line in files_text.split('\n') if line.strip()]
-        
-        # Validate all files exist
-        missing_files = []
-        for path_str in file_paths:
-            path = Path(path_str)
-            if path.exists():
-                data_files.append(path)
-            else:
-                missing_files.append(path_str)
-        
-        if missing_files:
-            st.error(f"Missing files:\n" + "\n".join(f"- {f}" for f in missing_files))
-            return
-        
-        if not data_files:
-            st.error("No valid data files provided.")
-            return
-        
-        st.sidebar.success(f"✓ Found {len(data_files)} data files")
+    except Exception as e:
+        st.error(f"Error getting file paths: {e}")
+        return
     
-    # Invalid zones directory selector
-    st.sidebar.subheader("Invalid Zones")
-    default_invalid_zones = Path("/Users/zhoumu/Documents/code_course/zoo_vision/data/invalid_zone")
-    invalid_zones_str = st.sidebar.text_input("Invalid zones directory (optional):", str(default_invalid_zones))
-    invalid_zones_dir = Path(invalid_zones_str) if invalid_zones_str and Path(invalid_zones_str).exists() else None
+    # Display file paths
+    st.sidebar.info(f"JSONL: {result_json.name}")
+    st.sidebar.info(f"CSV: {timeline_csv.name}")
+    
+    # Check if JSONL exists
+    if not result_json.exists():
+        st.error(f"Data file not found: {result_json}")
+        return
     
     # Load and process data
-    with st.spinner(f"Loading and processing tracking data from {len(data_files)} file(s)..."):
-        # Load raw data from all files and combine
-        df_list = []
-        for idx, data_file in enumerate(data_files, 1):
-            df_temp = load_stitched_data(data_file, invalid_zones_dir)
-            if not df_temp.empty:
-                df_list.append(df_temp)
-        
-        if not df_list:
-            st.error("No data loaded from any files.")
+    with st.spinner("Loading and processing tracking data..."):
+        try:
+            # Use post_processing function which handles caching and pipeline
+            df, timing_stats = post_processing(result_json, timeline_csv, verbose=False)
+            
+            if df is None or df.empty:
+                st.error("No data loaded from file.")
+                return
+            
+            # Show timing statistics in sidebar
+            st.sidebar.success("✓ Data processing complete")
+            with st.sidebar.expander("⏱️ Processing Timings", expanded=False):
+                if 'load_cached' in timing_stats:
+                    st.metric("Cache Load", f"{timing_stats['load_cached']:.2f}s")
+                else:
+                    if 'load_jsonl' in timing_stats:
+                        st.metric("Load JSONL", f"{timing_stats['load_jsonl']:.2f}s")
+                    if 'fix_identity_switches' in timing_stats:
+                        st.metric("Fix Identity", f"{timing_stats['fix_identity_switches']:.2f}s")
+                    if 'smooth_behaviors' in timing_stats:
+                        st.metric("Smooth Behaviors", f"{timing_stats['smooth_behaviors']:.2f}s")
+                    if 'cross_camera_fix' in timing_stats:
+                        st.metric("Cross-Camera Fix", f"{timing_stats['cross_camera_fix']:.2f}s")
+                    if 'remove_invalid' in timing_stats:
+                        st.metric("Remove Invalid", f"{timing_stats['remove_invalid']:.2f}s")
+                    if 'save_csv' in timing_stats:
+                        st.metric("Save CSV", f"{timing_stats['save_csv']:.2f}s")
+                
+                st.metric("**Total Time**", f"{timing_stats.get('total', 0):.2f}s", 
+                         help="Total processing time including all steps")
+            
+            # Load original data for comparison
+            df_original = load_stitched_data(result_json)
+            
+            # Build timelines
+            timelines = build_individual_timelines(df)
+            
+        except Exception as e:
+            st.error(f"Error processing data: {e}")
             return
-        
-        # Combine all DataFrames
-        if len(df_list) > 1:
-            df = pd.concat(df_list, ignore_index=True)
-            df = df.sort_values(["camera_id", "timestamp"]).reset_index(drop=True)
-        else:
-            df = df_list[0]
-        
-        if df.empty:
-            st.error("No data loaded from file.")
-            return
-        
-        # Store original for comparison (shallow copy is sufficient for comparison)
-        df_original = df.copy()
-        
-        # Apply processing pipeline (vectorized operations)
-        # 1. Fix single-track identity switches and remove spurious detections
-        df = fix_single_track_identity_switches(df)
-        
-        # 2. Smooth behavior labels (with spike detection)
-        df = smooth_behavior_labels(
-            df,
-            time_window_seconds=1.5,
-            invalid_window_seconds=10.0,
-            max_consecutive_frames=3
-        )
-        
-        # 3. Fix invalid behaviors using cross-camera information
-        df = fix_invalid_behaviors_cross_camera(df, time_tolerance_seconds=3.0)
-        
-        # 4. Remove any remaining 'invalid' labels (final cleanup)
-        df = remove_remaining_invalid_labels(df, lookback_seconds=60.0)
-        
-        # Build timelines (fast groupby)
-        timelines = build_individual_timelines(df)
     
     st.sidebar.success(f"✓ Loaded {df['camera_id'].nunique()} cameras, {len(timelines)} individuals")
-    
-    # Save timeline data as CSV (use first data file's directory)
-    output_dir = data_files[0].parent / "behavior_analysis"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "timeline_data.csv"
-    
-    # Export processed data
-    export_df = df.copy()
-    export_df['display_id'] = export_df['gallery_identity'].fillna('ID_' + export_df['stitched_id'].astype(str))
-    export_df.to_csv(csv_path, index=False)
-    
-    st.sidebar.success(f"✓ Data saved to behavior_analysis/")
+    st.sidebar.success(f"✓ Data saved to {timeline_csv.parent.name}/")
     
     # Tab layout
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -1080,7 +1306,7 @@ def main():
         for idx, camera_id in enumerate(camera_ids):
             with st.container():
                 fig = generate_camera_dashboard(camera_id, df)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Add divider after room1 cameras (016, 019) before room2 cameras
                 if camera_id == "019":
@@ -1092,19 +1318,19 @@ def main():
     with tab2:
         st.header("Room Occupancy Analysis")
         fig = plot_room_occupancy(df, df_original)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Tab 3: Behavior Distribution
     with tab3:
         st.header("Behavior Distribution by Individual")
         fig = plot_behavior_distribution(timelines)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Tab 4: Camera Occupancy
     with tab4:
         st.header("Camera Occupancy Analysis")
         fig = plot_camera_occupancy(df, df_original)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Tab 5: Frame Inspector
     with tab5:
@@ -1169,4 +1395,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Default parameters - can be overridden via command line or environment
+    app(date="20250729", hour="22")
