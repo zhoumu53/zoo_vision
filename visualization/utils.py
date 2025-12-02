@@ -688,3 +688,209 @@ def infer_classifier_dim(
         if logits.dim() == 1:
             return logits.numel()
         return logits.shape[-1]
+
+
+# ==============================================================================
+# Behavior Timeline Compression Utilities
+# ==============================================================================
+
+
+def compress_timeline_to_segments(
+    timeline_df: pd.DataFrame,
+    groupby_cols: List[str] = None,
+    timestamp_col: str = 'timestamp',
+    min_gap_seconds: float = 1.0
+) -> pd.DataFrame:
+    """
+    Compress timeline data by grouping consecutive rows with the same attributes
+    into behavior segments with start/end timestamps.
+    
+    This dramatically reduces data size from 200k+ individual frame records to
+    just hundreds/thousands of continuous behavior segments.
+    
+    Args:
+        timeline_df: DataFrame with columns:
+            - timestamp: datetime or string timestamp
+            - stitched_id: elephant identifier
+            - gallery_identity: confirmed identity
+            - gallery_score: identity confidence score
+            - behavior: behavior classification
+            - behavior_prob: behavior confidence
+            - camera_id: camera identifier
+            - room: room identifier
+            - frame_idx: frame index
+        
+        groupby_cols: List of columns to group by for segment detection.
+            Default: ['stitched_id', 'behavior', 'camera_id', 'room']
+            Use None for default.
+        
+        timestamp_col: Name of the timestamp column. Default: 'timestamp'
+        
+        min_gap_seconds: Maximum gap in seconds to consider rows as consecutive.
+            If gap exceeds this, a new segment starts. Default: 1.0 seconds
+    
+    Returns:
+        DataFrame with columns:
+            - stitched_id: elephant identifier
+            - behavior: behavior during this segment
+            - camera_id: camera where behavior occurred
+            - room: room where behavior occurred
+            - start_timestamp: segment start time
+            - end_timestamp: segment end time
+            - duration_seconds: total duration of segment
+            - frame_count: number of frames in segment
+            - avg_behavior_prob: average behavior confidence
+            - avg_gallery_score: average identity confidence
+            - gallery_identity: most common identity in segment
+    
+    Example:
+        >>> df = pd.read_csv('timeline_data.csv')
+        >>> df['timestamp'] = pd.to_datetime(df['timestamp'])
+        >>> compressed = compress_timeline_to_segments(df)
+        >>> compressed.to_csv('timeline_segments.csv', index=False)
+        >>> print(f"Reduced from {len(df)} to {len(compressed)} rows")
+    """
+    if timeline_df.empty:
+        return pd.DataFrame()
+    
+    # Default grouping columns
+    if groupby_cols is None:
+        groupby_cols = ['stitched_id', 'behavior', 'camera_id', 'room']
+    
+    # Ensure timestamp is datetime
+    df = timeline_df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df[timestamp_col]):
+        df[timestamp_col] = pd.to_datetime(df[timestamp_col])
+    
+    # Sort by grouping columns and timestamp
+    df = df.sort_values(groupby_cols + [timestamp_col]).reset_index(drop=True)
+    
+    # Calculate time gaps between consecutive rows
+    df['_time_diff'] = df.groupby(groupby_cols)[timestamp_col].diff()
+    
+    # Mark segment boundaries (new segment when gap > min_gap_seconds or group changes)
+    df['_new_segment'] = (
+        df['_time_diff'].isna() |  # First row of each group
+        (df['_time_diff'] > pd.Timedelta(seconds=min_gap_seconds))
+    )
+    
+    # Assign segment IDs
+    df['_segment_id'] = df['_new_segment'].cumsum()
+    
+    # Group by segment and aggregate
+    segment_groups = df.groupby(['_segment_id'] + groupby_cols)
+    
+    segments = []
+    for (segment_id, *group_vals), group_df in segment_groups:
+        segment_info = dict(zip(groupby_cols, group_vals))
+        
+        segment_info.update({
+            'start_timestamp': group_df[timestamp_col].min(),
+            'end_timestamp': group_df[timestamp_col].max(),
+            'duration_seconds': (
+                group_df[timestamp_col].max() - group_df[timestamp_col].min()
+            ).total_seconds(),
+            'frame_count': len(group_df),
+        })
+        
+        # Add optional aggregated metrics if columns exist
+        if 'behavior_prob' in group_df.columns:
+            segment_info['avg_behavior_prob'] = group_df['behavior_prob'].mean()
+        
+        if 'gallery_score' in group_df.columns:
+            segment_info['avg_gallery_score'] = group_df['gallery_score'].mean()
+        
+        if 'gallery_identity' in group_df.columns:
+            # Most common identity in the segment
+            segment_info['gallery_identity'] = group_df['gallery_identity'].mode()[0] if len(group_df['gallery_identity'].mode()) > 0 else None
+        
+        segments.append(segment_info)
+    
+    result_df = pd.DataFrame(segments)
+    
+    # Reorder columns for better readability
+    column_order = groupby_cols + [
+        'start_timestamp', 'end_timestamp', 'duration_seconds', 'frame_count'
+    ]
+    
+    # Add optional columns if they exist
+    for col in ['avg_behavior_prob', 'avg_gallery_score', 'gallery_identity']:
+        if col in result_df.columns:
+            column_order.append(col)
+    
+    result_df = result_df[column_order]
+    
+    return result_df
+
+
+def decompress_segments_to_timeline(
+    segments_df: pd.DataFrame,
+    fps: float = 6.0,
+    timestamp_col_start: str = 'start_timestamp',
+    timestamp_col_end: str = 'end_timestamp'
+) -> pd.DataFrame:
+    """
+    Decompress segment data back to frame-by-frame timeline (inverse operation).
+    
+    Useful for visualization or when you need frame-level granularity.
+    
+    Args:
+        segments_df: Compressed segments DataFrame from compress_timeline_to_segments
+        fps: Frames per second to generate timestamps. Default: 6.0
+        timestamp_col_start: Column name for segment start. Default: 'start_timestamp'
+        timestamp_col_end: Column name for segment end. Default: 'end_timestamp'
+    
+    Returns:
+        DataFrame with frame-by-frame records similar to original timeline_data.csv
+    
+    Example:
+        >>> segments = pd.read_csv('timeline_segments.csv')
+        >>> segments['start_timestamp'] = pd.to_datetime(segments['start_timestamp'])
+        >>> segments['end_timestamp'] = pd.to_datetime(segments['end_timestamp'])
+        >>> timeline = decompress_segments_to_timeline(segments, fps=6.0)
+    """
+    if segments_df.empty:
+        return pd.DataFrame()
+    
+    df = segments_df.copy()
+    
+    # Ensure timestamps are datetime
+    if not pd.api.types.is_datetime64_any_dtype(df[timestamp_col_start]):
+        df[timestamp_col_start] = pd.to_datetime(df[timestamp_col_start])
+    if not pd.api.types.is_datetime64_any_dtype(df[timestamp_col_end]):
+        df[timestamp_col_end] = pd.to_datetime(df[timestamp_col_end])
+    
+    frame_duration = pd.Timedelta(seconds=1.0/fps)
+    
+    expanded_rows = []
+    
+    for _, segment in df.iterrows():
+        start = segment[timestamp_col_start]
+        end = segment[timestamp_col_end]
+        
+        # Generate timestamps for each frame in the segment
+        current_time = start
+        frame_idx = 0
+        
+        while current_time <= end:
+            row_data = segment.to_dict()
+            row_data['timestamp'] = current_time
+            row_data['frame_idx'] = frame_idx
+            
+            # Map aggregated values back to per-frame values
+            if 'avg_behavior_prob' in row_data:
+                row_data['behavior_prob'] = row_data['avg_behavior_prob']
+            if 'avg_gallery_score' in row_data:
+                row_data['gallery_score'] = row_data['avg_gallery_score']
+            
+            # Remove segment-specific columns
+            for col in ['start_timestamp', 'end_timestamp', 'duration_seconds', 
+                       'frame_count', 'avg_behavior_prob', 'avg_gallery_score']:
+                row_data.pop(col, None)
+            
+            expanded_rows.append(row_data)
+            
+            current_time += frame_duration
+            frame_idx += 1
+    
+    return pd.DataFrame(expanded_rows)
