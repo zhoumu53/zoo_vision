@@ -52,8 +52,9 @@ class RandomIdentitySampler(Sampler):
         avai_pids = copy.deepcopy(self.pids)
         final_idxs = []
 
-        while len(avai_pids) >= self.num_pids_per_batch:
-            selected_pids = random.sample(avai_pids, self.num_pids_per_batch)
+        while len(avai_pids) > 0:
+            num_pids = min(self.num_pids_per_batch, len(avai_pids))
+            selected_pids = random.sample(avai_pids, num_pids)
             for pid in selected_pids:
                 batch_idxs = batch_idxs_dict[pid].pop(0)
                 final_idxs.extend(batch_idxs)
