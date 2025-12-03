@@ -7,7 +7,7 @@ MODEL:
   POSE_WEIGHT: './checkpoints/pose/hrnet_w48_balanced_n13.pth'
   AGG_POSE_FEATURE: True
   SWIN:
-    EMBED_DIM: 512
+    EMBED_DIM: 128
     DEPTHS: [ 2, 2, 18, 2 ]
     NUM_HEADS: [ 4, 8, 16, 32 ]
     WINDOW_SIZE: 7
