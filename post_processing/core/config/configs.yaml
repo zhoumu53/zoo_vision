@@ -1,0 +1,174 @@
+# Post-Processing Pipeline Configuration
+# Default paths and parameters for elephant tracking pipeline
+
+# ==============================================================================
+# Directory Paths
+# ==============================================================================
+directories:
+  # Base project directory
+  project_root: "/media/mu/zoo_vision"
+  
+  # Raw video storage (NAS mount)
+  raw_video_dir: "/mnt/camera_nas"
+  
+  # Output base directory
+  output_base_dir: "/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams"
+  
+# ==============================================================================
+# Model Paths
+# ==============================================================================
+models:
+  # YOLO detection model
+  yolo:
+    weights: "./models/segmentation/yolo/all_v3/weights/best.pt"
+    class_names: "./models/segmentation/yolo/class_names.txt"
+  
+  # ReID model (PoseGuidedReID)
+  reid:
+    config: "./training/PoseGuidedReID/configs/elephant_resnet.yml"
+    checkpoint: "./training/PoseGuidedReID/logs/elephant/lr001_bs16_softmax_triplet/net_best.pth"
+    num_classes: 6
+  
+  # Behavior classification model (ViT)
+  behavior:
+    model_path: "./models/certainty/vit/v4/config.json"
+    # Alternative paths:
+    # model_path: "./models/sleep/vit/v2_no_validation/config.ptc"
+  
+  # Gallery features for identity anchoring
+  gallery:
+    features: "./training/PoseGuidedReID/logs/elephant/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz"
+
+# ==============================================================================
+# Device Configuration
+# ==============================================================================
+devices:
+  yolo: "cuda"          # cuda, cuda:0, cpu
+  reid: "cpu"           # cuda, cpu
+  behavior: "cuda"      # cuda, cpu
+  gallery: "cpu"        # cuda, cpu
+
+# ==============================================================================
+# Camera Configuration
+# ==============================================================================
+cameras:
+  ids: ["016", "017", "018", "019"]
+  pairs:
+    "016": "019"
+    "017": "018"
+    "018": "017"
+    "019": "016"
+
+# ==============================================================================
+# Stage 1: Online Tracking Parameters
+# ==============================================================================
+online_tracking:
+  # YOLO detection
+  yolo:
+    conf_threshold: 0.65
+    iou_threshold: 0.65
+    max_detections: 50
+  
+  # Frame processing
+  frame:
+    skip: 5               # Process every N-th frame
+    resize_width: 480     # Optional resize width (null for no resize)
+    max_frames: null      # Optional cap on frames (null for all)
+  
+  # ReID stitching
+  reid:
+    sim_threshold: 0.7
+    max_gap_frames: 3000
+    interval: 1
+    max_new_per_frame: 5
+  
+  # Behavior classification
+  behavior:
+    batch_size: 16
+    context: 1.1          # Context padding scale factor
+
+# ==============================================================================
+# Stage 2: Offline Stitching Parameters
+# ==============================================================================
+offline_stitching:
+  # Stage 1: Within-video stitching
+  stage1:
+    sim_threshold: 0.75
+    time_gap_seconds: 15.0
+    size_ratio: 0.4
+  
+  # Stage 2: Cross-camera stitching
+  stage2:
+    sim_threshold: 0.85
+    time_gap_seconds: 5.0
+    size_ratio: 0.6
+  
+  # Gallery matching
+  gallery:
+    threshold: 0.7
+    top_k: 3
+
+# ==============================================================================
+# Stage 3: Post-Processing Parameters
+# ==============================================================================
+post_processing:
+  # Identity switch fixing
+  identity_switch:
+    time_window_minutes: 5
+    min_spurious_duration_seconds: 30
+  
+  # Behavior smoothing
+  behavior_smoothing:
+    time_window_seconds: 1.5
+    invalid_window_seconds: 10.0
+    max_consecutive_frames: 3
+  
+  # Invalid label removal
+  invalid_removal:
+    lookback_seconds: 60.0
+    default_behavior: "standing"
+  
+  # Cross-camera fixing
+  cross_camera:
+    time_tolerance_seconds: 3.0
+
+# ==============================================================================
+# Stage 4: Behavior Analysis Parameters
+# ==============================================================================
+behavior_analysis:
+  # Timeline compression
+  compression:
+    min_gap_seconds: 1.0
+    groupby_cols: ["stitched_id", "behavior", "camera_id", "room"]
+  
+  # Segment filtering
+  segments:
+    min_duration_seconds: 2.0
+  
+  # Visualization
+  plots:
+    generate: true
+    save_format: "png"
+    dpi: 300
+
+# ==============================================================================
+# Elephant Identity Mapping
+# ==============================================================================
+identities:
+  id_to_name:
+    "01": "Chandra"
+    "02": "Indi"
+    "03": "Fahra"
+    "04": "Panang"
+    "05": "Thai"
+  
+  social_groups:
+    1: ["Chandra", "Indi"]
+    2: ["Panang", "Fahra"]
+  
+  default_names:
+    - "01_Chandra"
+    - "02_Indi"
+    - "03_Fahra"
+    - "04_Panang"
+    - "05_Thai"
