@@ -141,15 +141,15 @@ class OnlineTracker:
             self.logger.error("Failed to create YOLO model: %s", str(e), exc_info=True)
             raise
         
-        # Validate device availability - force CPU to avoid segfault
-        # There appears to be a compatibility issue with CUDA for this YOLO model
-        if self.yolo_device and self.yolo_device.lower() != "cpu":
-            self.logger.warning("CUDA device requested but forcing CPU due to known segfault issue")
-            self.logger.warning("Original device requested: %s", self.yolo_device)
-            self.yolo_device = "cpu"
-        else:
-            self.logger.info("Using CPU for YOLO model")
-            self.yolo_device = "cpu"
+        # # Validate device availability - force CPU to avoid segfault
+        # # There appears to be a compatibility issue with CUDA for this YOLO model
+        # if self.yolo_device and self.yolo_device.lower() != "cpu":
+        #     self.logger.warning("CUDA device requested but forcing CPU due to known segfault issue")
+        #     self.logger.warning("Original device requested: %s", self.yolo_device)
+        #     self.yolo_device = "cpu"
+        # else:
+        #     self.logger.info("Using CPU for YOLO model")
+        #     self.yolo_device = "cpu"
         
         self.logger.info("YOLO model ready on device: %s", self.yolo_device)
 

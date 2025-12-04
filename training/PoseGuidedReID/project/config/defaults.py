@@ -79,7 +79,7 @@ _C.MODEL.SIE_VIEW = False
 # -----------------------------------------------------------------------------
 
 _C.MODEL.POSE_WEIGHT = './checkpoints/pose/pose_hrnet_w32_bear_256x256_13kpts.pth'
-_C.MODEL.AGG_POSE_FEATURE = True
+_C.MODEL.AGG_POSE_FEATURE = False
 _C.MODEL.NUM_JOINTS = 13
 _C.MODEL.POSE_HRNET = 'hrnet_w48'
 _C.MODEL.STACKED_HEATMAP = True

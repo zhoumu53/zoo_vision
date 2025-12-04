@@ -3,9 +3,10 @@ DATASETS:
 MODEL:
   TYPE: swin
   NAME: swin_base_patch4_window7_224_22k
+  PRETRAIN_PATH: './checkpoints/swin_base_patch4_window7_224_22k.pth'
   DROP_PATH_RATE: 0.2
   POSE_WEIGHT: './checkpoints/pose/hrnet_w48_balanced_n13.pth'
-  AGG_POSE_FEATURE: True
+  AGG_POSE_FEATURE: False
   SWIN:
     EMBED_DIM: 128
     DEPTHS: [ 2, 2, 18, 2 ]

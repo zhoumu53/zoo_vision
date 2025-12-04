@@ -38,36 +38,40 @@ echo "======================================"
 cd ${PROJECT_ROOT}
 
 # Run training
-python3 tools/train.py \
-    --config_file ${CONFIG_FILE} \
-    --do_training \
-    --do_inference \
-    --notes "Elephant ReID with Swin Transformer backbone, triplet + softmax loss" \
-    DATASETS.ROOT_DIR '/media/mu/zoo_vision/data/reid_time_split' \
-    DATASETS.IMG_DIR '/media/mu/zoo_vision/data/reid_time_split' \
-    DATASETS.NAMES 'elephant' \
-    SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
-    SOLVER.MAX_EPOCHS ${NUM_EPOCHS} \
-    SOLVER.BASE_LR ${LR} \
-    SOLVER.STEPS "(40, 70)" \
-    SOLVER.OPTIMIZER_NAME 'AdamW' \
-    SOLVER.WARMUP_EPOCHS 5 \
-    SOLVER.WARMUP_FACTOR 0.01 \
-    SOLVER.WARMUP_METHOD 'linear' \
-    SOLVER.WEIGHT_DECAY 0.0001 \
-    SOLVER.WEIGHT_DECAY_BIAS 0.0001 \
-    SOLVER.CHECKPOINT_PERIOD 10 \
-    SOLVER.LOG_PERIOD 100 \
-    MODEL.DIST_TRAIN False \
-    MODEL.AGG_POSE_FEATURE False \
-    MODEL.PRETRAIN_PATH ${pretrained} \
-    DATALOADER.SAMPLER 'softmax_triplet' \
-    DATALOADER.NUM_INSTANCE 8 \
-    OUTPUT_DIR ${OUTPUT_DIR} \
-    TEST.MAX_RANK 20 \
-    TEST.MAP_MAX_RANK True \
+# python3 tools/train.py \
+#     --config_file ${CONFIG_FILE} \
+#     --do_inference \
+#     --notes "Elephant ReID with Swin Transformer backbone, triplet + softmax loss" \
+#     DATASETS.ROOT_DIR '/media/mu/zoo_vision/data/reid_time_split' \
+#     DATASETS.IMG_DIR '/media/mu/zoo_vision/data/reid_time_split' \
+#     DATASETS.NAMES 'elephant' \
+#     SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
+#     SOLVER.MAX_EPOCHS ${NUM_EPOCHS} \
+#     SOLVER.BASE_LR ${LR} \
+#     SOLVER.STEPS "(40, 70)" \
+#     SOLVER.OPTIMIZER_NAME 'AdamW' \
+#     SOLVER.WARMUP_EPOCHS 5 \
+#     SOLVER.WARMUP_FACTOR 0.01 \
+#     SOLVER.WARMUP_METHOD 'linear' \
+#     SOLVER.WEIGHT_DECAY 0.0001 \
+#     SOLVER.WEIGHT_DECAY_BIAS 0.0001 \
+#     SOLVER.CHECKPOINT_PERIOD 10 \
+#     SOLVER.LOG_PERIOD 100 \
+#     MODEL.DIST_TRAIN False \
+#     MODEL.AGG_POSE_FEATURE False \
+#     MODEL.PRETRAIN_PATH ${pretrained} \
+#     DATALOADER.SAMPLER 'softmax_triplet' \
+#     DATALOADER.NUM_INSTANCE 8 \
+#     OUTPUT_DIR ${OUTPUT_DIR} \
+#     TEST.MAX_RANK 20 \
+#     TEST.MAP_MAX_RANK True \
     
 
+python3 tools/predict.py \
+    --config_file ${CONFIG_FILE} \
+    DATASETS.TEST_ROOT_DIR '/media/mu/zoo_vision/data/reid_time_split/val' \
+    DATASETS.TEST_IMG_DIR '/media/mu/zoo_vision/data/reid_time_split/val' \
+    DATASETS.NAMES 'base' \
 
 echo "======================================"
 echo "Training completed!"
