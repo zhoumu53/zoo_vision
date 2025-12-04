@@ -99,33 +99,69 @@ def datetime2date(date):
     return date
     
 def batch_sort(distmat, batch_size=100):
+    """
+    Sort distance matrix in batches to avoid OOM.
+    Returns indices on CPU to save GPU memory.
+    """
     num_queries = distmat.shape[0]
-    indices = torch.empty_like(distmat, dtype=torch.long)
+    num_gallery = distmat.shape[1]
+    
+    # Allocate indices on CPU to save GPU memory
+    indices = torch.empty(num_queries, num_gallery, dtype=torch.long, device='cpu')
+    
     for start_idx in range(0, num_queries, batch_size):
-        print('batchsort, start_idx', start_idx)
+        if start_idx % 1000 == 0:
+            print(f'Sorting queries {start_idx}/{num_queries}')
         end_idx = min(start_idx + batch_size, num_queries)
-        indices[start_idx:end_idx] = torch.argsort(distmat[start_idx:end_idx], dim=1)
+        
+        # Sort batch and immediately move to CPU
+        batch_indices = torch.argsort(distmat[start_idx:end_idx], dim=1).cpu()
+        indices[start_idx:end_idx] = batch_indices
+        
         # Clear GPU cache to prevent memory buildup
+        del batch_indices
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    
+    # Return indices on CPU - they'll be accessed row by row in the generator
     return indices
 
-def compute_matches_in_batches(q_pids, g_pids, indices, batch_size=100):
+def compute_matches_in_batches(q_pids, g_pids, indices, batch_size=10):
+    """
+    Compute matches in batches without storing full match matrix.
+    This is a generator function that yields matches row by row.
+    Indices should be on CPU for memory efficiency.
+    """
     num_queries, num_gallery = indices.shape
-    # Initialize the matches tensor with zeros
     print("num_queries", num_queries, "num_gallery", num_gallery)
-    matches = torch.zeros(num_queries, num_gallery, dtype=torch.float32, device='cuda')
     
-    # Process each batch of indices
-    for start_idx in range(0, num_gallery, batch_size):
-        end_idx = min(start_idx + batch_size, num_gallery)
-        batch_indices = indices[:, start_idx:end_idx]
-        # Expand q_pids to match the batch_indices shape for broadcasting
-        expanded_q_pids = q_pids[:, None].expand(-1, end_idx-start_idx)
-        # Compare gallery PIDs with query PIDs and convert to float for matches
-        matches[:, start_idx:end_idx] = (g_pids[batch_indices] == expanded_q_pids).float()
+    # Determine device for computations
+    device = g_pids.device
     
-    return matches
+    # Process each query
+    for q_idx in range(num_queries):
+        if q_idx % 100 == 0:
+            print(f"Processing query {q_idx}/{num_queries}")
+        
+        # Get indices for this query and move to device
+        query_indices = indices[q_idx].to(device)
+        query_pid = q_pids[q_idx]
+        
+        # Compute matches for this query in batches
+        query_matches = []
+        for start_idx in range(0, num_gallery, batch_size):
+            end_idx = min(start_idx + batch_size, num_gallery)
+            batch_indices = query_indices[start_idx:end_idx]
+            batch_matches = (g_pids[batch_indices] == query_pid).float()
+            query_matches.append(batch_matches)
+        
+        # Concatenate matches for this query
+        result = torch.cat(query_matches)
+        
+        # Clean up
+        del query_indices, query_matches
+        
+        yield result
 
 
 def eval_func_gpu(distmat, 
@@ -182,7 +218,9 @@ def eval_func_gpu(distmat,
     indices = batch_sort(distmat, batch_size=batch_size)
     #  0 2 1 3
     #  1 2 3 0
-    matches = (g_pids[indices] == q_pids[:, None]).float()
+    
+    # Compute matches in batches to avoid OOM - returns a generator
+    matches_generator = compute_matches_in_batches(q_pids, g_pids, indices, batch_size=1000)
 
     # compute cmc curve for each query
     all_cmc = []
@@ -190,31 +228,35 @@ def eval_func_gpu(distmat,
     num_valid_q = 0.  # number of valid query
         
     valid_indices = []
-    for q_idx in range(num_q):
+    for q_idx, query_matches in enumerate(matches_generator):
         
         # get query pid and date
         q_pid = q_pids[q_idx]
         q_date = q_dates[q_idx]
+        
+        # Get indices for this query (may be on CPU)
+        query_indices = indices[q_idx]
+        if query_indices.device != device:
+            query_indices = query_indices.to(device)
 
         if filter_date:
             # remove gallery samples that have the same pid and date with query
-            order = indices[q_idx]  # select one row
+            order = query_indices
             remove = (g_pids[order] == q_pid) & (g_dates[order] == q_date)
             keep = ~remove
         else:
-            keep = torch.ones(num_g, dtype=torch.bool).cuda().to(device) # all True
+            keep = torch.ones(num_g, dtype=torch.bool, device=device)
             ### check if the query and gallery are the exact same, if yes, filter the same index (so not to include the same image in the ranking)
             ## check the path of query and gallery, only keep the different ones
-            keep = torch.ones(num_g, dtype=torch.bool).cuda().to(device) # all True
             if q_paths is not None and g_paths is not None:
-                remove = q_paths[q_idx] == g_paths[indices[q_idx]]
+                remove = q_paths[q_idx] == g_paths[query_indices]
                 keep = ~remove
 
         # compute cmc curve
         # binary vector, positions with value 1 are correct matches
-        orig_cmc = matches[q_idx][keep]
+        orig_cmc = query_matches[keep]
         
-        valid_indices.append(indices[q_idx][keep].cpu().numpy())
+        valid_indices.append(query_indices[keep].cpu().numpy())
         if mAP_for_max_rank:
             orig_cmc = orig_cmc[:max_rank]
             
