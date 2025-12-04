@@ -92,7 +92,7 @@ class ReIDInference:
             dummy_feat = self.extract_features(dummy_input)
             return dummy_feat.shape[1]
     
-    def extract_features(self, batch: torch.Tensor) -> torch.Tensor:
+    def extract_features(self, batch: torch.Tensor, average_embedding: bool = False) -> torch.Tensor:
         """Extract normalized features from preprocessed tensor batch (N, 3, H, W)."""
         with torch.no_grad():
             outputs = self.model(batch)
@@ -107,6 +107,11 @@ class ReIDInference:
         else:
             feat = outputs
         
+        if average_embedding:
+            ### for tracks -> avoid jittering
+            self.logger.info("Extracted features shape: %s", feat.shape)
+            feat = feat.mean(dim=0, keepdim=True)
+
         feat = torch.nn.functional.normalize(feat, dim=1)
         return feat
     
