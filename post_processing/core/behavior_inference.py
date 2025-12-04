@@ -72,62 +72,39 @@ class BehaviorInference:
             f"Provide a directory or config.json exported by HuggingFace."
         )
     
-    def prepare_crops(
-        self,
-        frame: np.ndarray,
-        boxes: List[Tuple[int, int, int, int]],
-        context: float = 1.1,
-    ) -> Tuple[List[np.ndarray], List[int]]:
-        """Crop detection boxes with context padding, returns (RGB crops, valid_indices)."""
-        h, w = frame.shape[:2]
-        context = max(context, 1.0)
-        
-        crops = []
-        valid_indices = []
-        
-        for idx, box in enumerate(boxes):
-            x1, y1, x2, y2 = [int(v) for v in box]
-            
-            box_w = max(1, x2 - x1)
-            box_h = max(1, y2 - y1)
-            cx = 0.5 * (x1 + x2)
-            cy = 0.5 * (y1 + y2)
-            
-            half_w = 0.5 * box_w * context
-            half_h = 0.5 * box_h * context
-            
-            new_x1 = max(0, int(np.floor(cx - half_w)))
-            new_y1 = max(0, int(np.floor(cy - half_h)))
-            new_x2 = min(w, int(np.ceil(cx + half_w)))
-            new_y2 = min(h, int(np.ceil(cy + half_h)))
-            
-            if new_x2 <= new_x1 or new_y2 <= new_y1:
+    def _convert_to_rgb(self, images: List[np.ndarray]) -> List[np.ndarray]:
+        """Convert BGR images to RGB if needed."""
+        rgb_images = []
+        for img in images:
+            if img is None or img.size == 0:
                 continue
-            
-            crop = frame[new_y1:new_y2, new_x1:new_x2]
-            if crop.size == 0:
-                continue
-            
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            crops.append(crop_rgb)
-            valid_indices.append(idx)
-        
-        return crops, valid_indices
+            # Check if image is BGR (OpenCV format) by checking if it's a color image
+            if len(img.shape) == 3 and img.shape[2] == 3:
+                # Assume BGR, convert to RGB
+                rgb_images.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            else:
+                rgb_images.append(img)
+        return rgb_images
     
     def predict(
         self,
-        crops: List[np.ndarray],
+        images: List[np.ndarray],
         batch_size: int = 16,
     ) -> List[Tuple[str, float]]:
-        """Run batch inference on RGB crops, returns [(label, confidence), ...]."""
-        if not crops:
+        """Run batch inference on pre-cropped images, returns [(label, confidence), ...]."""
+        if not images:
+            return []
+        
+        # Convert to RGB if needed
+        rgb_images = self._convert_to_rgb(images)
+        if not rgb_images:
             return []
         
         predictions = []
         effective_batch = max(batch_size, 1)
         
-        for start in range(0, len(crops), effective_batch):
-            batch = list(crops[start : start + effective_batch])
+        for start in range(0, len(rgb_images), effective_batch):
+            batch = list(rgb_images[start : start + effective_batch])
             if not batch:
                 continue
             
@@ -146,87 +123,62 @@ class BehaviorInference:
         
         return predictions
     
-    def predict_from_frame(
-        self,
-        frame: np.ndarray,
-        boxes: List[Tuple[int, int, int, int]],
-        batch_size: int = 16,
-        context: float = 1.1,
-    ) -> Tuple[List[Tuple[str, float]], List[int]]:
-        """Crop + predict from frame, returns (predictions, valid_indices)."""
-        crops, valid_indices = self.prepare_crops(frame, boxes, context)
-        
-        if not crops:
-            return [], []
-        
-        predictions = self.predict(crops, batch_size)
-        return predictions, valid_indices
-    
-    def predict_batch_frames(
+    def predict_tracks(
         self,
         frames: List[np.ndarray],
-        boxes_per_frame: List[List[Tuple[int, int, int, int]]],
         batch_size: int = 16,
-        context: float = 1.1,
-    ) -> List[List[Tuple[str, float, int]]]:
+        n_frames: Optional[int] = None,
+    ) -> Tuple[str, float, Dict[str, int]]:
         """
-        Predict behaviors for multiple frames in batch.
+        Predict behavior for a track by aggregating predictions across frames.
         
         Args:
-            frames: List of BGR frames
-            boxes_per_frame: List of box lists, one per frame
+            frames: List of pre-cropped images (BGR or RGB)
             batch_size: Batch size for inference
-            context: Context scale factor
+            n_frames: Number of frames to sample. If None, use all frames.
+                     If specified, uniformly sample n_frames from the track.
         
         Returns:
-            List of prediction lists, one per frame.
-            Each prediction is (label, confidence, box_index)
+            Tuple of (final_label, avg_confidence, vote_distribution)
+            - final_label: Most frequent predicted label
+            - avg_confidence: Average confidence across all predictions
+            - vote_distribution: Dict mapping labels to vote counts
         
         Example:
-            >>> frames = [cv2.imread(f"frame{i}.jpg") for i in range(5)]
-            >>> boxes = [[(100, 100, 200, 300)] for _ in range(5)]
-            >>> results = behavior.predict_batch_frames(frames, boxes)
-            >>> for frame_idx, preds in enumerate(results):
-            ...     print(f"Frame {frame_idx}: {preds}")
+            >>> frames = [cv2.imread(f"track_{i}.jpg") for i in range(100)]
+            >>> label, conf, votes = behavior.predict_tracks(frames, n_frames=10)
+            >>> print(f"Behavior: {label} (conf={conf:.3f}, votes={votes})")
         """
-        # Collect all crops with frame/box indices
-        all_crops = []
-        crop_metadata = []  # (frame_idx, box_idx)
+        if not frames:
+            return "unknown", 0.0, {}
         
-        for frame_idx, (frame, boxes) in enumerate(zip(frames, boxes_per_frame)):
-            crops, valid_indices = self.prepare_crops(frame, boxes, context)
-            for crop_idx, box_idx in enumerate(valid_indices):
-                all_crops.append(crops[crop_idx])
-                crop_metadata.append((frame_idx, box_idx))
+        # Sample frames if n_frames is specified
+        if n_frames is not None and n_frames > 0 and len(frames) > n_frames:
+            # Uniform sampling
+            indices = np.linspace(0, len(frames) - 1, n_frames, dtype=int)
+            sampled_frames = [frames[i] for i in indices]
+        else:
+            sampled_frames = frames
         
-        # Run batch inference
-    def predict_batch_frames(
-        self,
-        frames: List[np.ndarray],
-        boxes_per_frame: List[List[Tuple[int, int, int, int]]],
-        batch_size: int = 16,
-        context: float = 1.1,
-    ) -> List[List[Tuple[str, float, int]]]:
-        """Predict behaviors for multiple frames, returns List[List[(label, conf, box_idx)]]."""
-        all_crops = []
-        crop_metadata = []
+        # Run predictions on all sampled frames
+        predictions = self.predict(sampled_frames, batch_size)
         
-        for frame_idx, (frame, boxes) in enumerate(zip(frames, boxes_per_frame)):
-            crops, valid_indices = self.prepare_crops(frame, boxes, context)
-            for crop_idx, box_idx in enumerate(valid_indices):
-                all_crops.append(crops[crop_idx])
-                crop_metadata.append((frame_idx, box_idx))
+        if not predictions:
+            return "unknown", 0.0, {}
         
-        if not all_crops:
-            return [[] for _ in frames]
+        # Count votes for each label
+        vote_counts = {}
+        total_confidence = 0.0
         
-        all_predictions = self.predict(all_crops, batch_size)
+        for label, conf in predictions:
+            vote_counts[label] = vote_counts.get(label, 0) + 1
+            total_confidence += conf
         
-        results = [[] for _ in frames]
-        for (label, conf), (frame_idx, box_idx) in zip(all_predictions, crop_metadata):
-            results[frame_idx].append((label, conf, box_idx))
+        # Find most frequent label
+        final_label = max(vote_counts, key=vote_counts.get)
+        avg_confidence = total_confidence / len(predictions)
         
-        return results
+        return predictions, final_label, avg_confidence, vote_counts
     
     def get_class_distribution(
         self,
@@ -245,3 +197,13 @@ class BehaviorInference:
     ) -> List[Tuple[str, float]]:
         """Filter predictions by minimum confidence threshold."""
         return [(label, conf) for label, conf in predictions if conf >= min_confidence]
+    
+    def predict_single(
+        self,
+        image: np.ndarray,
+    ) -> Tuple[str, float]:
+        """Predict behavior for a single pre-cropped image."""
+        predictions = self.predict([image], batch_size=1)
+        if not predictions:
+            return "unknown", 0.0
+        return predictions[0]
