@@ -43,9 +43,7 @@ namespace zoo {
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_}, cudaStream_{},
-      trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      identifier_{makeIdentifier(nameIndex, cameraName_, trackMatcher_, cudaStream_)},
-      behaviourer_{makeBehaviourer(nameIndex, cameraName_, cudaStream_)} {
+      trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_} {
   readConfig(getConfig());
 
   rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
@@ -228,45 +226,6 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     // Save track images
     if (recordTracks_) {
       recordTracks(sysTime, trackIds, patches_f32.to(at::kByte));
-    }
-
-    std::vector<bool> patchQualities = quality_.check(patchesNorm);
-
-    const at::Tensor embeddings = embedder_.embed(patchesNorm);
-    for (const auto [i, trackId] : std::views::enumerate(trackIds)) {
-      TrackData &track = trackMatcher_.getTrackData(trackId);
-
-      // Is the patch good enough to check for id?
-      if (patchQualities[i]) {
-        // Yes, try to add a new keyframe
-        const at::Tensor patch_f32 = patches_f32[i];
-        const auto newKeyframeIdx = track.keyframeStore.maybeAddKeyframe(patch_f32, embeddings[i]);
-        if (newKeyframeIdx.has_value()) {
-          // New keyframe has been added, execute id net
-          identifier_->onKeyframe(*newKeyframeIdx, patchesNorm[i], track);
-
-          publishTrackState(imageMsg.header, *newKeyframeIdx, track);
-        }
-      }
-
-      // Show selected identity on the detection
-      detectionMsg.identity_ids[i] = track.selectedIdentity;
-    }
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Behaviour
-    behaviourer_->onDetection(detectionMsg, patchesNorm);
-    for (const auto [i, trackId, behaviourId] :
-         std::views::zip(std::views::iota(0), trackIds, detectionMsg.behaviour_ids)) {
-      TrackData &track = trackMatcher_.getTrackData(trackId);
-      if (track.selectedBehaviour != INVALID_BEHAVIOUR && track.selectedBehaviour != behaviourId) {
-        // Behaviour changed, save image for network improvement
-        if (recordBehaviourChange_) {
-          const at::Tensor patch = patches_f32[i].to(at::kByte);
-          saveImageToImproveBehaviour(sysTime, behaviourId, patch);
-        }
-      }
-      // Remember for the next frame
-      track.selectedBehaviour = behaviourId;
     }
   }
 

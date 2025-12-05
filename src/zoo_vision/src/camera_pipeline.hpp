@@ -18,12 +18,9 @@
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/track_closed.hpp"
 #include "zoo_msgs/msg/track_state.hpp"
-#include "zoo_vision/behaviourer_interface.hpp"
 #include "zoo_vision/camera_calibration.hpp"
-#include "zoo_vision/identifier_interface.hpp"
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
-#include "zoo_vision/image_quality.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter_interface.hpp"
@@ -87,9 +84,6 @@ private:
   std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
-  ImageQualityNet quality_;
-  std::unique_ptr<IIdentifier> identifier_;
-  std::unique_ptr<IBehaviourer> behaviourer_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
