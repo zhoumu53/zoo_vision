@@ -39,19 +39,39 @@ using namespace std::chrono_literals;
 using namespace at::indexing;
 
 namespace zoo {
+namespace {
+
+CameraPipelineConfig readConfig() {
+  const nlohmann::json &config = getConfig();
+  // Settings
+  CameraPipelineConfig res;
+  res.recordDetectionLoss = config["record_detection_loss"].get<bool>();
+  res.recordKeyframes = config["record_keyframes"].get<bool>();
+  res.recordTracks = config["record_tracks"].get<bool>();
+  res.recordBehaviourChange = config["record_behaviour_change"].get<bool>();
+  res.recordMasks = config["record_masks"].get<bool>();
+
+  const auto detectionImageJson = config["detection"]["image"];
+  res.detectionImageSize = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
+
+  res.rootPathImprove = config["record_root"].get<std::string>();
+  return res;
+}
+} // namespace
 
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex)
+    : CameraPipeline(options, nameIndex, readConfig()) {}
+
+CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
-      cameraName_{declare_parameter<std::string>("camera_name")}, calibration_{cameraName_}, cudaStream_{},
-      trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_} {
-  readConfig(getConfig());
+      cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
+      cudaStream_{}, trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)},
+      locator_{calibration_}, trackWriter_(config_.rootPathImprove / "tracks" / cameraName_) {
 
   rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
 
   // Set up paths to store improvement images
-  if (recordDetectionLoss_ || recordTracks_ || recordKeyframes_ || recordBehaviourChange_ || recordMasks_) {
-    std::filesystem::create_directories(rootPathImprove_);
-  }
+  std::filesystem::create_directories(config_.rootPathImprove);
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
@@ -89,24 +109,10 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   }
 }
 
-void CameraPipeline::readConfig(const nlohmann::json &config) {
-  // Settings
-  recordDetectionLoss_ = config["record_detection_loss"].get<bool>();
-  recordKeyframes_ = config["record_keyframes"].get<bool>();
-  recordTracks_ = config["record_tracks"].get<bool>();
-  recordBehaviourChange_ = config["record_behaviour_change"].get<bool>();
-  recordMasks_ = config["record_masks"].get<bool>();
-
-  const auto detectionImageJson = config["detection"]["image"];
-  detectionImageSize_ = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
-
-  rootPathImprove_ = config["record_root"].get<std::string>();
-}
-
 void CameraPipeline::dynamicConfig(Vector2i imageSize) {
   dynamicConfigDone_ = true;
   calibration_.setImageSize(imageSize);
-  segmenter_->setImageSize(detectionImageSize_);
+  segmenter_->setImageSize(config_.detectionImageSize);
   locator_.setDetectionImageSize(segmenter_->getDetectionImageSize());
 }
 
@@ -158,7 +164,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   SegmenterResult segmenterResult;
   {
     cv::Mat3b detectionImage;
-    cv::resize(img, detectionImage, {detectionImageSize_.x(), detectionImageSize_.y()});
+    cv::resize(img, detectionImage, {config_.detectionImageSize.x(), config_.detectionImageSize.y()});
 
     const Vector2i detectionImageSize = segmenter_->getDetectionImageSize();
     const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
@@ -192,12 +198,12 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
   auto trackUpdateStats = trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, trackIds);
-  if (recordDetectionLoss_) {
+  if (config_.recordDetectionLoss) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
     }
   }
-  if (recordMasks_) {
+  if (config_.recordMasks) {
     const auto videoFile = getMsgString(imageMsg.header.video_filename);
     const auto frameId = getMsgString(imageMsg.header.frame_id);
     recordMasks(videoFile, frameId, trackIds, segmenterResult.masks);
@@ -205,10 +211,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   for (const auto &ptrack : trackUpdateStats.closedTracks) {
     const auto &track = *ptrack;
     publishTrackClosed(imageMsg.header, track);
-    if (recordKeyframes_) {
+    if (config_.recordKeyframes) {
       saveKeyframes(track);
     }
-    if (recordTracks_) {
+    if (config_.recordTracks) {
       // moveTrackImagesToIdentityPath(track);
     }
   }
@@ -224,7 +230,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
 
     // Save track images
-    if (recordTracks_) {
+    if (config_.recordTracks) {
       recordTracks(sysTime, trackIds, patches_f32.to(at::kByte));
     }
   }
@@ -283,7 +289,7 @@ void CameraPipeline::publishTrackClosed(const zoo_msgs::msg::Header &imageHeader
 }
 
 void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &cvImg) {
-  const std::filesystem::path rootPath = rootPathImprove_ / "detection" / std::format("{:%Y-%m-%d}", time);
+  const std::filesystem::path rootPath = config_.rootPathImprove / "detection" / std::format("{:%Y-%m-%d}", time);
   std::filesystem::create_directories(rootPath);
 
   // Make name based on time
@@ -304,7 +310,7 @@ void CameraPipeline::saveImageToImproveDetection(SysTime time, const cv::Mat3b &
 void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behaviourId, const at::Tensor &img) {
   static std::array<std::string, 4> BEHAVIOUR_NAMES = {"00_Invalid", "01_Standing", "02_SleepL", "03_SleepR"};
   std::filesystem::path rootPath =
-      rootPathImprove_ / "behaviour" / BEHAVIOUR_NAMES[behaviourId] / std::format("{:%Y-%m-%d}", time);
+      config_.rootPathImprove / "behaviour" / BEHAVIOUR_NAMES[behaviourId] / std::format("{:%Y-%m-%d}", time);
   std::filesystem::create_directories(rootPath);
 
   // Make name based on time
@@ -320,44 +326,21 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
   }
 }
 
-void CameraPipeline::recordTracks(const SysTime time, const std::span<const uint32_t> trackIds,
+void CameraPipeline::recordTracks(const SysTime /*time*/, const std::span<const uint32_t> trackIds,
                                   const at::Tensor &patches) {
-  const std::filesystem::path rootPath = rootPathImprove_ / "tracks";
-  constexpr auto MIN_TRACK_LENGTH = std::chrono::seconds(2);
-  constexpr auto TIME_BETWEEN_RECORDS = std::chrono::seconds(2);
+  at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).to(at::kCPU).contiguous();
 
-  const SecondsTimePoint secondsTime = secondsTimePointFromTimePoint(time);
+  static std::mutex g_mutex;
+  std::lock_guard guard{g_mutex};
 
   for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    if (!track.lastImageSaved.has_value()) {
-      // Check that the track has been alive long enough
-      const auto ellapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(time - track.startTime);
-      if (ellapsedSeconds < MIN_TRACK_LENGTH) {
-        continue;
-      }
+    if (track.trackLength == 1) {
+      trackWriter_.startVideo(track, patchesRgb[idx]);
     } else {
-      // Check that the last record is not too recent
-      const auto ellapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(time - *track.lastImageSaved);
-      if (ellapsedSeconds < TIME_BETWEEN_RECORDS) {
-        continue;
-      }
+      trackWriter_.addFrame(track, patchesRgb[idx]);
     }
-
-    const std::filesystem::path trackDir =
-        rootPath / std::format("{:%Y-%m-%d}", track.startTime) / cameraName_ / std::format("{:06d}", track.id);
-
-    const std::string imgName =
-        std::format("{}_{:%Y%m%d_%H%M%S}_t{}_{}.png", cameraName_, secondsTime, trackId, track.trackLength);
-
-    // The first image makes sure we create the directory
-    if (!track.lastImageSaved.has_value()) {
-      std::filesystem::create_directories(trackDir);
-    }
-    saveTensorImage(patches[idx], trackDir / imgName);
-
-    track.lastImageSaved = time;
   }
 }
 
@@ -371,7 +354,7 @@ void CameraPipeline::saveKeyframes(const TrackData &track) {
   const std::vector<std::string> identityNames = {"00_Invalid", "01_Chandra", "02_Indi",
                                                   "03_Fahra",   "04_Panang",  "05_Thai"};
 
-  const std::filesystem::path rootPath = rootPathImprove_ / "keyframes" / identityNames[track.selectedIdentity] /
+  const std::filesystem::path rootPath = config_.rootPathImprove / "keyframes" / identityNames[track.selectedIdentity] /
                                          std::format("{:%Y-%m-%d}", track.startTime);
   const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
   std::filesystem::create_directories(trackDir);
@@ -384,7 +367,8 @@ void CameraPipeline::saveKeyframes(const TrackData &track) {
 void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
 
   try {
-    const std::filesystem::path rootPath = rootPathImprove_ / "tracks" / std::format("{:%Y-%m-%d}", track.startTime);
+    const std::filesystem::path rootPath =
+        config_.rootPathImprove / "tracks" / std::format("{:%Y-%m-%d}", track.startTime);
     const std::filesystem::path trackDir = rootPath / cameraName_ / std::format("{:06d}", track.id);
     if (!std::filesystem::exists(trackDir)) {
       return;
@@ -414,7 +398,8 @@ void CameraPipeline::recordMasks(std::string_view videoFile, std::string_view fr
   int frameId2 = parseInt(frameId);
 
   for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
-    const std::filesystem::path dir = rootPathImprove_ / "masks" / videoFile / std::format("track_{:04}", trackId);
+    const std::filesystem::path dir =
+        config_.rootPathImprove / "masks" / videoFile / std::format("track_{:04}", trackId);
     const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId2) + ".png");
 
     const cv::Mat1b mask = wrapCvFromTensor1b(masks.index({index}));

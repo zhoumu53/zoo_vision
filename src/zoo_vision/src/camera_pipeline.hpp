@@ -26,6 +26,7 @@
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/track_writer.hpp"
 #include "zoo_vision/world_locator.hpp"
 
 #include <Eigen/Dense>
@@ -38,11 +39,20 @@
 
 namespace zoo {
 
+struct CameraPipelineConfig {
+  Vector2i detectionImageSize;
+  std::filesystem::path rootPathImprove;
+
+  bool recordDetectionLoss;
+  bool recordTracks;
+  bool recordKeyframes;
+  bool recordBehaviourChange;
+  bool recordMasks;
+};
+
 class CameraPipeline : public rclcpp::Node {
 public:
   explicit CameraPipeline(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
-
-  void readConfig(const nlohmann::json &config);
 
   void onImage(std::shared_ptr<zoo_msgs::msg::Image12m> msg);
 
@@ -52,6 +62,7 @@ public:
   void saveKeyframes(const TrackData &track);
 
 private:
+  CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config);
   void dynamicConfig(Vector2i imageSize);
 
   void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
@@ -62,18 +73,12 @@ private:
                    const at::Tensor &masks);
 
   std::string cameraName_;
+  CameraPipelineConfig config_;
 
   ImageRateLimiter *rateLimiter_;
   RateSampler rateSampler_;
 
-  bool recordDetectionLoss_;
-  bool recordTracks_;
-  bool recordKeyframes_;
-  bool recordBehaviourChange_;
-  bool recordMasks_;
-
   bool dynamicConfigDone_ = false;
-  Vector2i detectionImageSize_{0, 0};
   ImageNormalizer normalizer_;
 
   CameraCalibration calibration_;
@@ -84,12 +89,11 @@ private:
   std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
+  TrackWriter trackWriter_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackClosed>> trackClosedPublisher_;
-
-  std::filesystem::path rootPathImprove_;
 };
 } // namespace zoo

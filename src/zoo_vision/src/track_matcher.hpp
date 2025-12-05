@@ -19,6 +19,7 @@
 
 #include <ATen/Tensor.h>
 #include <Eigen/Dense>
+#include <opencv2/videoio.hpp>
 
 #include <chrono>
 #include <optional>
@@ -47,8 +48,7 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
-  // Debug
-  std::optional<time_point> lastImageSaved;
+  cv::VideoWriter trackVideo;
 
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
       : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {}

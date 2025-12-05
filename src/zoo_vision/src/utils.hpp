@@ -48,6 +48,7 @@ cv::Mat3b wrapMat3bFromMsg(zoo_msgs::msg::Image12m &);
 cv::Mat3b wrapMat3bFromMsg(const zoo_msgs::msg::Image12m &);
 
 cv::Mat1b wrapCvFromTensor1b(const at::Tensor img);
+cv::Mat3b wrapCvFromTensor3b(const at::Tensor img);
 
 void copyMat1bToMsg(const cv::Mat1b &, zoo_msgs::msg::Image4m &);
 at::Tensor mapRosTensor(zoo_msgs::msg::Tensor3b32m &rosTensor);

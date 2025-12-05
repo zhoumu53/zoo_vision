@@ -258,7 +258,6 @@ void VideoDBLoader::onTimer() {
   }
 
   if (!newReplayTime.has_value()) {
-    assert(framePublished == false);
     RCLCPP_WARN(get_logger(), "No images produced");
     newReplayTime = findNextValidReplayTime();
     if (newReplayTime.has_value()) {
