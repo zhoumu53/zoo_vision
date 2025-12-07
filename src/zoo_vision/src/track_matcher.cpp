@@ -101,6 +101,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
       track.lastObservation = now;
       track.skippedObservationCount = 0;
       track.box = boxes[c];
+      track.boxHistory.push_back(track.box);
 
       inputUsed[c] = true;
       trackUsed[r] = true;

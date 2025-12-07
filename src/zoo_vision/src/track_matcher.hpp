@@ -50,8 +50,13 @@ struct TrackData {
 
   VideoWriter trackVideo;
 
+  std::vector<Eigen::AlignedBox2f> boxHistory;
+  std::vector<float32_t> confidenceHistory;
+
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
-      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {}
+      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {
+    boxHistory.push_back(box_);
+  }
 };
 
 struct TrackUpdateStats {

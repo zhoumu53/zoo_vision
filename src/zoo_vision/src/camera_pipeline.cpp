@@ -216,6 +216,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     }
     if (config_.recordTracks) {
       // moveTrackImagesToIdentityPath(track);
+      trackWriter_.close(track, sysTime);
     }
   }
 

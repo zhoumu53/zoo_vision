@@ -14,6 +14,7 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/types.hpp"
 
@@ -36,9 +37,9 @@ public:
 
   void startVideo(TrackData &track, const at::Tensor &cropImage);
   void addFrame(TrackData &track, const at::Tensor &cropImage);
+  void close(const TrackData &track, SysTime time);
 
 private:
-  int fourcc_;
   std::filesystem::path rootPath_;
 };
 
