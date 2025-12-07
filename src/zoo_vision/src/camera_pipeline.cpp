@@ -156,7 +156,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       at::from_blob(img.data, {img.rows, img.cols, img.channels()}, at::TensorOptions().dtype(at::kByte))
           .permute({2, 0, 1});
 
-  const at::Tensor imageTensor_f32 = imageTensorCPU.to(g_computeDevice, /*non_blocking*/ true).to(at::kFloat);
+  // const at::Tensor imageTensor_f32 = imageTensorCPU.to(g_computeDevice, /*non_blocking*/ true).to(at::kFloat);
   // const at::Tensor imageNorm = normalizer_.normalize(imageTensor_f32);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -224,14 +224,14 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   if (detectionMsg.detection_count > 0) {
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
 
-    at::Tensor patches_f32;
-    cropper_.extractCrops(patches_f32, imageTensor_f32,
+    at::Tensor patches_u8;
+    cropper_.extractCrops(patches_u8, imageTensorCPU,
                           {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
-    at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
+    // at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
 
     // Save track images
     if (config_.recordTracks) {
-      recordTracks(sysTime, trackIds, patches_f32.to(at::kByte));
+      recordTracks(sysTime, trackIds, patches_u8);
     }
   }
 
