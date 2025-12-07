@@ -16,6 +16,8 @@
 #include "zoo_vision/behaviourer_fake.hpp"
 #include "zoo_vision/utils.hpp"
 
+#include <nlohmann/json.hpp>
+
 namespace zoo {
 
 std::unique_ptr<IBehaviourer> makeBehaviourer(int nameIndex, std::string cameraName,

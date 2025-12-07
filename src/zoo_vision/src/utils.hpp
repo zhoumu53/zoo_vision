@@ -24,7 +24,7 @@
 #include "zoo_msgs/msg/tensor3b32m.hpp"
 
 #include <ATen/Tensor.h>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <opencv2/core/mat.hpp>
 
 #include <filesystem>

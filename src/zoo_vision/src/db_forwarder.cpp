@@ -18,6 +18,7 @@
 
 #include <ctime>
 #include <iostream>
+#include <nlohmann/json.hpp>
 
 namespace zoo {
 namespace {

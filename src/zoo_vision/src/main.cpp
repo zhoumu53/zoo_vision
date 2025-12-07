@@ -23,6 +23,7 @@
 #include "zoo_vision/zoo_camera.hpp"
 
 #include <argparse/argparse.hpp>
+#include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <memory>
