@@ -57,9 +57,11 @@ TrackData &TrackMatcher::getTrackData(TrackId id) {
   return *it->second;
 }
 
-TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
-                                      std::span<TrackId> outputTrackIds) {
+TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const AlignedBox2f> boxes,
+                                      std::span<const float32_t> scores, std::span<TrackId> outputTrackIds) {
   TrackUpdateStats result;
+
+  CHECK_EQ(boxes.size(), scores.size());
 
   const size_t inputBoxCount = std::min(boxes.size(), MAX_TRACK_COUNT);
   if (boxes.size() > MAX_TRACK_COUNT) {
@@ -97,7 +99,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
 
       TrackData &track = *trackIts[r]->second;
       outputTrackIds[c] = track.id;
-      track.update(now, boxes[c]);
+      track.update(now, boxes[c], scores[c]);
 
       inputUsed[c] = true;
       trackUsed[r] = true;
@@ -136,7 +138,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eig
     nextTrackId_ += 1;
 
     outputTrackIds[c] = newTrackId;
-    auto it = tracks_.insert({newTrackId, std::make_unique<TrackData>(newTrackId, now, boxes[c])});
+    auto it = tracks_.insert({newTrackId, std::make_unique<TrackData>(newTrackId, now, boxes[c], scores[c])});
     // Record new tracks
     result.newTracks.push_back(it.first->second.get());
   }

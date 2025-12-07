@@ -41,6 +41,7 @@ struct TrackData {
 
   size_t trackLength = 1;
   AlignedBox2f box;
+  float32_t score;
   std::optional<at::Tensor> identityState = std::nullopt;
 
   KeyframeStore keyframeStore;
@@ -54,22 +55,25 @@ struct TrackData {
 
   std::vector<time_point> timestampHistory;
   std::vector<AlignedBox2f> boxHistory;
-  std::vector<float32_t> confidenceHistory;
+  std::vector<float32_t> scoreHistory;
 
-  TrackData(TrackId id_, time_point startTime_, AlignedBox2f box_)
-      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {
+  TrackData(TrackId id_, time_point startTime_, AlignedBox2f box_, float32_t score_)
+      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_}, score{score_} {
     timestampHistory.push_back(startTime_);
     boxHistory.push_back(box_);
+    scoreHistory.push_back(score_);
   }
 
-  void update(time_point now, AlignedBox2f newBox) {
+  void update(time_point now, AlignedBox2f newBox, float32_t newScore) {
     timestampHistory.push_back(now);
     boxHistory.push_back(box);
+    scoreHistory.push_back(score);
 
     trackLength += 1;
     lastObservation = now;
     skippedObservationCount = 0;
     box = newBox;
+    score = newScore;
   }
 };
 
@@ -89,7 +93,7 @@ public:
 
   TrackMatcher();
 
-  TrackUpdateStats update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
+  TrackUpdateStats update(Clock::time_point now, std::span<const AlignedBox2f> boxes, std::span<const float32_t> scores,
                           std::span<TrackId> outputTrackIds);
 
   TrackData &getTrackData(TrackId id);

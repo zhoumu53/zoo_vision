@@ -38,10 +38,12 @@ void writeHeader(std::ofstream &fd) {
 
 void writeRow(std::ofstream &fd, const TrackData &track, std::string_view frameId) {
   CHECK_TRUE(!track.timestampHistory.empty());
+  CHECK_EQ(track.timestampHistory.size(), track.boxHistory.size());
+  CHECK_EQ(track.timestampHistory.size(), track.scoreHistory.size());
 
   const auto time = track.timestampHistory.back();
   const auto bbox = track.boxHistory.back();
-  const float32_t score = 1;
+  const float32_t score = track.scoreHistory.back();
 
   fd << frameId << "," << std::format("{0:%Y-%m-%d} {0:%T}", time) << "," << bbox.min()[0] << "," << bbox.min()[1]
      << "," << bbox.max()[0] << "," << bbox.max()[1] << "," << score << std::endl;
