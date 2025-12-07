@@ -20,19 +20,17 @@
 
 namespace zoo {
 
-TrackWriter::TrackWriter(std::filesystem::path rootPath)
-    : fourcc_{cv::VideoWriter::fourcc('H', '2', '6', '4')}, rootPath_{rootPath} {}
+TrackWriter::TrackWriter(std::filesystem::path rootPath) : rootPath_{rootPath} {}
 
 void TrackWriter::startVideo(TrackData &track, const at::Tensor &cropImage) {
   const std::filesystem::path dir = rootPath_ / std::format("{:%Y-%m-%d}", track.startTime);
   std::filesystem::create_directories(dir);
 
-  const std::filesystem::path videoPath = dir / std::format("{:06d}.mp4", track.id);
+  const std::filesystem::path videoPath = dir / std::format("{:06d}.mkv", track.id);
 
-  const cv::Size cropSize = {static_cast<int>(cropImage.size(1)), static_cast<int>(cropImage.size(0))};
+  const Vector2i cropSize = {static_cast<int>(cropImage.size(1)), static_cast<int>(cropImage.size(0))};
 
-  const std::vector<int> params{{cv::VIDEOWRITER_PROP_IS_COLOR, 1 /*, cv::VIDEOWRITER_PROP_QUALITY, 95*/}};
-  if (!track.trackVideo.open(videoPath.string(), fourcc_, 15, cropSize, params)) {
+  if (!track.trackVideo.open(videoPath.string(),  cropSize)) {
     throw std::runtime_error(std::format("Could not create track video ({})", videoPath.string()));
   }
 
@@ -43,7 +41,7 @@ void TrackWriter::addFrame(TrackData &track, const at::Tensor &cropImage) {
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);
-  track.trackVideo << cropCv;
+  track.trackVideo.write(cropCv);
 }
 
 } // namespace zoo

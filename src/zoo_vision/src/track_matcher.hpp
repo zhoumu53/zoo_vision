@@ -15,11 +15,11 @@
 
 #include "zoo_vision/keyframe_store.hpp"
 #include "zoo_vision/types.hpp"
+#include "zoo_vision/video_writer.hpp"
 #include "zoo_vision/vote_histogram.hpp"
 
 #include <ATen/Tensor.h>
 #include <Eigen/Dense>
-#include <opencv2/videoio.hpp>
 
 #include <chrono>
 #include <optional>
@@ -48,7 +48,7 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
-  cv::VideoWriter trackVideo;
+  VideoWriter trackVideo;
 
   TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
       : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {}

@@ -130,6 +130,8 @@ add_executable(zoo_vision
   src/track_writer.cpp
   src/camera_pipeline.hpp
   src/camera_pipeline.cpp
+  src/video_writer.hpp
+  src/video_writer.cpp
   src/main.cpp
 )
 
