@@ -65,7 +65,8 @@ private:
   CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config);
   void dynamicConfig(Vector2i imageSize);
 
-  void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
+  void recordTracks(const SysTime time, std::string_view frameId, const std::span<const uint32_t> trackIds,
+                    const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);

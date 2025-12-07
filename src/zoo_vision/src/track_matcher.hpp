@@ -22,6 +22,7 @@
 #include <Eigen/Dense>
 
 #include <chrono>
+#include <fstream>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -39,7 +40,7 @@ struct TrackData {
   int skippedObservationCount = 0;
 
   size_t trackLength = 1;
-  Eigen::AlignedBox2f box;
+  AlignedBox2f box;
   std::optional<at::Tensor> identityState = std::nullopt;
 
   KeyframeStore keyframeStore;
@@ -48,14 +49,27 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
+  std::ofstream infoFd;
   VideoWriter trackVideo;
 
-  std::vector<Eigen::AlignedBox2f> boxHistory;
+  std::vector<time_point> timestampHistory;
+  std::vector<AlignedBox2f> boxHistory;
   std::vector<float32_t> confidenceHistory;
 
-  TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
+  TrackData(TrackId id_, time_point startTime_, AlignedBox2f box_)
       : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {
+    timestampHistory.push_back(startTime_);
     boxHistory.push_back(box_);
+  }
+
+  void update(time_point now, AlignedBox2f newBox) {
+    timestampHistory.push_back(now);
+    boxHistory.push_back(box);
+
+    trackLength += 1;
+    lastObservation = now;
+    skippedObservationCount = 0;
+    box = newBox;
   }
 };
 

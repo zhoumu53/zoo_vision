@@ -118,6 +118,7 @@ void CameraPipeline::dynamicConfig(Vector2i imageSize) {
 
 void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
   const auto &imageMsg = *imageMsgPtr;
+  const auto frameId = getMsgString(imageMsg.header.frame_id);
 
   // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
 
@@ -205,7 +206,6 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   }
   if (config_.recordMasks) {
     const auto videoFile = getMsgString(imageMsg.header.video_filename);
-    const auto frameId = getMsgString(imageMsg.header.frame_id);
     recordMasks(videoFile, frameId, trackIds, segmenterResult.masks);
   }
   for (const auto &ptrack : trackUpdateStats.closedTracks) {
@@ -232,7 +232,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
     // Save track images
     if (config_.recordTracks) {
-      recordTracks(sysTime, trackIds, patches_u8);
+      recordTracks(sysTime, frameId, trackIds, patches_u8);
     }
   }
 
@@ -327,8 +327,8 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
   }
 }
 
-void CameraPipeline::recordTracks(const SysTime /*time*/, const std::span<const uint32_t> trackIds,
-                                  const at::Tensor &patches) {
+void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frameId,
+                                  const std::span<const uint32_t> trackIds, const at::Tensor &patches) {
   at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;
@@ -337,11 +337,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, const std::span<const 
   for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    if (track.trackLength == 1) {
-      trackWriter_.startVideo(track, patchesRgb[idx]);
-    } else {
-      trackWriter_.addFrame(track, patchesRgb[idx]);
-    }
+    trackWriter_.writeFrame(track, frameId, patchesRgb[idx]);
   }
 }
 

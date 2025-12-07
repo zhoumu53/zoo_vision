@@ -17,11 +17,11 @@
 #include "zoo_vision/utils.hpp"
 
 #include <date/chrono_io.h>
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -239,7 +239,7 @@ void VideoDBLoader::onTimer() {
     }
 
     {
-      const auto frameIndex = cameraData.videoStream_->get(cv::CAP_PROP_POS_FRAMES) - 1;
+      const auto frameIndex = static_cast<uint64_t>(cameraData.videoStream_->get(cv::CAP_PROP_POS_FRAMES) - 1);
       const std::filesystem::path videoFile = cameraData.currentVideo_->videoFile;
       const std::string videoName = videoFile.stem();
       setMsgString(msg->header.video_filename, videoName);

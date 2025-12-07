@@ -35,8 +35,7 @@ class TrackWriter {
 public:
   TrackWriter(std::filesystem::path rootPath);
 
-  void startVideo(TrackData &track, const at::Tensor &cropImage);
-  void addFrame(TrackData &track, const at::Tensor &cropImage);
+  void writeFrame(TrackData &track, std::string_view frameId, const at::Tensor &cropImage);
   void close(const TrackData &track, SysTime time);
 
 private:
