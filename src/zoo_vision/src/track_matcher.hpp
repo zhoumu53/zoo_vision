@@ -19,6 +19,7 @@
 #include "zoo_vision/vote_histogram.hpp"
 
 #include <ATen/Tensor.h>
+#include <ByteTrack/BYTETracker.h>
 #include <Eigen/Dense>
 
 #include <chrono>

@@ -29,8 +29,9 @@ FetchContent_Declare(nvtx3 URL https://github.com/NVIDIA/NVTX/archive/refs/tags/
 FetchContent_Declare(argparse GIT_REPOSITORY https://github.com/p-ranav/argparse.git)
 FetchContent_Declare(date GIT_REPOSITORY https://github.com/HowardHinnant/date.git)
 FetchContent_Declare(otl URL https://otl.sourceforge.net/otlv4_h2.zip)
+FetchContent_Declare(bytetrack_cpp GIT_REPOSITORY git@github.com:Vertical-Beach/ByteTrack-cpp.git GIT_TAG main)
 
-FetchContent_MakeAvailable(onnxruntime_release TorchRelease json nvtx3 argparse date otl)
+FetchContent_MakeAvailable(onnxruntime_release TorchRelease json nvtx3 argparse date otl bytetrack_cpp)
 
 # yolos-cpp asks for a very old cmake so the ONNXRUNTIME_DIR gets cleared
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) 
@@ -160,6 +161,7 @@ target_link_libraries(zoo_vision
   opencv_core
   opencv_highgui
   yolos_cpp
+  bytetrack
 )
 
 install(TARGETS
