@@ -330,7 +330,7 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
 
 void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frameId,
                                   const std::span<const uint32_t> trackIds, const at::Tensor &patches) {
-  at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).to(at::kCPU).contiguous();
+  at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).flip(3).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;
   std::lock_guard guard{g_mutex};

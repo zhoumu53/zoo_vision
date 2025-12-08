@@ -43,13 +43,7 @@ void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &ima
                       at::TensorOptions(image.device()).dtype(image.dtype()));
 
   // Extract crops
-  for (const auto &[i, bbox0] : std::views::enumerate(bboxes)) {
-    // Modify bbox so it has a square aspect ratio
-    zoo_msgs::msg::BoundingBox2D bbox;
-    bbox.center = bbox0.center;
-    const auto maxHalf = std::max(bbox0.half_size[0], bbox0.half_size[1]);
-    bbox.half_size[0] = bbox.half_size[1] = maxHalf;
-
+  for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
     const float32_t bboxAspect = static_cast<float32_t>(bbox.half_size[0]) / static_cast<float32_t>(bbox.half_size[1]);
     const Eigen::Vector2f bboxCenter = Eigen::Vector2f{bbox.center[0], bbox.center[1]};
     const Eigen::Vector2f bboxHalfSize = Eigen::Vector2f{bbox.half_size[0], bbox.half_size[1]};

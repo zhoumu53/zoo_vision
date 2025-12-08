@@ -29,7 +29,8 @@ template <typename T> std::string formatTime(const T time) {
 }
 
 std::filesystem::path getTrackPath(const std::filesystem::path &rootPath, TrackData::time_point startTime, TrackId id) {
-  return rootPath / std::format("{:%Y-%m-%d}", startTime) / std::format("{:06d}.", id);
+  const auto timeS = secondsTimePointFromTimePoint(startTime);
+  return rootPath / std::format("{:%Y-%m-%d}", startTime) / (std::format("T{:%H%M%S}_ID{:06d}.", timeS, id));
 }
 
 void writeHeader(std::ofstream &fd) {
