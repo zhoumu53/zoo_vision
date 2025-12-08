@@ -25,6 +25,7 @@
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
+#include "zoo_vision/track_count_recorder.hpp"
 #include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/track_writer.hpp"
 #include "zoo_vision/world_locator.hpp"
@@ -91,6 +92,7 @@ private:
   WorldLocator locator_;
   ImageEmbedder embedder_;
   TrackWriter trackWriter_;
+  TrackCountRecorder trackCountRecorder_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;

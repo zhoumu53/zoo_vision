@@ -125,6 +125,8 @@ add_executable(zoo_vision
   src/rerun_forwarder.cpp
   src/db_forwarder.hpp
   src/db_forwarder.cpp
+  src/track_count_recorder.hpp
+  src/track_count_recorder.cpp
   src/track_matcher.hpp
   src/track_matcher.cpp
   src/track_writer.hpp
