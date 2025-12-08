@@ -16,6 +16,25 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 
+CAMERA_NAMES = [
+    "zag_elp_cam_016",
+    "zag_elp_cam_017",
+    "zag_elp_cam_018",
+    "zag_elp_cam_019"
+]
+
+
+def cam_id2name(cam_id: str) -> str:
+    """Convert camera ID to camera name."""
+    cam_id = cam_id.zfill(3)
+    return f"zag_elp_cam_{cam_id}"
+
+
+def read_csv(csv_path: Path) -> pd.DataFrame:
+    """Read CSV file into DataFrame."""
+    return pd.read_csv(csv_path)
+
+
 class FileManager:
     """
     """
@@ -24,7 +43,9 @@ class FileManager:
         self,
         date: str,
         raw_video_dir: str = "/mnt/camera_nas",
+        config: str = '/media/mu/zoo_vision/data/config.json',
         logger: Optional[logging.Logger] = None,
+        record_root: Optional[str] = None,
     ):
         """
         Initialize FileManager.
@@ -32,170 +53,89 @@ class FileManager:
         """
         self.date = date
         self.raw_video_dir = Path(raw_video_dir)
+        self.config = Path(config)
+        self.config_data = self.load_config()
         self.logger = logger or logging.getLogger(__name__)
+        self.record_root = Path(record_root) if record_root else Path(self.config_data.get("record_root", "/media/dherrera/ElephantsWD/elephants/improve"))
         
         # Validate date format
         try:
             datetime.strptime(date, "%Y%m%d")
         except ValueError:
             raise ValueError(f"Invalid date format: {date}. Expected YYYYMMDD")
-        
-
-    def get_online_tracking_json_path(
-        self,
-        cam_id: str,
-        hour: Optional[int] = None,
-        outdir: Path = Path('/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams'),
-    ) -> Path:
-        if hour is None:
-            raise ValueError("hour is required to locate online tracking results")
-        
-        json_path = outdir / Path(f"{self.date}/{self.date}_{hour:02d}/ZAG-ELP-CAM-{cam_id}-{self.date}-{hour:02d}*/*.jsonl")
-        # Find the first matching file
-        matching_files = sorted(outdir.glob(f"{self.date}/{self.date}_{hour:02d}/ZAG-ELP-CAM-{cam_id}-{self.date}-{hour:02d}*/*.jsonl"))
-        if not matching_files:
-            raise FileNotFoundError(f"No online tracking JSONL file found for camera(s) {cam_id} at hour {hour} on date {self.date}")
-        json_path = matching_files[0]
-        print(f"Found online tracking JSONL file: {json_path}")
-        
-        return json_path
-
-
-    def load_online_tracking_jsonl(self, jsonl_path: Path) -> Tuple[Dict, List[Dict]]:
-        """
-        Load online tracking JSONL file.
-        
-        Args:
-            jsonl_path: Path to tracking JSONL file
-        
-        Returns:
-            Tuple of (metadata, records)
-            - metadata: Dict with video info (first line)
-            - records: List of frame records
-        
-        Example:
-            >>> loader = FileLoader("20250830", 14)
-            >>> metadata, records = loader.load_online_tracking_jsonl(track_path)
-            >>> print(f"Video: {metadata['video']}, FPS: {metadata['fps']}")
-            >>> print(f"Frames: {len(records)}")
-        """
-        with open(jsonl_path, "r") as f:
-            lines = f.readlines()
-        
-        if len(lines) < 1:
-            raise ValueError(f"Invalid JSONL file: {jsonl_path}")
-        
-        metadata = json.loads(lines[0])
-        records = [json.loads(line) for line in lines[1:]]
-        
-        self.logger.info("Loaded %d frames from %s", len(records), jsonl_path)
-        return metadata, records
-    
-    
-    def load_video_metadata(self, video_path: Path) -> Dict:
-        """
-        Extract metadata from video file path.
-        
-        Args:
-            video_path: Path to video file
-        
-        Returns:
-            Dictionary with metadata:
-            - camera_id: str
-            - date: str (YYYYMMDD)
-            - time: str (HHMMSS)
-            - timestamp: int (milliseconds)
-            - segment: int
-            - ampm: str (AM/PM)
-        
-        Example:
-            >>> loader = FileLoader("20250830", 14)
-            >>> metadata = loader.load_video_metadata(Path("ZAG-ELP-CAM-016-20250830-140000-123456-7.mp4"))
-            >>> print(metadata)
-            {'camera_id': '016', 'date': '20250830', 'time': '140000', ...}
-        """
-        filename = video_path.stem
-        parts = filename.split("-")
-        
-        if len(parts) < 7:
-            raise ValueError(f"Invalid video filename format: {filename}")
-        
-        camera_id = parts[3]
-        date = parts[4]
-        time = parts[5]
-        timestamp = int(parts[6])
-        segment = int(parts[7]) if len(parts) > 7 else 0
-        
-        hour = int(time[:2])
-        ampm = "AM" if hour < 12 else "PM"
-        
-        return {
-            "camera_id": camera_id,
-            "date": date,
-            "time": time,
-            "timestamp": timestamp,
-            "segment": segment,
-            "ampm": ampm,
-            "filename": filename,
-            "path": str(video_path),
-        }
-    
     
 
-    def get_all_videos_for_day(
-        self,
-        camera_ids: List[str] = None,
-    ) -> List[Path]:
-        """
-        Get all videos for the entire day (AM and PM).
+    def load_config(self) -> Dict:
+        """Load configuration from JSON file."""
+        with open(self.config, "r") as f:
+            config_data = json.load(f)
+        return config_data
+    
+
+    def load_camera_names(self) -> List[str]:
+        """Load camera names from configuration."""
         
-        Args:
-            cam_id: Camera ID to search. If None, uses instance cam_id or all cameras.
+        camera_names = self.config_data.get("enabled_cameras", [])
         
-        Returns:
-            List of video file paths for the entire day
-        
-        Example:
-            >>> loader = FileLoader("20250830", 14, "016")
-            >>> all_videos = loader.get_all_videos_for_day()
-            >>> print(f"Found {len(all_videos)} videos for the day")
-        """
-        
-        video_files: List[Path] = []
-        
+        return camera_names if camera_names else CAMERA_NAMES
+    
+
+    def load_offline_track_dir(self, cam_id, date=None) -> Path:
+        """Get offline track directory from config."""
+        date = date or self.date
+        #format date to YYYY-MM-DD if not already
+        if len(date) == 8 and date.isdigit():
+            date = datetime.strptime(date, "%Y%m%d").strftime("%Y-%m-%d")
+        cam_name = cam_id2name(cam_id)
+        offline_track_dir = Path(self.record_root) / "tracks" / cam_name / date
+        return offline_track_dir
+    
+
+    def load_offline_track_dirs(self, camera_ids: List[str], date=None) -> Dict[str, Path]:
+        """Get offline track directories for multiple cameras."""
+        date = date or self.date
+        track_dirs = {}
         for cam_id in camera_ids:
-            for ampm in ["AM", "PM"]:
-                video_dir = self.raw_video_dir / f"ZAG-ELP-CAM-{cam_id}" / f"{self.date}{ampm}"
-                
-                if not video_dir.exists():
-                    continue
-                
-                pattern = f"ZAG-ELP-CAM-{cam_id}-{self.date}-*.mp4"
-                videos = sorted(video_dir.glob(pattern))
-                video_files.extend(videos)
-        
-        self.logger.info("Found %d videos for entire day", len(video_files))
-        return video_files
+            track_dirs[cam_id] = self.load_offline_track_dir(cam_id, date=date)
+        return track_dirs
     
+    
+    def list_track_files(self, track_dir = None) -> List[Path]:
+        """List all track files in the given directory."""
+        track_dir = self.track_dir if track_dir is None else track_dir
+        if not Path(track_dir).exists():
+            self.logger.warning("Track directory does not exist: %s", track_dir)
+            return []
+        
+        track_files = sorted(track_dir.glob("*.csv"))
+        track_videos = sorted([f for f in track_dir.glob("*.mkv")])
+        
+        self.logger.info("Found %d track files in %s", len(track_files), track_dir)
+        return track_files, track_videos
+
+
+    def list_track_files_all_cams(self, camera_ids: List[str], date=None) -> Dict[str, Tuple[List[Path], List[Path]]]:
+        """List track files for all specified cameras."""
+        date = date or self.date
+        track_dirs = self.load_offline_track_dirs(camera_ids, date=date)
+        all_track_files = {}
+        for cam_id, track_dir in track_dirs.items():
+            track_files, track_videos = self.list_track_files(track_dir=track_dir)
+            all_track_files[cam_id] = (track_files, track_videos)
+        return all_track_files
 
 
 if __name__ == "__main__":
     # Example usage
-    loader = FileManager("20251129")
-    
+    loader = FileManager(config='/media/mu/zoo_vision/data/config.json',
+                         date="20250318")
 
-    cam_ids = ["016", "017"]
-    hour = 00
-    # for cam_id in cam_ids:
-    #     online_tracking_file = loader.get_online_tracking_json_path(cam_id, hour=hour)
+    print("Cameras:", loader.load_camera_names())    
+    print("Record root:", loader.record_root)
 
-    #     meta, records = loader.load_online_tracking_jsonl(online_tracking_file)
-        
-    #     print(records[0])
+    track_dir = loader.load_offline_track_dir(cam_id="016")
+    print("Track dir:", track_dir)
 
-    #     print("=====")
+    lists = loader.list_track_files(track_dir=track_dir)
+    print(lists)
 
-    all_videos = loader.get_all_videos_for_day(camera_ids=cam_ids)
-    for video in all_videos:
-        print(video)
-    
