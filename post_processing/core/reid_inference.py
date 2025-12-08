@@ -21,7 +21,7 @@ for path in (PROJECT_ROOT, POSE_REID_ROOT):
 
 from project.config import cfg as base_cfg
 from project.datasets.make_dataloader import get_transforms
-from project.models import make_model
+from project.model import make_model
 from project.utils.tools import load_model
 from project.utils.metrics import eval_func_gpu, compute_cosine_distance
 

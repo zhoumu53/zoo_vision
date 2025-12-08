@@ -1,1 +1,0 @@
-{"Train samples":{"format":"png","count":1,"filenames":["media/images/Train samples_40_e0f4e6ed87a1cd8f2294.png"],"captions":["Pred:3 Truth:0"],"_type":"images/separated","width":256,"height":256},"Acc":21.875,"loss":1.609967788060506,"_timestamp":1.763728452588049e+09,"_step":40,"_wandb":{"runtime":27},"_runtime":27}

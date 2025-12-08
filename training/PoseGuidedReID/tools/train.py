@@ -1,6 +1,6 @@
 from project.utils.logger import setup_logger
 from project.datasets import make_dataloader, make_base_dataloader
-from project.models import make_model
+from project.model import make_model
 from project.solver import make_optimizer
 from project.solver.scheduler_factory import create_scheduler
 from project.losses import make_loss
