@@ -28,7 +28,9 @@ for path in (PROJECT_ROOT, POSE_REID_ROOT):
 from post_processing.tools.run_reid_feature_extraction import run_feature_extraction, load_reid
 from post_processing.tools.videoloader import VideoLoader
 
-from post_processing.core.file_manager import FileManager
+from post_processing.core.file_manager import (
+    list_track_files_all_cams,
+)
 
 
 
@@ -51,12 +53,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default='/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml', help="ReID config file path.")
     parser.add_argument("--checkpoint", type=Path, default='/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for inference.")
-    
-
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for inference.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing processed files.")
 
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
-    
+    ## vis_cluster
+    parser.add_argument("--vis_cluster", action="store_true", help="Visualize clusters after reID feature extraction.")
+    parser.set_defaults(vis_cluster=True)
+
     return parser.parse_args()
 
 
@@ -68,12 +72,13 @@ def main():
     logger.info("Loading data from day %s", args.date)
 
     ### Load file manager and get input file path
-    file_manager = FileManager(date=args.date, 
-                               record_root=args.record_root,
-                               logger=logger)
-    
     camera_ids=['016', '017', '018', '019']
-    all_track_files = file_manager.list_track_files_all_cams(camera_ids=camera_ids)
+    all_track_files = list_track_files_all_cams(
+        record_root=args.record_root,
+        camera_ids=camera_ids,
+        date=args.date,
+        logger=logger,
+    )
 
     full_track_videos = []
     full_track_csv = []
@@ -86,10 +91,10 @@ def main():
 
     for video_file in tqdm(full_track_videos, desc="Processing videos"):
         # skip if processed
-        npz_path = video_file.with_suffix(".npz")
-        if npz_path.exists():
-            logger.info("Skipping already processed video: %s", video_file)
-            continue
+        # npz_path = video_file.with_suffix(".npz")
+        # if npz_path.exists() and not args.overwrite:
+        #     logger.info("Skipping already processed video: %s", video_file)
+        #     continue
 
         saved = run_feature_extraction(
             video_path=video_file,
@@ -101,8 +106,10 @@ def main():
 
 
     
-    # Save output
-    logger.info("Saving processed data to %s", args.output)
+    # Visualize clusters if needed
+    if args.vis_cluster:
+        logger.info("Visualizing clusters for extracted features.")
+
     
     logger.info("Post-processing complete: %s", args.output)
 

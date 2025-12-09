@@ -104,7 +104,10 @@ def save_features_npz(
     features: np.ndarray,
     frame_ids: List[int],
     avg_embedding: np.ndarray,
-    save_path: Path,
+    matched_labels: List[str] = [],
+    avg_matched_labels: List[str] = [],
+    voted_labels: List[str] = [],
+    save_path: Path = None,
     metadata: dict | None = None,
 ) -> None:
     """Save features and frame ids to compressed NPZ."""
@@ -114,7 +117,10 @@ def save_features_npz(
     payload = {
         "features": features,
         "frame_ids": np.array(frame_ids, dtype=np.int32),
-        "avg_embedding": avg_embedding
+        "avg_embedding": avg_embedding,
+        "matched_labels": matched_labels,
+        "avg_matched_labels": avg_matched_labels,
+        "voted_labels": voted_labels,
     }
     if metadata:
         payload["metadata"] = metadata
@@ -122,11 +128,26 @@ def save_features_npz(
     logger.info("Saved %d features to %s", len(frame_ids), save_path)
 
 
+def vote_matched_labels(matched_labels: List[List[str]], topk: int = 1) -> List[str]:
+    """Given matched labels per frame, return the most common label."""
+    from collections import Counter
+
+    voted_labels = []
+    for labels in matched_labels:
+        if labels:
+            most_common = Counter(labels).most_common(topk)[0][0]
+            voted_labels.append(most_common)
+        else:
+            voted_labels.append("unknown")
+    return voted_labels
+
+
 def run_feature_extraction(
     video_path: Path,
     reid_model: ReIDInference,
     device: str = "cpu",
-    batch_size: int = 32
+    batch_size: int = 32,
+    gallery_path: Path = None,
 ) -> Path:
     """High-level helper: load model, extract features, and save alongside the video."""
     features, frame_ids, avg_embedding = extract_reid_features_from_video(
@@ -134,27 +155,42 @@ def run_feature_extraction(
         reid_model=reid_model,
         batch_size=batch_size
     )
+
+    gallery_features, gallery_labels = reid_model.load_features(gallery_path) #todo: load gallery features
+    matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+    avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
+    
+    voted_labels = vote_matched_labels(matched_labels, topk=1)
+    # most common label
+    voted_label = max(set(voted_labels), key=voted_labels.count)
+    print(f"Voted labels for video {video_path.name}: {voted_label}")
+
     save_path = video_path.with_suffix(".npz")
     save_features_npz(
         features=features,
         frame_ids=frame_ids,
         avg_embedding=avg_embedding,
+        matched_labels=matched_labels,
+        avg_matched_labels=avg_matched_labels,
+        voted_labels=voted_label,
         save_path=save_path,
         metadata={
             "video": str(video_path),
             "device": device,
         },
     )
+    print()
     return save_path
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract ReID features for a video/track and save to NPZ.")
-    parser.add_argument("--video", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250318/20250318_15/ZAG-ELP-CAM-016-20250318-155821-1742309901684-7/tracks', help="Path or directory to video or track clip (e.g., .mkv).")
+    parser.add_argument("--video", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/tracks', help="Path or directory to video or track clip (e.g., .mkv).")
     parser.add_argument("--config", type=Path, default='/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml', help="ReID config file path.")
     parser.add_argument("--checkpoint", type=Path, default='/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for inference.")
+    parser.add_argument("--gallery-path", type=Path, default=None, help="Optional gallery features NPZ path for matching.")
     return parser.parse_args()
 
 
@@ -167,6 +203,11 @@ def main() -> None:
 
     reid = load_reid(config_path=args.config, checkpoint_path=args.checkpoint, device=args.device, mode="feature")
 
+    gallery_path = args.gallery_path
+    if gallery_path is None: 
+        gallery_path = args.checkpoint.parent / "pred_features" / "train_iid" / "pytorch_result_e.npz"
+        print(f"No gallery path provided. Using default gallery path: {gallery_path}")
+
     if args.video.is_dir():
         video_files = sorted(args.video.glob("*.mkv"))
         if not video_files:
@@ -174,18 +215,20 @@ def main() -> None:
         for video_file in tqdm(video_files, desc="Processing videos"):
             saved = run_feature_extraction(
                 video_path=video_file,
-                reid=reid,
+                reid_model=reid,
                 device=args.device,
                 batch_size=args.batch_size,
+                gallery_path=gallery_path,
             )
             print(f"Saved features to {saved}")
     else:
         
         saved = run_feature_extraction(
             video_path=args.video,
-            reid=reid,
+            reid_model=reid,
             device=args.device,
             batch_size=args.batch_size,
+            gallery_path=args.gallery_path,
         )
         print(f"Saved features to {saved}")
 
