@@ -116,6 +116,11 @@ class ReIDInference:
         features_b: torch.Tensor,
     ) -> torch.Tensor:
         """Compute cosine similarity matrix (N, M) between two feature sets."""
+        # check device compatibility
+        if isinstance(features_a, np.ndarray):
+            features_a = torch.from_numpy(features_a).to(self.device)
+        if isinstance(features_b, np.ndarray):
+            features_b = torch.from_numpy(features_b).to(self.device)
         features_a = torch.nn.functional.normalize(features_a, dim=1)
         features_b = torch.nn.functional.normalize(features_b, dim=1)
         return torch.mm(features_a, features_b.t())
@@ -124,12 +129,25 @@ class ReIDInference:
         self,
         query_features: torch.Tensor,
         gallery_features: torch.Tensor,
+        gallery_labels: Optional[List[str]] = None,
         top_k: int = 5,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Match query features to gallery, return top-k (scores, indices)."""
         similarity = self.compute_similarity(query_features, gallery_features)
         effective_k = min(top_k, gallery_features.shape[0])
         scores, indices = torch.topk(similarity, effective_k, dim=1)
+
+        # if  gallery_labels is not None:
+        if gallery_labels is not None:
+            matched_labels = []
+            for i in range(indices.shape[0]):
+                matched = []
+                for j in range(effective_k):
+                    idx = indices[i, j].item()
+                    matched.append(gallery_labels[idx])
+                matched_labels.append(matched)
+            print("np.array(matched_labels).shape: ", np.array(matched_labels).shape)
+            return scores, indices, matched_labels
         return scores, indices
     
     def save_features(
@@ -167,13 +185,15 @@ class ReIDInference:
             raise FileNotFoundError(f"Feature file not found: {load_path}")
         
         data = np.load(load_path, allow_pickle=True)
+
+        print("data keys: ", data.keys())
         
-        features = torch.from_numpy(data["features"]).float()
+        features = torch.from_numpy(data["feature"]).float()
         features = torch.nn.functional.normalize(features, dim=1)
         features = features.to(self.device)
         
         self.logger.info("Loaded %d features from %s", len(features), load_path)
-        return features, data["labels"], data["ids"]
+        return features, data["label"]
     
     def run_prediction(
         self,
