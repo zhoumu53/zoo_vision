@@ -20,7 +20,7 @@ class BehaviorInference:
     def __init__(
         self,
         model_path: str,
-        device: torch.device | str = "cpu",
+        device: torch.device | str = "cuda:0",
         logger: Optional[logging.Logger] = None,
     ):
         if isinstance(device, str):

@@ -22,6 +22,61 @@ CAMERA_NAMES = [
 ]
 
 
+
+def parse_video_start_from_name(path: Path) -> Optional[datetime]:
+    """Parse datetime from raw video filename like ZAG-ELP-CAM-016-20251129-001949-....mp4."""
+    name = path.name
+    import re
+
+    m = re.search(r"CAM-(?P<cam>\d{3})-(?P<date>\d{8})-(?P<hms>\d{6})", name)
+    if not m:
+        return None
+    dt_str = f"{m.group('date')}{m.group('hms')}"
+    try:
+        return datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+    except Exception:
+        return None
+
+
+def find_raw_video(
+    camera_id: str,
+    timestamp: Optional[datetime],
+    root: Path = Path("/mnt/camera_nas"),
+) -> Optional[Path]:
+    """
+    Find the closest raw video under /mnt/camera_nas/ZAG-ELP-CAM-{cam}/{date}{AM|PM}/.
+    Chooses the video whose parsed start time is closest to the given timestamp.
+    """
+    if timestamp is None:
+        return None
+
+    date_str = timestamp.strftime("%Y%m%d")
+    ampm = "AM" if timestamp.hour < 12 else "PM"
+    base_dir = root / f"ZAG-ELP-CAM-{camera_id}" / f"{date_str}{ampm}"
+
+    if not base_dir.exists():
+        return None
+
+    candidates = list(base_dir.glob("*.mp4"))
+    if not candidates:
+        candidates = list(base_dir.rglob("*.mp4"))
+    if not candidates:
+        return None
+
+    best_path = None
+    best_delta = None
+    for p in candidates:
+        start_dt = parse_video_start_from_name(p)
+        if start_dt is None:
+            continue
+        delta = abs((start_dt - timestamp).total_seconds())
+        if best_delta is None or delta < best_delta:
+            best_delta = delta
+            best_path = p
+
+    return best_path or candidates[0]
+
+
 def cam_id2name(cam_id: str) -> str:
     """Convert camera ID to camera name."""
     cam_id = cam_id.zfill(3)
@@ -31,6 +86,13 @@ def cam_id2name(cam_id: str) -> str:
 def read_csv(csv_path: Path) -> pd.DataFrame:
     """Read CSV file into DataFrame."""
     return pd.read_csv(csv_path)
+
+
+def get_track_dir(record_root: Path, cam_id: str, date: str) -> Path:
+    """Get track directory path for given camera ID and date."""
+    date_norm = normalize_date(date)
+    cam_name = cam_id2name(cam_id)
+    return record_root / "tracks" / cam_name / date_norm
 
 
 def load_config_file(config_path: Path) -> Dict:
