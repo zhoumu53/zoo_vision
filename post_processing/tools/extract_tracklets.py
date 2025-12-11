@@ -127,7 +127,13 @@ def _to_numpy_rgb(frame: Any) -> np.ndarray:
 
 
 def crop_square_resize(frame: np.ndarray, bbox: Iterable[float], output_size: int = 512) -> np.ndarray:
-    """Crop a bbox to a square with zero padding outside the image, then resize."""
+    """
+    Letterbox the bbox region to a square centered on the box, then resize.
+
+    Keeps the box aspect ratio by padding to a square around its center before resizing.
+    Pixels outside the bbox inside the square are zeroed (black), so only the
+    detected area remains visible.
+    """
     frame = _to_numpy_rgb(frame)
     h, w = frame.shape[:2]
 
@@ -146,32 +152,55 @@ def crop_square_resize(frame: np.ndarray, bbox: Iterable[float], output_size: in
     cy = top + height / 2.0
     half = side / 2.0
 
-    new_left = int(round(cx - half))
-    new_top = int(round(cy - half))
-    new_right = new_left + side
-    new_bottom = new_top + side
+    # Square around center
+    square_left = int(round(cx - half))
+    square_top = int(round(cy - half))
+    square_right = square_left + side
+    square_bottom = square_top + side
 
-    pad_left = max(0, -new_left)
-    pad_top = max(0, -new_top)
-    pad_right = max(0, new_right - w)
-    pad_bottom = max(0, new_bottom - h)
+    # Prepare empty square (black background)
+    square = np.zeros((side, side, frame.shape[2]), dtype=frame.dtype)
 
-    new_left = max(new_left, 0)
-    new_top = max(new_top, 0)
-    new_right = min(new_right, w)
-    new_bottom = min(new_bottom, h)
+    # Source bbox clipped to image bounds
+    src_left = max(left, 0)
+    src_top = max(top, 0)
+    src_right = min(right, w)
+    src_bottom = min(bottom, h)
 
-    cropped = frame[new_top:new_bottom, new_left:new_right]
-    if any((pad_left, pad_top, pad_right, pad_bottom)):
-        cropped = np.pad(
-            cropped,
-            ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
-            mode="constant",
-            constant_values=0,
-        )
+    if src_right <= src_left or src_bottom <= src_top:
+        raise ValueError(f"Invalid clipped bbox: {(src_left, src_top, src_right, src_bottom)} from {bbox}")
 
-    cropped = cv2.resize(cropped, (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-    return cv2.cvtColor(cropped, cv2.COLOR_RGB2BGR)  # VideoWriter expects BGR
+    # Destination coordinates in the square
+    dst_left = src_left - square_left
+    dst_top = src_top - square_top
+    dst_right = dst_left + (src_right - src_left)
+    dst_bottom = dst_top + (src_bottom - src_top)
+
+    # Ensure destination indices are within square bounds
+    dst_left_clipped = max(dst_left, 0)
+    dst_top_clipped = max(dst_top, 0)
+    dst_right_clipped = min(dst_right, side)
+    dst_bottom_clipped = min(dst_bottom, side)
+
+    src_left_adjusted = src_left + (dst_left_clipped - dst_left)
+    src_top_adjusted = src_top + (dst_top_clipped - dst_top)
+    src_right_adjusted = src_right - (dst_right - dst_right_clipped)
+    src_bottom_adjusted = src_bottom - (dst_bottom - dst_bottom_clipped)
+
+    if (
+        src_right_adjusted <= src_left_adjusted
+        or src_bottom_adjusted <= src_top_adjusted
+        or dst_right_clipped <= dst_left_clipped
+        or dst_bottom_clipped <= dst_top_clipped
+    ):
+        raise ValueError("BBox or square alignment resulted in empty region.")
+
+    square[dst_top_clipped:dst_bottom_clipped, dst_left_clipped:dst_right_clipped] = frame[
+        src_top_adjusted:src_bottom_adjusted, src_left_adjusted:src_right_adjusted
+    ]
+
+    square = cv2.resize(square, (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+    return cv2.cvtColor(square, cv2.COLOR_RGB2BGR)  # VideoWriter expects BGR
 
 
 def save_track_csv(csv_path: Path, rows: List[Tuple[int, str, int, int, int, int, float]]) -> None:
@@ -236,15 +265,20 @@ def to_xyxy(
     )
 
 
-def export_tracklets(jsonl_path: Path, output_size: int = 512, bbox_format: str = "auto") -> Path:
-    """Create per-track video clips and CSVs next to the JSONL."""
+def export_tracklets(
+    jsonl_path: Path,
+    output_size: int = 512,
+    bbox_format: str = "auto",
+    output_dir: Path | None = None,
+) -> Path:
+    """Create per-track video clips and CSVs next to the JSONL or in a custom output directory."""
     meta, tracks_by_id = read_track_jsonl(jsonl_path)
     video_path = meta.get("video")
     fps = float(meta.get("fps", 30.0))
     meta_w = int(meta.get("width", 0))
     meta_h = int(meta.get("height", 0))
 
-    tracks_dir = jsonl_path.parent / "tracks"
+    tracks_dir = Path(output_dir) if output_dir is not None else jsonl_path.parent / "tracks"
     tracks_dir.mkdir(parents=True, exist_ok=True)
 
     video_reader = load_video(str(video_path))
@@ -255,18 +289,29 @@ def export_tracklets(jsonl_path: Path, output_size: int = 512, bbox_format: str 
     video_name = jsonl_path.stem
 
     for track_id, entries in tracks_by_id.items():
-        track_id_str = str(track_id)
+        start_time = entries[0]["timestamp"]
+        # format time as hhmmss - remove yyymmdd if present '20251129_001949'
+        if start_time and "_" in start_time:
+            date_part, time_part = start_time.split("_", 1)
+        track_filename = f"T{time_part}_ID{int(track_id):06d}"
+
+        ## skip if track video already exists
+        track_video_path = tracks_dir / f"{track_filename}.mkv"
+        if track_video_path.exists():
+            logger.info("Skipping existing track video: %s", track_video_path)
+            continue
+
         rows: List[Tuple[int, str, int, int, int, int, float]] = []
         writer = cv2.VideoWriter(
-            str(tracks_dir / f"{track_id_str}.mkv"),
+            str(track_video_path),
             fourcc,
             fps,
             (output_size, output_size),
         )
 
-        ## TODO: save cropped frames into folder, under tracks_dir / crops
+        ## save cropped frames into folder, under tracks_dir / crops
 
-        crop_dir = crops_to_reid_training / f"track_{track_id_str}"
+        crop_dir = crops_to_reid_training / f"{track_filename}"
         crop_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -295,7 +340,7 @@ def export_tracklets(jsonl_path: Path, output_size: int = 512, bbox_format: str 
 
 
                 ### save to crop dir as well
-                crop_save_path = crop_dir / f"{video_name}_{frame_idx:06d}.jpg"
+                crop_save_path = crop_dir / f"{track_filename}_{frame_idx:06d}.jpg"
                 cv2.imwrite(str(crop_save_path), clipped)
 
                 rows.append(
@@ -312,8 +357,8 @@ def export_tracklets(jsonl_path: Path, output_size: int = 512, bbox_format: str 
         finally:
             writer.release()
 
-        save_track_csv(tracks_dir / f"{track_id_str}.csv", rows)
-        logger.info("Saved track %s with %d frames", track_id_str, len(rows))
+        save_track_csv(tracks_dir / f"{track_filename}.csv", rows)
+        logger.info("Saved track %s with %d frames", track_filename, len(rows))
 
     return tracks_dir
 
@@ -321,7 +366,7 @@ def export_tracklets(jsonl_path: Path, output_size: int = 512, bbox_format: str 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract track clips and CSVs from tracking JSONL.")
     parser.add_argument("--jsonl", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7_tracks.jsonl', help="Path to tracking JSONL file.")
-    parser.add_argument("--output-size", type=int, default=512, help="Square crop/resize size.")
+    parser.add_argument("--output-size", type=int, default=224, help="Square crop/resize size.")
     parser.add_argument("--bbox-format", type=str, default="auto", choices=["auto", "xyxy", "xywh"], help="BBox format in JSON.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return parser.parse_args()

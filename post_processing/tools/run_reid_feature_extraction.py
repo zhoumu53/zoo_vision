@@ -39,6 +39,11 @@ def load_reid(
     )
 
 
+def load_npz_files(npz_path: Path) -> dict:
+    """Load NPZ file and return its contents as a dictionary."""
+    data = np.load(npz_path, allow_pickle=True)
+    return {key: data[key] for key in data.files}
+
 def _prep_batch(frames: List[np.ndarray], transform, device: torch.device) -> torch.Tensor:
     """Convert a list of RGB numpy frames to a batch tensor."""
     pil_frames = [Image.fromarray(f) for f in frames]
@@ -51,6 +56,7 @@ def extract_reid_features_from_video(
     video_path: Path,
     reid_model: ReIDInference,
     batch_size: int = 32,
+    n_skip: int = 5,
 ) -> Tuple[np.ndarray, List[int], np.ndarray:]:
     """
     Extract ReID features for every frame in a video.
@@ -71,6 +77,7 @@ def extract_reid_features_from_video(
     batch_frames: List[np.ndarray] = []
     batch_indices: List[int] = []
 
+    ### TODO: if the video is too long, skip frames  -- save head / tail
     for idx, frame in enumerate(loader):
         batch_frames.append(frame)
         batch_indices.append(idx)
@@ -148,7 +155,8 @@ def run_feature_extraction(
     device: str = "cpu",
     batch_size: int = 32,
     gallery_path: Path = None,
-) -> Path:
+    group: list = None,  ### TODO: for future use - group info (I&C vs P&F)
+) -> str:
     """High-level helper: load model, extract features, and save alongside the video."""
     features, frame_ids, avg_embedding = extract_reid_features_from_video(
         video_path=video_path,
@@ -156,7 +164,8 @@ def run_feature_extraction(
         batch_size=batch_size
     )
 
-    gallery_features, gallery_labels = reid_model.load_features(gallery_path) #todo: load gallery features
+    ### TODO: load gallery features from Known Group (I&C or P&F)
+    gallery_features, gallery_labels = reid_model.load_features(gallery_path) 
     matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
     avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
     
@@ -180,7 +189,7 @@ def run_feature_extraction(
         },
     )
     print()
-    return save_path
+    return voted_label
 
 
 def parse_args() -> argparse.Namespace:
@@ -213,24 +222,24 @@ def main() -> None:
         if not video_files:
             raise FileNotFoundError(f"No .mkv files found in directory: {args.video}")
         for video_file in tqdm(video_files, desc="Processing videos"):
-            saved = run_feature_extraction(
+            voted_identity_label = run_feature_extraction(
                 video_path=video_file,
                 reid_model=reid,
                 device=args.device,
                 batch_size=args.batch_size,
                 gallery_path=gallery_path,
             )
-            print(f"Saved features to {saved}")
+            print(f"Saved features to {video_file.with_suffix('.npz')}")
     else:
         
-        saved = run_feature_extraction(
+        voted_identity_label = run_feature_extraction(
             video_path=args.video,
             reid_model=reid,
             device=args.device,
             batch_size=args.batch_size,
             gallery_path=args.gallery_path,
         )
-        print(f"Saved features to {saved}")
+        print(f"Saved features to {args.video.with_suffix('.npz')}")
 
 
 if __name__ == "__main__":
