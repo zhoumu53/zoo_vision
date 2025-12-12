@@ -30,9 +30,19 @@
 #include <vector>
 
 namespace zoo {
+namespace {
+template <class T> AlignedBox<T, 2> eigenFromByteTrack(const byte_track::Rect<T> &r) {
+  return AlignedBox<T, 2>(Vector<T, 2>{r.tl_x(), r.tl_y()}, Vector<T, 2>{r.br_x(), r.br_y()});
+}
+template <class T> byte_track::Rect<T> byteTrackFromEigen(const AlignedBox<T, 2> &r) {
+  return byte_track::Rect<T>(r.min().x(), r.min().y(), r.sizes()[0], r.sizes()[1]);
+}
 
+} // namespace
 struct TrackData {
   using time_point = std::chrono::system_clock::time_point;
+
+  std::shared_ptr<byte_track::STrack> byteTrack;
 
   TrackId id;
   time_point startTime;
@@ -58,14 +68,15 @@ struct TrackData {
   std::vector<AlignedBox2f> boxHistory;
   std::vector<float32_t> scoreHistory;
 
-  TrackData(TrackId id_, time_point startTime_, AlignedBox2f box_, float32_t score_)
-      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_}, score{score_} {
+  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_)
+      : byteTrack{std::move(byteTrack_)}, id{static_cast<TrackId>(byteTrack->getTrackId())}, startTime{startTime_},
+        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()} {
     timestampHistory.push_back(startTime_);
-    boxHistory.push_back(box_);
-    scoreHistory.push_back(score_);
+    boxHistory.push_back(box);
+    scoreHistory.push_back(score);
   }
 
-  void update(time_point now, AlignedBox2f newBox, float32_t newScore) {
+  void update(time_point now) {
     timestampHistory.push_back(now);
     boxHistory.push_back(box);
     scoreHistory.push_back(score);
@@ -73,8 +84,8 @@ struct TrackData {
     trackLength += 1;
     lastObservation = now;
     skippedObservationCount = 0;
-    box = newBox;
-    score = newScore;
+    box = eigenFromByteTrack(byteTrack->getRect());
+    score = byteTrack->getScore();
   }
 };
 
@@ -90,7 +101,6 @@ public:
 
   static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 25;
-  static constexpr auto MAX_INACTIVE_DURATION = std::chrono::milliseconds{3000};
 
   TrackMatcher();
 
@@ -103,7 +113,7 @@ public:
   std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator end() const { return tracks_.end(); }
 
 private:
-  TrackId nextTrackId_ = 1;
+  byte_track::BYTETracker byteTracker_;
   std::unordered_map<TrackId, std::unique_ptr<TrackData>> tracks_;
 };
 } // namespace zoo

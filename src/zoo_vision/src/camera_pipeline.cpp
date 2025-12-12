@@ -340,6 +340,9 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frame
   std::lock_guard guard{g_mutex};
 
   for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
+    if (trackId == TrackMatcher::INVALID_TRACK_ID) {
+      continue;
+    }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
     trackWriter_.writeFrame(track, frameId, patchesRgb[idx]);
