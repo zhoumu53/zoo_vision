@@ -146,7 +146,7 @@ class ReIDInference:
                     idx = indices[i, j].item()
                     matched.append(gallery_labels[idx])
                 matched_labels.append(matched)
-            print("np.array(matched_labels).shape: ", np.array(matched_labels).shape)
+            # print("np.array(matched_labels).shape: ", np.array(matched_labels).shape)
             return scores, indices, matched_labels
         return scores, indices
     

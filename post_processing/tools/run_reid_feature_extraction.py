@@ -229,7 +229,7 @@ def main() -> None:
                 batch_size=args.batch_size,
                 gallery_path=gallery_path,
             )
-            print(f"Saved features to {video_file.with_suffix('.npz')}")
+            print(f"Saved features to {video_file.with_suffix('.npz')}, voted label: {voted_identity_label}")
     else:
         
         voted_identity_label = run_feature_extraction(
@@ -239,7 +239,7 @@ def main() -> None:
             batch_size=args.batch_size,
             gallery_path=args.gallery_path,
         )
-        print(f"Saved features to {args.video.with_suffix('.npz')}")
+        print(f"Saved features to {args.video.with_suffix('.npz')}, voted label: {voted_identity_label}")
 
 
 if __name__ == "__main__":
