@@ -21,6 +21,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <fstream>

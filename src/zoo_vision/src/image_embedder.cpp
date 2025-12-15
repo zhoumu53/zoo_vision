@@ -18,6 +18,7 @@
 #include "zoo_vision/utils.hpp"
 
 #include <torch/torch.h>
+#include <nlohmann/json.hpp>
 #include <torch/csrc/jit/serialization/import.h>
 
 namespace zoo {

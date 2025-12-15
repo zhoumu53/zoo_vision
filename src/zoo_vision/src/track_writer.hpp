@@ -1,3 +1,4 @@
+
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -11,22 +12,34 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#include "zoo_vision/behaviourer_interface.hpp"
-#include "zoo_vision/behaviourer.hpp"
-#include "zoo_vision/behaviourer_fake.hpp"
-#include "zoo_vision/utils.hpp"
+#pragma once
 
-#include <nlohmann/json.hpp>
+#include "zoo_vision/timings.hpp"
+#include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/types.hpp"
+
+#include <ATen/Tensor.h>
+#include <Eigen/Dense>
+#include <opencv2/videoio.hpp>
+
+#include <chrono>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <unordered_map>
+#include <vector>
 
 namespace zoo {
 
-std::unique_ptr<IBehaviourer> makeBehaviourer(int nameIndex, std::string cameraName,
-                                              std::optional<at::cuda::CUDAStream> cudaStream) {
-  const auto config = getConfig();
-  if (config["models"]["behaviour"].get<std::string>().empty()) {
-    return std::make_unique<BehaviourerFake>(nameIndex);
-  } else {
-    return std::make_unique<Behaviourer>(nameIndex, cameraName, cudaStream);
-  }
-}
+class TrackWriter {
+public:
+  TrackWriter(std::filesystem::path rootPath);
+
+  void writeFrame(TrackData &track, std::string_view frameId, const at::Tensor &cropImage);
+  void close(const TrackData &track, SysTime time);
+
+private:
+  std::filesystem::path rootPath_;
+};
+
 } // namespace zoo

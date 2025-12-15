@@ -16,35 +16,6 @@
 
 #include <ranges>
 
-namespace {
-float iou(const Eigen::AlignedBox2f a, const Eigen::AlignedBox2f b) {
-  const auto anb = a.intersection(b);
-  const auto aub = a.merged(b);
-  const auto area = [](const Eigen::AlignedBox2f x) {
-    const auto sizes = x.sizes();
-    return sizes[0] * sizes[1];
-  };
-  return area(anb) / area(aub);
-}
-
-std::pair<std::pair<Eigen::Index, Eigen::Index>, float> eigen_argmax(Eigen::MatrixXf &m) {
-  float maxValue = m(0, 0);
-  std::pair<Eigen::Index, Eigen::Index> maxIndex{0, 0};
-
-  for (const Eigen::Index r : std::views::iota(Eigen::Index{0}, m.rows())) {
-    for (const Eigen::Index c : std::views::iota(Eigen::Index{0}, m.cols())) {
-      const float value = m(r, c);
-      if (value > maxValue) {
-        maxValue = value;
-        maxIndex = {r, c};
-      }
-    }
-  }
-  return {maxIndex, maxValue};
-}
-
-} // namespace
-
 namespace zoo {
 
 TrackMatcher::TrackMatcher() = default;
@@ -57,93 +28,62 @@ TrackData &TrackMatcher::getTrackData(TrackId id) {
   return *it->second;
 }
 
-TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
-                                      std::span<TrackId> outputTrackIds) {
+TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const AlignedBox2f> boxes,
+                                      std::span<const float32_t> scores, std::span<TrackId> outputTrackIds) {
   TrackUpdateStats result;
 
-  const size_t inputBoxCount = std::min(boxes.size(), MAX_TRACK_COUNT);
-  if (boxes.size() > MAX_TRACK_COUNT) {
-    std::cerr << "Warning: too many tracks, dropping " << (boxes.size() - MAX_TRACK_COUNT) << " of them." << std::endl;
+  // Convert to ByteTrack input
+  std::vector<byte_track::Object> inputs;
+  for (const auto &[box, score] : std::views::zip(boxes, scores)) {
+    inputs.emplace_back(byteTrackFromEigen(box), 1, score);
   }
 
-  // Build a mapping index->track iterator
-  std::vector<decltype(tracks_)::iterator> trackIts;
-  for (auto it = tracks_.begin(); it != tracks_.end(); ++it) {
-    trackIts.push_back(it);
-  }
+  // Run bytetrack
+  auto outputs = byteTracker_.update(inputs);
 
-  // Build score matrix: scores(track_idx, box_idx)
-  Eigen::MatrixXf score;
-  score.resize(tracks_.size(), inputBoxCount);
-
-  for (const auto &[r, trackIt] : std::views::enumerate(trackIts)) {
-    for (const int c : std::views::iota(0uz, inputBoxCount)) {
-      const TrackData &track = *trackIt->second;
-      score(r, c) = iou(track.box, boxes[c]);
+  // Delete tracks that were dropped
+  for (auto it = tracks_.begin(); it != tracks_.end();) {
+    if (it->second->byteTrack->getSTrackState() == byte_track::STrackState::Removed) {
+      result.closedTracks.push_back(std::move(it->second));
+      it = tracks_.erase(it);
+    } else {
+      ++it;
     }
   }
-
-  // Init output to invalids
-  std::array<bool, MAX_TRACK_COUNT> inputUsed{false};
-  std::array<bool, MAX_TRACK_COUNT> trackUsed{false};
-
-  // Greedy matching
-  constexpr float32_t MIN_IOU_THRESHOLD = 0.4f;
-  [[maybe_unused]] int matchCount = 0;
-  if (tracks_.size() > 0 && inputBoxCount > 0) {
-    auto argmax = eigen_argmax(score);
-    while (argmax.second > MIN_IOU_THRESHOLD) {
-      const auto [r, c] = argmax.first;
-
-      TrackData &track = *trackIts[r]->second;
-      outputTrackIds[c] = track.id;
-      track.trackLength += 1;
-      track.lastObservation = now;
-      track.skippedObservationCount = 0;
-      track.box = boxes[c];
-
-      inputUsed[c] = true;
-      trackUsed[r] = true;
-      score.row(r).setConstant(0.0f);
-      score.col(c).setConstant(0.0f);
-      matchCount += 1;
-
-      argmax = eigen_argmax(score);
-    }
-  }
-
-  // Drop missed tracks
-  for (const auto &[r, it] : std::views::enumerate(trackIts)) {
-    if (!trackUsed[r]) {
-      TrackData &track = *it->second;
-      auto ellapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - track.lastObservation);
-      if (track.skippedObservationCount == 0) {
-        // Record tracks on the first frame they were missed
-        result.justMissedTracks.push_back(&track);
-      }
-      track.skippedObservationCount += 1;
-      if (ellapsedTime > MAX_INACTIVE_DURATION) {
-        // Record tracks that are closed
-        result.closedTracks.push_back(std::move(it->second));
-      }
-    }
-  }
-  std::erase_if(tracks_, [](const auto &item) { return item.second == nullptr; });
-
-  // Create new tracks
-  for (const int c : std::views::iota(0uz, inputBoxCount)) {
-    if (inputUsed[c]) {
+  // Add new tracks
+  for (std::shared_ptr<byte_track::STrack> &output : outputs) {
+    if (output->getSTrackState() == byte_track::STrackState::Removed) {
+      // Ignore removed tracks (in case they are returned here)
       continue;
     }
-    const auto newTrackId = nextTrackId_;
-    nextTrackId_ += 1;
 
-    outputTrackIds[c] = newTrackId;
-    auto it = tracks_.insert({newTrackId, std::make_unique<TrackData>(newTrackId, now, boxes[c])});
-    // Record new tracks
-    result.newTracks.push_back(it.first->second.get());
+    auto it = tracks_.find(output->getTrackId());
+    if (it == tracks_.end()) {
+      // Not present in our table, add
+      auto newTrack = std::make_unique<TrackData>(std::move(output), now);
+      result.newTracks.push_back(newTrack.get());
+      tracks_.insert({newTrack->id, std::move(newTrack)});
+    } else {
+      TrackData &track = *it->second;
+      track.update(now);
+    }
   }
 
+  // ByteTrack does not do the matching between detection index and track index.
+  // We need to do it ourselves.
+  for (auto &&[box, outputTrackId] : std::views::zip(boxes, outputTrackIds)) {
+    float32_t bestDistance = 1e10;
+    TrackId bestId = INVALID_TRACK_ID;
+
+    for (const auto &[trackId, data] : tracks_) {
+      const float32_t distance = (data->box.center() - box.center()).squaredNorm();
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        bestId = trackId;
+      }
+    }
+    outputTrackId = bestId;
+  }
   return result;
 }
 } // namespace zoo

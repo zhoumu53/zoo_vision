@@ -11,22 +11,30 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#include "zoo_vision/behaviourer_interface.hpp"
-#include "zoo_vision/behaviourer.hpp"
-#include "zoo_vision/behaviourer_fake.hpp"
-#include "zoo_vision/utils.hpp"
+#pragma once
 
-#include <nlohmann/json.hpp>
+#include "zoo_vision/types.hpp"
+
+#include <opencv2/videoio.hpp>
+
+#include <filesystem>
+#include <memory>
 
 namespace zoo {
 
-std::unique_ptr<IBehaviourer> makeBehaviourer(int nameIndex, std::string cameraName,
-                                              std::optional<at::cuda::CUDAStream> cudaStream) {
-  const auto config = getConfig();
-  if (config["models"]["behaviour"].get<std::string>().empty()) {
-    return std::make_unique<BehaviourerFake>(nameIndex);
-  } else {
-    return std::make_unique<Behaviourer>(nameIndex, cameraName, cudaStream);
-  }
-}
+/* Class dedicated to write videos.
+We want to abstract cv::VideoWriter away because OpenCV does not allow
+configuring the bitrate and the track videos have terrible quality.
+We'll use directly libav soon to have better control.*/
+class VideoWriter {
+public:
+  VideoWriter();
+  ~VideoWriter();
+
+  bool open(std::string_view filename, Vector2i frameSize);
+  void write(const cv::Mat3b &img);
+
+private:
+  cv::VideoWriter writer_;
+};
 } // namespace zoo

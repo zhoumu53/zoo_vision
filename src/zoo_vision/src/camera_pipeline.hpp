@@ -18,17 +18,16 @@
 #include "zoo_msgs/msg/image4m.hpp"
 #include "zoo_msgs/msg/track_closed.hpp"
 #include "zoo_msgs/msg/track_state.hpp"
-#include "zoo_vision/behaviourer_interface.hpp"
 #include "zoo_vision/camera_calibration.hpp"
-#include "zoo_vision/identifier_interface.hpp"
 #include "zoo_vision/image_embedder.hpp"
 #include "zoo_vision/image_normalizer.hpp"
-#include "zoo_vision/image_quality.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/patch_cropper.hpp"
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
+#include "zoo_vision/track_count_recorder.hpp"
 #include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/track_writer.hpp"
 #include "zoo_vision/world_locator.hpp"
 
 #include <Eigen/Dense>
@@ -41,11 +40,20 @@
 
 namespace zoo {
 
+struct CameraPipelineConfig {
+  Vector2i detectionImageSize;
+  std::filesystem::path rootPathImprove;
+
+  bool recordDetectionLoss;
+  bool recordTracks;
+  bool recordKeyframes;
+  bool recordBehaviourChange;
+  bool recordMasks;
+};
+
 class CameraPipeline : public rclcpp::Node {
 public:
   explicit CameraPipeline(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
-
-  void readConfig(const nlohmann::json &config);
 
   void onImage(std::shared_ptr<zoo_msgs::msg::Image12m> msg);
 
@@ -55,9 +63,11 @@ public:
   void saveKeyframes(const TrackData &track);
 
 private:
+  CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config);
   void dynamicConfig(Vector2i imageSize);
 
-  void recordTracks(const SysTime time, const std::span<const uint32_t> trackIds, const at::Tensor &patches);
+  void recordTracks(const SysTime time, std::string_view frameId, const std::span<const uint32_t> trackIds,
+                    const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
@@ -65,18 +75,12 @@ private:
                    const at::Tensor &masks);
 
   std::string cameraName_;
+  CameraPipelineConfig config_;
 
   ImageRateLimiter *rateLimiter_;
   RateSampler rateSampler_;
 
-  bool recordDetectionLoss_;
-  bool recordTracks_;
-  bool recordKeyframes_;
-  bool recordBehaviourChange_;
-  bool recordMasks_;
-
   bool dynamicConfigDone_ = false;
-  Vector2i detectionImageSize_{0, 0};
   ImageNormalizer normalizer_;
 
   CameraCalibration calibration_;
@@ -87,15 +91,12 @@ private:
   std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
-  ImageQualityNet quality_;
-  std::unique_ptr<IIdentifier> identifier_;
-  std::unique_ptr<IBehaviourer> behaviourer_;
+  TrackWriter trackWriter_;
+  TrackCountRecorder trackCountRecorder_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackClosed>> trackClosedPublisher_;
-
-  std::filesystem::path rootPathImprove_;
 };
 } // namespace zoo

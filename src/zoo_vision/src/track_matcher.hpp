@@ -15,21 +15,34 @@
 
 #include "zoo_vision/keyframe_store.hpp"
 #include "zoo_vision/types.hpp"
+#include "zoo_vision/video_writer.hpp"
 #include "zoo_vision/vote_histogram.hpp"
 
 #include <ATen/Tensor.h>
+#include <ByteTrack/BYTETracker.h>
 #include <Eigen/Dense>
 
 #include <chrono>
+#include <fstream>
 #include <optional>
 #include <span>
 #include <unordered_map>
 #include <vector>
 
 namespace zoo {
+namespace {
+template <class T> AlignedBox<T, 2> eigenFromByteTrack(const byte_track::Rect<T> &r) {
+  return AlignedBox<T, 2>(Vector<T, 2>{r.tl_x(), r.tl_y()}, Vector<T, 2>{r.br_x(), r.br_y()});
+}
+template <class T> byte_track::Rect<T> byteTrackFromEigen(const AlignedBox<T, 2> &r) {
+  return byte_track::Rect<T>(r.min().x(), r.min().y(), r.sizes()[0], r.sizes()[1]);
+}
 
+} // namespace
 struct TrackData {
   using time_point = std::chrono::system_clock::time_point;
+
+  std::shared_ptr<byte_track::STrack> byteTrack;
 
   TrackId id;
   time_point startTime;
@@ -38,7 +51,8 @@ struct TrackData {
   int skippedObservationCount = 0;
 
   size_t trackLength = 1;
-  Eigen::AlignedBox2f box;
+  AlignedBox2f box;
+  float32_t score;
   std::optional<at::Tensor> identityState = std::nullopt;
 
   KeyframeStore keyframeStore;
@@ -47,11 +61,32 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
-  // Debug
-  std::optional<time_point> lastImageSaved;
+  std::ofstream infoFd;
+  VideoWriter trackVideo;
 
-  TrackData(TrackId id_, time_point startTime_, Eigen::AlignedBox2f box_)
-      : id{id_}, startTime{startTime_}, lastObservation{startTime_}, box{box_} {}
+  std::vector<time_point> timestampHistory;
+  std::vector<AlignedBox2f> boxHistory;
+  std::vector<float32_t> scoreHistory;
+
+  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_)
+      : byteTrack{std::move(byteTrack_)}, id{static_cast<TrackId>(byteTrack->getTrackId())}, startTime{startTime_},
+        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()} {
+    timestampHistory.push_back(startTime_);
+    boxHistory.push_back(box);
+    scoreHistory.push_back(score);
+  }
+
+  void update(time_point now) {
+    timestampHistory.push_back(now);
+    boxHistory.push_back(box);
+    scoreHistory.push_back(score);
+
+    trackLength += 1;
+    lastObservation = now;
+    skippedObservationCount = 0;
+    box = eigenFromByteTrack(byteTrack->getRect());
+    score = byteTrack->getScore();
+  }
 };
 
 struct TrackUpdateStats {
@@ -66,11 +101,10 @@ public:
 
   static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 25;
-  static constexpr auto MAX_INACTIVE_DURATION = std::chrono::milliseconds{3000};
 
   TrackMatcher();
 
-  TrackUpdateStats update(Clock::time_point now, std::span<const Eigen::AlignedBox2f> boxes,
+  TrackUpdateStats update(Clock::time_point now, std::span<const AlignedBox2f> boxes, std::span<const float32_t> scores,
                           std::span<TrackId> outputTrackIds);
 
   TrackData &getTrackData(TrackId id);
@@ -79,7 +113,7 @@ public:
   std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator end() const { return tracks_.end(); }
 
 private:
-  TrackId nextTrackId_ = 1;
+  byte_track::BYTETracker byteTracker_;
   std::unordered_map<TrackId, std::unique_ptr<TrackData>> tracks_;
 };
 } // namespace zoo

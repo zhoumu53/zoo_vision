@@ -25,7 +25,8 @@ namespace zoo {
 struct SegmenterResult {
   at::Tensor masks; // This must be initialized with the correct dimensions. It can be a mapped location into the output
                     // message buffer.
-  std::vector<Eigen::AlignedBox2f> bboxesInDetection;
+  std::vector<AlignedBox2f> bboxesInDetection;
+  std::vector<float32_t> scores;
 };
 
 class ISegmenter {

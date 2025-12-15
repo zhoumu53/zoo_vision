@@ -109,6 +109,7 @@ void SegmenterYolo::onImage(SegmenterResult &result, const at::Tensor & /*imageG
     CHECK_EQ(detectionImageSize_[1], resultYolo.mask.rows);
 
     result.bboxesInDetection.push_back(eigenBboxFromYoloBbox(resultYolo.box));
+    result.scores.push_back(resultYolo.conf);
     cv::Mat1b maskMap = wrapCvFromTensor1b(result.masks[i]);
     resultYolo.mask.copyTo(maskMap);
   }

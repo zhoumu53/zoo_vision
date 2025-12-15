@@ -30,17 +30,17 @@ namespace zoo {
 
 PatchCropper::PatchCropper() {}
 
-void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &imageGpu,
+void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &image,
                                 const Eigen::Vector2f &scale_image_from_detection,
                                 const std::span<const zoo_msgs::msg::BoundingBox2D> bboxes) {
-  constexpr int CROP_SIZE = 224;
+  constexpr int CROP_SIZE = 512;
   constexpr float CONTEXT_FACTOR = 1.1f;
   const int detectionCount = bboxes.size();
   const int channels = 3;
 
-  const std::array<int64_t, 2> imageSize = {/*width*/ imageGpu.size(2), /*height*/ imageGpu.size(1)};
-  patches =
-      at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE}, at::TensorOptions(imageGpu.device()).dtype(at::kFloat));
+  const std::array<int64_t, 2> imageSize = {/*width*/ image.size(2), /*height*/ image.size(1)};
+  patches = at::zeros({detectionCount, channels, CROP_SIZE, CROP_SIZE},
+                      at::TensorOptions(image.device()).dtype(image.dtype()));
 
   // Extract crops
   for (const auto &[i, bbox] : std::views::enumerate(bboxes)) {
@@ -64,7 +64,7 @@ void PatchCropper::extractCrops(torch::Tensor &patches, const torch::Tensor &ima
         }
       }
     }
-    const auto bboxPatch = imageGpu.index({
+    const auto bboxPatch = image.index({
         None,
         Slice(),
         Slice(corner0[1], corner1[1]),

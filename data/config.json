@@ -92,7 +92,7 @@
   "record_root": "/media/dherrera/ElephantsWD/elephants/improve",
   "record_detection_loss": false,
   "record_keyframes": false,
-  "record_tracks": false,
+  "record_tracks": true,
   "record_behaviour_change": false,
   "record_masks": false,
   "live_stream": false,

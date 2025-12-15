@@ -11,22 +11,19 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#include "zoo_vision/behaviourer_interface.hpp"
-#include "zoo_vision/behaviourer.hpp"
-#include "zoo_vision/behaviourer_fake.hpp"
-#include "zoo_vision/utils.hpp"
 
-#include <nlohmann/json.hpp>
+#include "zoo_vision/video_writer.hpp"
 
 namespace zoo {
+VideoWriter::VideoWriter() {}
 
-std::unique_ptr<IBehaviourer> makeBehaviourer(int nameIndex, std::string cameraName,
-                                              std::optional<at::cuda::CUDAStream> cudaStream) {
-  const auto config = getConfig();
-  if (config["models"]["behaviour"].get<std::string>().empty()) {
-    return std::make_unique<BehaviourerFake>(nameIndex);
-  } else {
-    return std::make_unique<Behaviourer>(nameIndex, cameraName, cudaStream);
-  }
+VideoWriter::~VideoWriter() {}
+
+bool VideoWriter::open(std::string_view filename, Vector2i frameSize) {
+  const std::vector<int> params{{cv::VIDEOWRITER_PROP_IS_COLOR, 1 /*, cv::VIDEOWRITER_PROP_QUALITY, 0*/}};
+  const auto fourcc = "h264";
+  return writer_.open(std::string(filename), cv::VideoWriter::fourcc(fourcc[0], fourcc[1], fourcc[2], fourcc[3]), 30,
+                      cv::Size{frameSize[0], frameSize[1]}, params);
 }
+void VideoWriter::write(const cv::Mat3b &img) { writer_ << img; }
 } // namespace zoo

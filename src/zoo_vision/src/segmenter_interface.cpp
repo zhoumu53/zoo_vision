@@ -16,6 +16,8 @@
 #include "zoo_vision/segmenter_yolo.hpp"
 #include "zoo_vision/utils.hpp"
 
+#include <nlohmann/json.hpp>
+
 namespace zoo {
 
 std::unique_ptr<ISegmenter> makeSegmenter(int nameIndex, std::string cameraName_,

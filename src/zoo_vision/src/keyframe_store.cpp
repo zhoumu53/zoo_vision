@@ -40,7 +40,7 @@ std::optional<TKeyframeIndex> KeyframeStore::maybeAddKeyframe(const at::Tensor &
   assert(image_u8.size(1) == image_u8.size(1)); // Square aspect ratio
 
   at::Tensor embeddingsFlat = embeddings.reshape({-1});
-  assert(embeddingsFlat.size(0) == EMBEDDING_FLAT_COUNT);
+  assert(embeddingsFlat.size(0) == ImageEmbedder::EMBEDDING_FLAT_COUNT);
 
   at::Tensor embeddingsNorm = at::linalg_norm(embeddingsFlat);
 

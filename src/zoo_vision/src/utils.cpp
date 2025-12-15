@@ -15,6 +15,7 @@
 #include "zoo_vision/utils.hpp"
 
 #include <ATen/ops/from_blob.h>
+#include <nlohmann/json.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <torch/torch.h>
@@ -147,6 +148,13 @@ cv::Mat1b wrapCvFromTensor1b(const at::Tensor img) {
   CHECK_TRUE(img.dtype().isScalarType(torch::kByte));
   CHECK_EQ(img.stride(1), 1);
   return cv::Mat1b(img.size(0), img.size(1), reinterpret_cast<uchar *>(img.data_ptr()), img.stride(0));
+}
+
+cv::Mat3b wrapCvFromTensor3b(const at::Tensor img) {
+  CHECK_EQ(img.dim(), 3);
+  CHECK_TRUE(img.dtype().isScalarType(torch::kByte));
+  CHECK_EQ(img.stride(1), 3);
+  return cv::Mat3b(img.size(0), img.size(1), reinterpret_cast<cv::Vec3b *>(img.data_ptr()), img.stride(0));
 }
 
 int parseInt(std::string_view data) {

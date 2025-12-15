@@ -1,3 +1,4 @@
+
 // This file is part of zoo_vision.
 //
 // zoo_vision is free software: you can redistribute it and/or modify it under
@@ -11,22 +12,31 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#include "zoo_vision/behaviourer_interface.hpp"
-#include "zoo_vision/behaviourer.hpp"
-#include "zoo_vision/behaviourer_fake.hpp"
-#include "zoo_vision/utils.hpp"
+#pragma once
 
-#include <nlohmann/json.hpp>
+#include "zoo_vision/timings.hpp"
+#include "zoo_vision/types.hpp"
+
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <optional>
 
 namespace zoo {
+class TrackCountRecorder {
+public:
+  TrackCountRecorder(std::string_view cameraName);
+  ~TrackCountRecorder();
+  void recordCount(SysTime time, size_t count);
 
-std::unique_ptr<IBehaviourer> makeBehaviourer(int nameIndex, std::string cameraName,
-                                              std::optional<at::cuda::CUDAStream> cudaStream) {
-  const auto config = getConfig();
-  if (config["models"]["behaviour"].get<std::string>().empty()) {
-    return std::make_unique<BehaviourerFake>(nameIndex);
-  } else {
-    return std::make_unique<Behaviourer>(nameIndex, cameraName, cudaStream);
-  }
-}
+private:
+  std::string cameraName_;
+  std::ofstream fd_;
+
+  std::optional<SysTime> lastSeenTime_;
+  std::optional<SysTime> startTime_;
+  size_t count_;
+
+  void writeCount(SysTime endTime);
+};
 } // namespace zoo

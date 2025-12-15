@@ -30,14 +30,14 @@ using float32_t = float;
 
 #define CHECK_EQ(a, b)                                                                                                 \
   if (!(a == b)) {                                                                                                     \
-    throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n" #a "={}\n" #b "={}", a, b));              \
+    throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
 
 #define CHECK_TRUE(a) CHECK_EQ((a), true)
 
 #define CHECK_LE(a, b)                                                                                                 \
   if (!(a <= b)) {                                                                                                     \
-    throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n" #a "={}\n" #b "={}", a, b));              \
+    throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
 
 namespace cv {
@@ -76,12 +76,15 @@ using Matrix3f = Eigen::Matrix3f;
 using MatrixX2f = Eigen::MatrixX2f;
 using MatrixX3f = Eigen::MatrixX3f;
 using Matrix3Xf = Eigen::Matrix3Xf;
-using Vector2i = Eigen::Vector2i;
-using Vector2f = Eigen::Vector2f;
+
+template <class T, int dims> using Vector = Eigen::Matrix<T, dims, 1>;
+using Vector2i = Vector<int, 2>;
+using Vector2f = Vector<float32_t, 2>;
 
 using Polygon = std::vector<Vector2i>;
 
-using AlignedBox2f = Eigen::AlignedBox2f;
+template <class T, int dims> using AlignedBox = Eigen::AlignedBox<T, dims>;
+using AlignedBox2f = AlignedBox<float32_t, 2>;
 
 ////////////////////////////////////////
 // Exceptions
