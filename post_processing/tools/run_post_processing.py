@@ -189,73 +189,75 @@ def main():
     
         
 
-    # ## TODO: change timestamp 
-    # start_time = "15:30:00"
-    # end_time = "23:59:59"
+    ########################## Stitching within each camera ##########################
+    logger.info("Starting tracklet stitching within each camera.")
+    ## TODO: change timestamp 
+    start_time = "15:30:00"
+    end_time = "23:59:59"
 
-    # for camera_id in camera_ids:
-    #     track_dir = get_track_dir(
-    #         record_root=args.record_root,
-    #         cam_id=camera_id,
-    #         date=args.date,
-    #     )
+    for camera_id in camera_ids:
+        track_dir = get_track_dir(
+            record_root=args.record_root,
+            cam_id=camera_id,
+            date=args.date,
+        )
     
-    #     tracklet_manager = TrackletManager(
-    #         track_dir=track_dir,
-    #         camera_id=camera_id,
-    #         num_identities=2,   ## TODO: set dynamically? with human prior?
-    #         logger=logger,
-    #         start_time=start_time,
-    #         end_time=end_time,
-    #     )
-    #     tracklet_manager.load_tracklets_for_camera()
-    #     print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
+        tracklet_manager = TrackletManager(
+            track_dir=track_dir,
+            camera_id=camera_id,
+            num_identities=2,   ## TODO: set dynamically? with human prior?
+            logger=logger,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        tracklet_manager.load_tracklets_for_camera()
+        print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
 
-    #     # Test the new bidirectional gallery-based stitching
-    #     print("\n" + "="*80)
-    #     print("Testing BIDIRECTIONAL GALLERY-based stitching (recommended for elephants)")
-    #     print("="*80)
-    #     tracklet_manager.stitch_tracklets_bidirectional(
-    #         max_gap_frames=600,
-    #         local_sim_th=0.5,
-    #         gallery_sim_th=0.45,
-    #         head_k=5,
-    #         tail_k=5,
-    #         gallery_k=10,
-    #         w_local=0.6,
-    #         w_gallery=0.4,
-    #     )
-    #     tracklet_manager.save_stitched_tracklets()
+        # Test the new bidirectional gallery-based stitching
+        print("\n" + "="*80)
+        print("Testing BIDIRECTIONAL GALLERY-based stitching (recommended for elephants)")
+        print("="*80)
+        tracklet_manager.stitch_tracklets_bidirectional(
+            max_gap_frames=600,
+            local_sim_th=0.5,
+            gallery_sim_th=0.45,
+            head_k=5,
+            tail_k=5,
+            gallery_k=10,
+            w_local=0.6,
+            w_gallery=0.4,
+        )
+        tracklet_manager.save_stitched_tracklets()
 
-    #     # Visualize results
-    #     from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
-    #     visualize_stitched_tracks_pairs(
-    #         tracklet_manager.tracklets,
-    #         output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
-    #         camera_id=camera_id,
-    #         head_k=3,
-    #         tail_k=3,
-    #         max_chains=None,
-    #         max_tracklets_per_chain=None,
-    #         cell_h=256,
-    #         cell_w=256,
-    #         logger_=logger,
-    #     )
+        # Visualize results
+        from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
+        visualize_stitched_tracks_pairs(
+            tracklet_manager.tracklets,
+            output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
+            camera_id=camera_id,
+            head_k=3,
+            tail_k=3,
+            max_chains=None,
+            max_tracklets_per_chain=None,
+            cell_h=256,
+            cell_w=256,
+            logger_=logger,
+        )
         
-    #     from tests.validate_stitching_timeline import validate_stitched_timelines
-    #     validate_stitched_timelines(
-    #         tracklet_manager.tracklets,
-    #         camera_id=camera_id,
-    #         logger_=logger,
-    #     )
+        from tests.validate_stitching_timeline import validate_stitched_timelines
+        validate_stitched_timelines(
+            tracklet_manager.tracklets,
+            camera_id=camera_id,
+            logger_=logger,
+        )
 
-    #     print("validate_stitched_timelines", validate_stitched_timelines)
+        print("validate_stitched_timelines", validate_stitched_timelines)
 
-    #     ### TODO: visualization - validate_stitched_ids
+        ### TODO: visualization - validate_stitched_ids
 
 
     
-    # ### TODO - cross-camera calibration and stitching
+    ### TODO - cross-camera calibration and stitching
     
 
 
