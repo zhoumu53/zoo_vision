@@ -61,9 +61,14 @@ void TrackWriter::writeFrame(TrackData &track, std::string_view frameId, const a
 
     // Write csv
     const std::filesystem::path infoPath = std::filesystem::path(trackPath).replace_extension(".csv");
+    if (std::filesystem::exists(infoPath)) {
+      std::cout << "Warning: track info file already exists for new track (" << infoPath << ")" << std::endl;
+    }
     track.infoFd.open(infoPath);
-    CHECK_TRUE(!track.infoFd.fail());
-
+    if (track.infoFd.fail()) {
+      throw ZooVisionError(
+          std::format("Could not write the track data file to {}, errno: {}", infoPath.string(), strerror(errno)));
+    }
     writeHeader(track.infoFd);
 
     // Start video
