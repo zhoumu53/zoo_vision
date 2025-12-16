@@ -65,8 +65,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config)
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
-      cudaStream_{}, trackMatcher_{}, segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)},
-      locator_{calibration_}, trackWriter_(config_.rootPathImprove / "tracks" / cameraName_),
+      cudaStream_{}, trackMatcher_{config_.rootPathImprove / "tracks" / cameraName_},
+      segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
       trackCountRecorder_(cameraName_) {
 
   rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
@@ -213,15 +213,18 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     const auto videoFile = getMsgString(imageMsg.header.video_filename);
     recordMasks(videoFile, frameId, trackIds, segmenterResult.masks);
   }
-  for (const auto &ptrack : trackUpdateStats.closedTracks) {
-    const auto &track = *ptrack;
-    publishTrackClosed(imageMsg.header, track);
-    if (config_.recordKeyframes) {
-      saveKeyframes(track);
-    }
-    if (config_.recordTracks) {
-      // moveTrackImagesToIdentityPath(track);
-      trackWriter_.close(track, sysTime);
+  if (!trackUpdateStats.closedTracks.empty()) {
+    for (auto &ptrack : trackUpdateStats.closedTracks) {
+      auto &track = *ptrack;
+      publishTrackClosed(imageMsg.header, track);
+      if (config_.recordKeyframes) {
+        saveKeyframes(track);
+      }
+      if (config_.recordTracks) {
+        // moveTrackImagesToIdentityPath(track);
+        track.writer.close(sysTime);
+      }
+      trackUpdateStats.closedTracks.clear();
     }
   }
 
@@ -345,7 +348,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frame
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    trackWriter_.writeFrame(track, frameId, patchesRgb[idx]);
+    track.writer.writeFrame(frameId, patchesRgb[idx]);
   }
 }
 

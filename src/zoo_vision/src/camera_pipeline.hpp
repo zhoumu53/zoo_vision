@@ -91,7 +91,6 @@ private:
   std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
-  TrackWriter trackWriter_;
   TrackCountRecorder trackCountRecorder_;
 
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;

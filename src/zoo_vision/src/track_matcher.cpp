@@ -18,7 +18,7 @@
 
 namespace zoo {
 
-TrackMatcher::TrackMatcher() = default;
+TrackMatcher::TrackMatcher(const std::filesystem::path &rootCameraPath) : rootCameraPath_{rootCameraPath} {}
 
 TrackData &TrackMatcher::getTrackData(TrackId id) {
   auto it = tracks_.find(id);
@@ -60,7 +60,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Ali
     auto it = tracks_.find(output->getTrackId());
     if (it == tracks_.end()) {
       // Not present in our table, add
-      auto newTrack = std::make_unique<TrackData>(std::move(output), now);
+      auto newTrack = std::make_unique<TrackData>(std::move(output), now, rootCameraPath_);
       result.newTracks.push_back(newTrack.get());
       tracks_.insert({newTrack->id, std::move(newTrack)});
     } else {

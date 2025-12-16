@@ -15,8 +15,8 @@
 #pragma once
 
 #include "zoo_vision/timings.hpp"
-#include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/types.hpp"
+#include "zoo_vision/video_writer.hpp"
 
 #include <ATen/Tensor.h>
 #include <Eigen/Dense>
@@ -24,6 +24,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -31,15 +32,19 @@
 
 namespace zoo {
 
+struct TrackData;
+
 class TrackWriter {
 public:
-  TrackWriter(std::filesystem::path rootPath);
+  TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track);
 
-  void writeFrame(TrackData &track, std::string_view frameId, const at::Tensor &cropImage);
-  void close(const TrackData &track, SysTime time);
+  void writeFrame(std::string_view frameId, const at::Tensor &cropImage);
+  void close(SysTime time);
 
 private:
-  std::filesystem::path rootPath_;
+  TrackData &track_;
+  std::ofstream infoFd_;
+  VideoWriter trackVideo_;
 };
 
 } // namespace zoo

@@ -22,10 +22,10 @@
 
 namespace zoo {
 
-using float32_t = float;
-
 class PatchCropper {
 public:
+  static constexpr int CROP_SIZE = 512;
+
   explicit PatchCropper();
 
   void extractCrops(at::Tensor &patches, const at::Tensor &imageGpu, const Eigen::Vector2f &scale_image_from_detection,

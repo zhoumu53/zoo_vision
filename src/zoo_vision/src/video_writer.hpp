@@ -31,6 +31,7 @@ public:
   VideoWriter();
   ~VideoWriter();
 
+  bool isOpen() const { return writer_.isOpened(); }
   bool open(std::string_view filename, Vector2i frameSize);
   void write(const cv::Mat3b &img);
 

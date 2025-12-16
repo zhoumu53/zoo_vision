@@ -13,6 +13,8 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/track_writer.hpp"
+#include "zoo_vision/patch_cropper.hpp"
+#include "zoo_vision/track_matcher.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <nlohmann/json.hpp>
@@ -20,6 +22,7 @@
 
 #include <fstream>
 #include <mutex>
+#include <thread>
 
 namespace zoo {
 namespace {
@@ -28,9 +31,10 @@ template <typename T> std::string formatTime(const T time) {
   return std::format("{0:%Y-%m-%d} {0:%T}", timeS);
 }
 
-std::filesystem::path getTrackPath(const std::filesystem::path &rootPath, TrackData::time_point startTime, TrackId id) {
+std::filesystem::path getTrackPath(const std::filesystem::path &rootTracksPath, TrackData::time_point startTime,
+                                   TrackId id) {
   const auto timeS = secondsTimePointFromTimePoint(startTime);
-  return rootPath / std::format("{:%Y-%m-%d}", startTime) / (std::format("T{:%H%M%S}_ID{:06d}.", timeS, id));
+  return rootTracksPath / std::format("{:%Y-%m-%d}", startTime) / (std::format("T{:%H%M%S}_ID{:06d}.", timeS, id));
 }
 
 void writeHeader(std::ofstream &fd) {
@@ -52,43 +56,57 @@ void writeRow(std::ofstream &fd, const TrackData &track, std::string_view frameI
 
 } // namespace
 
-TrackWriter::TrackWriter(std::filesystem::path rootPath) : rootPath_{rootPath} {}
+TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track) : track_{track} {
+  const std::filesystem::path trackPath = getTrackPath(rootTracksPath, track.startTime, track.id);
+  std::filesystem::create_directories(trackPath.parent_path());
 
-void TrackWriter::writeFrame(TrackData &track, std::string_view frameId, const at::Tensor &cropImage) {
-  if (track.trackLength == 1) {
-    const std::filesystem::path trackPath = getTrackPath(rootPath_, track.startTime, track.id);
-    std::filesystem::create_directories(trackPath.parent_path());
-
-    // Write csv
-    const std::filesystem::path infoPath = std::filesystem::path(trackPath).replace_extension(".csv");
-    if (std::filesystem::exists(infoPath)) {
-      std::cout << "Warning: track info file already exists for new track (" << infoPath << ")" << std::endl;
-    }
-    track.infoFd.open(infoPath);
-    if (track.infoFd.fail()) {
-      throw ZooVisionError(
-          std::format("Could not write the track data file to {}, errno: {}", infoPath.string(), strerror(errno)));
-    }
-    writeHeader(track.infoFd);
-
-    // Start video
-    const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mkv");
-    const Vector2i cropSize = {static_cast<int>(cropImage.size(1)), static_cast<int>(cropImage.size(0))};
-
-    if (!track.trackVideo.open(videoPath.string(), cropSize)) {
-      throw std::runtime_error(std::format("Could not create track video ({})", videoPath.string()));
-    }
+  // Write csv
+  const std::filesystem::path infoPath = std::filesystem::path(trackPath).replace_extension(".csv");
+  if (std::filesystem::exists(infoPath)) {
+    std::cout << "Warning: track info file already exists for new track (" << infoPath << ")" << std::endl;
   }
 
-  writeRow(track.infoFd, track, frameId);
+  int attemptCount = 0;
+  const int MAX_ATTEMPT_COUNT = 5;
+  while (attemptCount < MAX_ATTEMPT_COUNT) {
+    infoFd_.clear();
+    CHECK_TRUE(!infoFd_.is_open());
+    infoFd_.open(infoPath);
+    if (!infoFd_.fail()) {
+      break;
+    } else {
+      std::cout << std::format("Error opening track data file {}, errno: {}. Retrying with delay.", infoPath.string(),
+                               strerror(errno))
+                << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+  if (infoFd_.fail()) {
+    throw ZooVisionError(
+        std::format("Could not open the track data file {} after {} attempts.", infoPath.string(), attemptCount));
+  }
+  writeHeader(infoFd_);
+
+  // Start video
+  const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mkv");
+  const Vector2i cropSize = {PatchCropper::CROP_SIZE, PatchCropper::CROP_SIZE};
+
+  if (!trackVideo_.open(videoPath.string(), cropSize)) {
+    throw std::runtime_error(std::format("Could not create track video ({})", videoPath.string()));
+  }
+}
+
+void TrackWriter::writeFrame(std::string_view frameId, const at::Tensor &cropImage) {
+  CHECK_EQ(static_cast<int>(cropImage.size(1)), PatchCropper::CROP_SIZE);
+  CHECK_EQ(static_cast<int>(cropImage.size(0)), PatchCropper::CROP_SIZE);
+
+  CHECK_TRUE(infoFd_.is_open());
+  writeRow(infoFd_, track_, frameId);
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);
-  track.trackVideo.write(cropCv);
+  trackVideo_.write(cropCv);
 }
 
-void TrackWriter::close(const TrackData &track, SysTime time) {
-  (void)track;
-  (void)time;
-}
+void TrackWriter::close(SysTime time) { (void)time; }
 } // namespace zoo

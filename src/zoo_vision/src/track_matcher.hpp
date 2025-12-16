@@ -14,8 +14,8 @@
 #pragma once
 
 #include "zoo_vision/keyframe_store.hpp"
+#include "zoo_vision/track_writer.hpp"
 #include "zoo_vision/types.hpp"
-#include "zoo_vision/video_writer.hpp"
 #include "zoo_vision/vote_histogram.hpp"
 
 #include <ATen/Tensor.h>
@@ -23,7 +23,6 @@
 #include <Eigen/Dense>
 
 #include <chrono>
-#include <fstream>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -61,16 +60,17 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
-  std::ofstream infoFd;
-  VideoWriter trackVideo;
+  TrackWriter writer;
 
   std::vector<time_point> timestampHistory;
   std::vector<AlignedBox2f> boxHistory;
   std::vector<float32_t> scoreHistory;
 
-  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_)
+  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_,
+            const std::filesystem::path &rootTracksPath)
       : byteTrack{std::move(byteTrack_)}, id{static_cast<TrackId>(byteTrack->getTrackId())}, startTime{startTime_},
-        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()} {
+        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()},
+        writer{rootTracksPath, *this} {
     timestampHistory.push_back(startTime_);
     boxHistory.push_back(box);
     scoreHistory.push_back(score);
@@ -102,7 +102,7 @@ public:
   static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 25;
 
-  TrackMatcher();
+  TrackMatcher(const std::filesystem::path &rootTracksPath);
 
   TrackUpdateStats update(Clock::time_point now, std::span<const AlignedBox2f> boxes, std::span<const float32_t> scores,
                           std::span<TrackId> outputTrackIds);
@@ -113,6 +113,7 @@ public:
   std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator end() const { return tracks_.end(); }
 
 private:
+  std::filesystem::path rootCameraPath_;
   byte_track::BYTETracker byteTracker_;
   std::unordered_map<TrackId, std::unique_ptr<TrackData>> tracks_;
 };
