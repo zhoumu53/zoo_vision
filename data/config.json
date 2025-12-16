@@ -90,7 +90,7 @@
     "max_seconds_per_recording": 1800
   },
   "video_root": "/mnt/camera_nas",
-  "record_root": "/media/dherrera/ElephantsWD/elephants/improve",
+  "record_root": "/media/dherrera/ElephantsWD/elephants/bytetrack",
   "record_detection_loss": false,
   "record_keyframes": false,
   "record_tracks": true,
@@ -100,7 +100,7 @@
   "skip_frame_count": 4,
   "track_crf": 23,
   "live_stream": false,
-  "video_db": "/media/dherrera/ElephantsWD/elephants/videos/video_db.json",
+  "video_db": "/media/dherrera/ElephantsWD/elephants/bytetrack/video_db.json",
   "videos": [],
   "replay_time": "2025-01-25T05:00:29",
   "enabled_cameras": [
