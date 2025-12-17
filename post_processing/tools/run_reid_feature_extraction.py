@@ -56,7 +56,7 @@ def extract_reid_features_from_video(
     video_path: Path,
     reid_model: ReIDInference,
     batch_size: int = 32,
-    n_skip: int = 5,
+    skip_frames: bool = True,
 ) -> Tuple[np.ndarray, List[int], np.ndarray:]:
     """
     Extract ReID features for every frame in a video.
@@ -77,8 +77,22 @@ def extract_reid_features_from_video(
     batch_frames: List[np.ndarray] = []
     batch_indices: List[int] = []
 
-    ### TODO: if the video is too long, skip frames  -- save head / tail
+    ### if the video is too long, skip frames  -- save head / tail
+
+    ### len(loader) gives total number of frames
+    total_frames = len(loader)
+    indices = list(range(total_frames))
+    if total_frames > 100 and skip_frames:
+        n_skip = total_frames // 100 ### we want ~100 frames -> for reid voting
+        logger.info(f"Video has {total_frames} frames, skipping every {n_skip} frames to limit to ~100 frames.")
+        indices = list(range(0, total_frames, n_skip))
+        #### always include K=10 head, tail frames -- to capture start / end --- for stitching
+        indices = sorted(set(indices + list(range(10)) + list(range(total_frames - 10, total_frames))))
+
+
     for idx, frame in enumerate(loader):
+        if idx not in indices:
+            continue
         batch_frames.append(frame)
         batch_indices.append(idx)
 

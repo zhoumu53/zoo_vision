@@ -298,13 +298,23 @@ class TrackletManager:
             start_t = start_dt.time() if start_dt else None
             end_t   = end_dt.time() if end_dt else None
 
-            # 1) Tracklet ends BEFORE time window → skip
-            if self.start_time and end_t and end_t < self.start_time:
-                print(f"Skipping tracklet {track_filename} ending at {end_t} before start_time {self.start_time}")
+            # ### note -- bug: we may miss tracklets from a different track file 
+            # # 1) Tracklet ends BEFORE time window → skip
+            # if self.start_time and end_t and end_t < self.start_time:
+            #     print(f"Skipping tracklet {track_filename} ending at {end_t} before start_time {self.start_time}")
+            #     continue
+
+            # # 2) Tracklet starts AFTER time window → skip
+            # if self.end_time and start_t and start_t > self.end_time:
+            #     print(f"Skipping tracklet {track_filename} starting at {start_t} after end_time {self.end_time}")
+            #     continue
+
+            ### we only keep the tracklets starting WITHIN the time window, after start_time before end_time
+            if self.start_time and start_t and self.start_time > start_t:
+                print(f"Skipping tracklet {track_filename} starting at {start_t} before start_time {self.start_time}")
                 continue
 
-            # 2) Tracklet starts AFTER time window → skip
-            if self.end_time and start_t and start_t > self.end_time:
+            if self.end_time and start_t and self.end_time < start_t:
                 print(f"Skipping tracklet {track_filename} starting at {start_t} after end_time {self.end_time}")
                 continue
 

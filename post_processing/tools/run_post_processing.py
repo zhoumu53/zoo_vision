@@ -84,8 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, default='/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument("--start-time", type=str, default="15:30:00", help="Start time for processing (HH:MM:SS)." \
     " Default is 15:30:00 to cover night time from PM to AM.    ")
-    parser.add_argument("--end-time", type=str, default="08:30:00", help="End time for processing (HH:MM:SS)." \
-    " Default is 08:30:00 next day to cover night time from PM to AM.    ")
+    parser.add_argument("--end-time", type=str, default="23:59:59", help="End time for processing (HH:MM:SS)." \
+    " Default is 23:59:59 next day to cover night time from PM to AM.    ")
     ### behavior model
     parser.add_argument("--behavior-model", type=Path, default="/media/mu/zoo_vision/models/sleep/vit/v2_no_validation/config.ptc", help="Behavior classification model path (optional).")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
@@ -204,11 +204,8 @@ def main():
 
     ########################## Stitching within each camera ##########################
     logger.info("Starting tracklet stitching within each camera.")
-    ## TODO: change timestamp 
-    start_time = "15:30:00"
-    end_time = "23:59:59"
-    # start_time = args.start_time
-    # end_time = args.end_time
+    start_time = args.start_time
+    end_time = args.end_time
 
     for camera_id in camera_ids:
         track_dir = get_track_dir(
