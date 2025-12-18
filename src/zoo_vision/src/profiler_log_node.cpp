@@ -23,5 +23,8 @@ ProfilerLogNode::ProfilerLogNode(const rclcpp::NodeOptions &options) : rclcpp::N
   timer_ = create_wall_timer(std::chrono::seconds(5), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
 }
 
-void ProfilerLogNode::onTimer() { std::cout << "Profiling timings:\n" << Profiler::Instance() << std::endl; }
+void ProfilerLogNode::onTimer() {
+  std::cout << "Profiling timings:\n" << Profiler::Instance() << std::endl;
+  Profiler::Instance().reset();
+}
 } // namespace zoo

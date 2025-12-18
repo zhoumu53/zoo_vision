@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
   rclcpp::executors::MultiThreadedExecutor exec{rclcpp::ExecutorOptions(), cameraNames.size() + 10};
 
   rclcpp::NodeOptions options;
-  options.use_intra_process_comms(false);
+  options.use_intra_process_comms(true);
 
   std::vector<std::shared_ptr<rclcpp::Node>> nodes;
 

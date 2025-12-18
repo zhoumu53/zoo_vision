@@ -71,7 +71,8 @@ VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
   // Load videos
-  const auto videoQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
+  const auto videoQoS =
+      rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
   for (auto &[cameraName, cameraData] : cameras_) {
     cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", videoQoS);
     loadVideo(cameraName, cameraData, replayNow_);
