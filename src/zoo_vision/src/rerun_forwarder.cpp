@@ -15,6 +15,7 @@
 #include "zoo_vision/rerun_forwarder.hpp"
 
 #include "zoo_msgs/msg/track_state.h"
+#include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <nlohmann/json.hpp>
@@ -93,7 +94,8 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
   rclcpp::SubscriptionOptions otherOptions;
   otherOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
-  const auto reliableQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
+  const auto reliableQoS =
+      rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
 
   auto subscribeImage = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(

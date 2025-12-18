@@ -70,14 +70,15 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
       trackCountRecorder_(cameraName_), onImageProfileTic_{"CameraPipline::tic"} {
 
-  rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
+  rateLimiter_ = gCameraLimiters[cameraName_].get();
 
   // Set up paths to store improvement images
   std::filesystem::create_directories(config_.rootPathImprove);
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
-  const auto videoQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
+  const auto videoQoS =
+      rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
       *this, imageTopic, videoQoS, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
         try {
@@ -262,9 +263,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
   detectionPublisher_->publish(std::move(detectionMsgPtr));
 
-  if (rateLimiter_) {
-    rateLimiter_->signalProcessingComplete();
-  }
+  rateLimiter_->signalProcessingComplete();
 }
 
 void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, TKeyframeIndex newKeyframeIndex,

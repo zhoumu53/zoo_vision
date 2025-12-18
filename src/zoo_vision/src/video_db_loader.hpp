@@ -14,6 +14,7 @@
 #pragma once
 
 #include "zoo_msgs/msg/image12m.hpp"
+#include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/profiler.hpp"
 
 #include <opencv2/highgui/highgui.hpp>
@@ -44,6 +45,8 @@ private:
     std::vector<VideoInfo>::const_iterator currentVideo_;
     std::optional<Clock::time_point> videoStartTime_;
     std::optional<cv::VideoCapture> videoStream_;
+
+    ImageRateLimiter *rateLimiter;
     std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
   };
 

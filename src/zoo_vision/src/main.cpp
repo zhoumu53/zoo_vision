@@ -93,10 +93,8 @@ int main(int argc, char *argv[]) {
   nodes.push_back(std::make_shared<RerunForwarder>(options));
 
   // Camera rate limiters
-  if (config["rate_limiter"].get<bool>()) {
-    for (const auto &cameraName : cameraNames) {
-      gCameraLimiters.emplace(std::string{cameraName}, std::make_unique<ImageRateLimiter>());
-    }
+  for (const auto &cameraName : cameraNames) {
+    gCameraLimiters.emplace(std::string{cameraName}, std::make_unique<ImageRateLimiter>());
   }
 
   // Start db node

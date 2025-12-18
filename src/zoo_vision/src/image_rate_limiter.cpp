@@ -12,25 +12,41 @@
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #include "zoo_vision/image_rate_limiter.hpp"
-#include <thread>
+
+#include <rclcpp/contexts/default_context.hpp>
 
 #include <iostream>
+#include <thread>
 
 namespace zoo {
+namespace {
+bool shouldQuit() { return !rclcpp::contexts::get_global_default_context()->shutdown_reason().empty(); }
+} // namespace
+void ImageRateLimiter::addToQueue() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  count++;
+}
+
 void ImageRateLimiter::waitForProcessing() {
   std::unique_lock<std::mutex> lock(mutex_);
-  std::cout << "Waiting..." << std::endl;
-  count++;
-
-  condition_.wait(lock, [this] { return count == 0; }); // Wait all images are processed
-  std::cout << "Wait done" << std::endl;
+  if (count >= MAX_QUEUE_SIZE) {
+    // std::cout << "Image rate limiter waiting (count=" << count << ")..." << std::endl;
+    // Wait for most images to be processed
+    condition_.wait(lock, [this] { // Check if the app is shutting down so we don't spin forever
+      return count < 2 || shouldQuit();
+    });
+    if (shouldQuit()) {
+      return;
+    }
+    // std::cout << "Image rate limiter wait done" << std::endl;
+  }
 }
 
 void ImageRateLimiter::signalProcessingComplete() {
-  std::cout << "Signal process complete..." << std::endl;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     count--;
+    // std::cout << "Signal process complete (count=" << count << ")..." << std::endl;
   }
   condition_.notify_one(); // Notify one waiting consumer
 }

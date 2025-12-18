@@ -96,11 +96,12 @@ void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
   replayNow_ = parseTime(databaseStartTime);
 
   // Read all videos
-  for (const std::string_view camera : enabledCameras) {
+  for (const std::string &camera : enabledCameras) {
     nlohmann::json cameraJson = databaseJson["cameras"][camera];
 
     const auto pair = cameras_.emplace(std::make_pair(camera, CameraData()));
     CameraData &cameraData = pair.first->second;
+    cameraData.rateLimiter = gCameraLimiters[camera].get();
 
     for (auto [videoJson, startTimeJson, endTimeJson] :
          std::ranges::views::zip(cameraJson["videos"], cameraJson["start_times"], cameraJson["end_times"])) {
@@ -262,6 +263,7 @@ void VideoDBLoader::onTimer() {
     // TODO: converting BGR->RGB like this is inefficient!
     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     cameraData.publisher_->publish(std::move(msg));
+    cameraData.rateLimiter->addToQueue();
   }
 
   if (!newReplayTime.has_value()) {
@@ -283,6 +285,11 @@ void VideoDBLoader::onTimer() {
   if (abs(minutesNow - minutesLastLog) > 5) {
     minutesLastLog = minutesNow;
     RCLCPP_INFO(get_logger(), "Replay time: %s", std::format("{}", replayNow_).c_str());
+  }
+
+  // Wait for processing after all images have been published
+  for (auto &[cameraName, cameraData] : cameras_) {
+    cameraData.rateLimiter->waitForProcessing();
   }
 }
 
