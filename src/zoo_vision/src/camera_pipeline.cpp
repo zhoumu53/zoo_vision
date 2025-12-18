@@ -218,8 +218,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  auto trackUpdateStats =
-      trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+  auto trackUpdateStats = [&]() -> TrackUpdateStats {
+    ProfileSection s{"trackMatcher"};
+    return trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+  }();
   if (config_.recordDetectionLoss) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
@@ -250,20 +252,28 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
 
     at::Tensor patches_u8;
-    cropper_.extractCrops(patches_u8, imageTensorCPU,
-                          {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
+    {
+      ProfileSection s{"trackMatcher"};
+      cropper_.extractCrops(patches_u8, imageTensorCPU,
+                            {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection},
+                            bboxes);
+    }
     // at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
 
     // Save track images
     if (config_.recordTracks) {
+      ProfileSection s{"recordTracks"};
       recordTracks(sysTime, frameId, trackIds, patches_u8);
     }
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
-  detectionPublisher_->publish(std::move(detectionMsgPtr));
+  {
+    ProfileSection s{"publishing"};
 
-  rateLimiter_->signalProcessingComplete();
+    detectionPublisher_->publish(std::move(detectionMsgPtr));
+    rateLimiter_->signalProcessingComplete();
+  }
 }
 
 void CameraPipeline::publishTrackState(const zoo_msgs::msg::Header &imageHeader, TKeyframeIndex newKeyframeIndex,
