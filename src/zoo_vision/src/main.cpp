@@ -16,6 +16,7 @@
 #include "zoo_vision/compute_device.hpp"
 #include "zoo_vision/db_forwarder.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
+#include "zoo_vision/profiler_log_node.hpp"
 #include "zoo_vision/rerun_forwarder.hpp"
 #include "zoo_vision/utils.hpp"
 #include "zoo_vision/video_db_loader.hpp"
@@ -81,10 +82,10 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::string> cameraNames = config["enabled_cameras"];
 
-  rclcpp::executors::MultiThreadedExecutor exec{rclcpp::ExecutorOptions(), cameraNames.size() + 1};
+  rclcpp::executors::MultiThreadedExecutor exec{rclcpp::ExecutorOptions(), cameraNames.size() + 10};
 
   rclcpp::NodeOptions options;
-  options.use_intra_process_comms(true);
+  options.use_intra_process_comms(false);
 
   std::vector<std::shared_ptr<rclcpp::Node>> nodes;
 
@@ -125,6 +126,7 @@ int main(int argc, char *argv[]) {
     nodes.push_back(std::make_shared<CameraPipeline>(optionsCamera, index));
     index += 1;
   }
+  nodes.push_back(std::make_shared<ProfilerLogNode>());
 
   for (const auto &node : nodes) {
     exec.add_node(node);

@@ -13,9 +13,11 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
+#include "zoo_vision/profiler.hpp"
+
 #include <opencv2/highgui/highgui.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -60,5 +62,8 @@ private:
 
   std::unordered_map<std::string, CameraData> cameras_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  std::stack<ProfilerSectionData *> profilerStack_;
+  ProfileTicOnly profileTic_;
 };
 } // namespace zoo

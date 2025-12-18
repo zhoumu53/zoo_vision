@@ -16,11 +16,11 @@
 
 #include "zoo_vision/utils.hpp"
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <nlohmann/json.hpp>
 
 #include <chrono>
 
@@ -108,7 +108,7 @@ void ZooCamera::onTimer() {
   // TODO: converting BGR->RGB like this is inefficient!
   cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
-  setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
+  msg->header.frame_id = frameIndex_;
 
   frameIndex_++;
   publisher_->publish(std::move(msg));

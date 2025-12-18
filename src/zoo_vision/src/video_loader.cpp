@@ -17,11 +17,11 @@
 #include "zoo_vision/utils.hpp"
 
 #include <date/chrono_io.h>
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -106,7 +106,7 @@ void VideoLoader::onTimer() {
     msg->header.stamp =
         rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
     setMsgString(msg->header.video_filename, cameraData.videoFile.stem().c_str());
-    setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
+    msg->header.frame_id = frameIndex_;
     setMsgString(msg->encoding, "rgb8");
     msg->width = cameraData.frameSize.width;
     msg->height = cameraData.frameSize.height;

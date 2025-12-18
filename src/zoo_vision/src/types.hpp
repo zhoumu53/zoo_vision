@@ -32,12 +32,26 @@ using float32_t = float;
   if (!(a == b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
+#define CHECK_NE(a, b)                                                                                                 \
+  if (!(a != b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a "!=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
+  }
+
+#define CHECK_NOT_NULL(a)                                                                                              \
+  if (!(a != nullptr)) {                                                                                               \
+    throw ZooVisionError(std::format("Check failed: " #a "!=nullptr"));                                                \
+  }
 
 #define CHECK_TRUE(a) CHECK_EQ((a), true)
+#define CHECK_FALSE(a) CHECK_EQ((a), false)
 
 #define CHECK_LE(a, b)                                                                                                 \
   if (!(a <= b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
+  }
+#define CHECK_GE(a, b)                                                                                                 \
+  if (!(a >= b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a ">=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
 
 namespace cv {

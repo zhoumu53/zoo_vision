@@ -13,29 +13,18 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "rclcpp/rclcpp.hpp"
-#include "zoo_msgs/msg/image12m.hpp"
-
-#include <deque>
-#include <mutex>
-#include <unordered_map>
+#include <rclcpp/node.hpp>
+#include <rclcpp/timer.hpp>
 
 namespace zoo {
-class ImageQueue {
+
+class ProfilerLogNode : public rclcpp::Node {
 public:
-  using SharedPtrImage = std::shared_ptr<const zoo_msgs::msg::Image12m>;
-  ImageQueue();
+  explicit ProfilerLogNode(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
-  void pushImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
-  SharedPtrImage popImage(uint64_t id);
-
-  SharedPtrImage &front() { return queue_.front(); }
-  bool isFull() const { return queue_.size() >= maxCacheSize_; }
+  void onTimer();
 
 private:
-  size_t maxCacheSize_ = 20;
-
-  std::mutex queueMutex_;
-  std::deque<SharedPtrImage> queue_;
+  std::shared_ptr<rclcpp::WallTimer<rclcpp::VoidCallbackType>> timer_;
 };
 } // namespace zoo

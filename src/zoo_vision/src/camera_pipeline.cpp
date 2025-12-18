@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
 #include <stacktrace>
 #include <string.h>
 
@@ -67,7 +68,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
       cudaStream_{}, trackMatcher_{config_.rootPathImprove / "tracks" / cameraName_},
       segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      trackCountRecorder_(cameraName_) {
+      trackCountRecorder_(cameraName_), onImageProfileTic_{"CameraPipline::tic"} {
 
   rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
 
@@ -76,8 +77,9 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
+  const auto videoQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
+      *this, imageTopic, videoQoS, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
         try {
           this->onImage(std::move(msg));
         } catch (const ZooVisionError &e) {
@@ -118,10 +120,14 @@ void CameraPipeline::dynamicConfig(Vector2i imageSize) {
 }
 
 void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
-  const auto &imageMsg = *imageMsgPtr;
-  const auto frameId = getMsgString(imageMsg.header.frame_id);
+  ProfileStackGuard stackGuard{profilerStack_};
+  onImageProfileTic_.tic();
+  ProfileSection s{"CameraPipline::onImage"};
 
-  // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
+  const auto &imageMsg = *imageMsgPtr;
+  const auto frameId = imageMsg.header.frame_id;
+
+  // RCLCPP_INFO(get_logger(), "Pipeline, id=%lu", imageMsg.header.frame_id);
 
   rateSampler_.tick();
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
@@ -147,8 +153,11 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   ////////////////////////////////////////////////////////////
   // Black out masked areas
-  for (const auto &poly : calibration_.maskPolygons_) {
-    cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
+  {
+    ProfileSection s{"blackout_areas"};
+    for (const auto &poly : calibration_.maskPolygons_) {
+      cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
+    }
   }
 
   ////////////////////////////////////////////////////////////
@@ -166,7 +175,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   SegmenterResult segmenterResult;
   {
     cv::Mat3b detectionImage;
-    cv::resize(img, detectionImage, {config_.detectionImageSize.x(), config_.detectionImageSize.y()});
+    {
+      ProfileSection s{"resize"};
+      cv::resize(img, detectionImage, {config_.detectionImageSize.x(), config_.detectionImageSize.y()});
+    }
 
     const Vector2i detectionImageSize = segmenter_->getDetectionImageSize();
     const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
@@ -175,7 +187,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     detectionMsg.masks.sizes[2] = detectionImageSize.x();
     segmenterResult.masks = mapRosTensor(detectionMsg.masks);
 
-    segmenter_->onImage(segmenterResult, /*imageNorm*/ {}, detectionImage);
+    {
+      ProfileSection s{"segmenter"};
+      segmenter_->onImage(segmenterResult, /*imageNorm*/ {}, detectionImage);
+    }
 
     // Copy results to detectionMsg
     detectionMsg.detection_count = segmenterResult.bboxesInDetection.size();
@@ -335,8 +350,8 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
   }
 }
 
-void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frameId,
-                                  const std::span<const uint32_t> trackIds, const at::Tensor &patches) {
+void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, const std::span<const uint32_t> trackIds,
+                                  const at::Tensor &patches) {
   at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).flip(3).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;
@@ -401,14 +416,12 @@ void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
   }
 }
 
-void CameraPipeline::recordMasks(std::string_view videoFile, std::string_view frameId, std::span<TrackId> trackIds,
+void CameraPipeline::recordMasks(std::string_view videoFile, uint64_t frameId, std::span<TrackId> trackIds,
                                  const at::Tensor &masks) {
-  int frameId2 = parseInt(frameId);
-
   for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
     const std::filesystem::path dir =
         config_.rootPathImprove / "masks" / videoFile / std::format("track_{:04}", trackId);
-    const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId2) + ".png");
+    const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId) + ".png");
 
     const cv::Mat1b mask = wrapCvFromTensor1b(masks.index({index}));
 

@@ -55,7 +55,8 @@ std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
 
 } // namespace
 
-VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_db_loader", options) {
+VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options)
+    : Node("video_db_loader", options), profileTic_{"VidoeDBLoader::tic"} {
   RCLCPP_INFO(get_logger(), "Starting video_db_loader");
 
   const nlohmann::json &config = getConfig();
@@ -70,12 +71,13 @@ VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_d
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
   // Load videos
+  const auto videoQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
   for (auto &[cameraName, cameraData] : cameras_) {
-    cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", 10);
+    cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", videoQoS);
     loadVideo(cameraName, cameraData, replayNow_);
   }
 
-  timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
+  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); });
 }
 
 void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
@@ -204,6 +206,10 @@ auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time
 }
 
 void VideoDBLoader::onTimer() {
+  ProfileStackGuard stackGuard{profilerStack_};
+  profileTic_.tic();
+  ProfileSection s{"VideoDBLoader::onTimer"};
+
   std::optional<Clock::time_point> newReplayTime;
 
   for (auto &[cameraName, cameraData] : cameras_) {
@@ -243,7 +249,7 @@ void VideoDBLoader::onTimer() {
       const std::filesystem::path videoFile = cameraData.currentVideo_->videoFile;
       const std::string videoName = videoFile.stem();
       setMsgString(msg->header.video_filename, videoName);
-      setMsgString(msg->header.frame_id, std::to_string(frameIndex).c_str());
+      msg->header.frame_id = frameIndex;
     }
 
     if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {

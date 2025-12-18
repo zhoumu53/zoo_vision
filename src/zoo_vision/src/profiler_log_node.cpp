@@ -11,31 +11,17 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#pragma once
+#include "zoo_vision/profiler_log_node.hpp"
 
-#include "rclcpp/rclcpp.hpp"
-#include "zoo_msgs/msg/image12m.hpp"
+#include "zoo_vision/profiler.hpp"
 
-#include <deque>
-#include <mutex>
-#include <unordered_map>
+#include <rclcpp/create_timer.hpp>
 
 namespace zoo {
-class ImageQueue {
-public:
-  using SharedPtrImage = std::shared_ptr<const zoo_msgs::msg::Image12m>;
-  ImageQueue();
 
-  void pushImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
-  SharedPtrImage popImage(uint64_t id);
+ProfilerLogNode::ProfilerLogNode(const rclcpp::NodeOptions &options) : rclcpp::Node("profiler_log_node", options) {
+  timer_ = create_wall_timer(std::chrono::seconds(5), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
+}
 
-  SharedPtrImage &front() { return queue_.front(); }
-  bool isFull() const { return queue_.size() >= maxCacheSize_; }
-
-private:
-  size_t maxCacheSize_ = 20;
-
-  std::mutex queueMutex_;
-  std::deque<SharedPtrImage> queue_;
-};
+void ProfilerLogNode::onTimer() { std::cout << "Profiling timings:\n" << Profiler::Instance() << std::endl; }
 } // namespace zoo

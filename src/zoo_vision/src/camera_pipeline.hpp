@@ -23,6 +23,7 @@
 #include "zoo_vision/image_normalizer.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/patch_cropper.hpp"
+#include "zoo_vision/profiler.hpp"
 #include "zoo_vision/segmenter_interface.hpp"
 #include "zoo_vision/timings.hpp"
 #include "zoo_vision/track_count_recorder.hpp"
@@ -66,13 +67,12 @@ private:
   CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex, CameraPipelineConfig config);
   void dynamicConfig(Vector2i imageSize);
 
-  void recordTracks(const SysTime time, std::string_view frameId, const std::span<const uint32_t> trackIds,
+  void recordTracks(const SysTime time, uint64_t frameId, const std::span<const uint32_t> trackIds,
                     const at::Tensor &patches);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
-  void recordMasks(std::string_view videoFile, std::string_view frameId, std::span<TrackId> trackIds,
-                   const at::Tensor &masks);
+  void recordMasks(std::string_view videoFile, uint64_t frameId, std::span<TrackId> trackIds, const at::Tensor &masks);
 
   std::string cameraName_;
   CameraPipelineConfig config_;
@@ -97,5 +97,8 @@ private:
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackClosed>> trackClosedPublisher_;
+
+  std::stack<ProfilerSectionData *> profilerStack_;
+  ProfileTicOnly onImageProfileTic_;
 };
 } // namespace zoo

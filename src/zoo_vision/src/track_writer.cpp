@@ -41,7 +41,7 @@ void writeHeader(std::ofstream &fd) {
   fd << "frame_id,timestamp,bbox_top,bbox_left,bbox_bottom,bbox_right,score" << std::endl;
 }
 
-void writeRow(std::ofstream &fd, const TrackData &track, std::string_view frameId) {
+void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId) {
   CHECK_TRUE(!track.timestampHistory.empty());
   CHECK_EQ(track.timestampHistory.size(), track.boxHistory.size());
   CHECK_EQ(track.timestampHistory.size(), track.scoreHistory.size());
@@ -96,7 +96,7 @@ TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData 
   }
 }
 
-void TrackWriter::writeFrame(std::string_view frameId, const at::Tensor &cropImage) {
+void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage) {
   CHECK_EQ(static_cast<int>(cropImage.size(1)), PatchCropper::CROP_SIZE);
   CHECK_EQ(static_cast<int>(cropImage.size(0)), PatchCropper::CROP_SIZE);
 

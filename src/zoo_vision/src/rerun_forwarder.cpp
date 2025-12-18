@@ -24,6 +24,7 @@
 #include <rclcpp/time.hpp>
 
 #include <chrono>
+#include <cinttypes>
 #include <format>
 #include <fstream>
 
@@ -86,18 +87,21 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
   }
 
   // All rerun calls are thread-safe so this node is can accept calls in different threads simultaneously
-  rclcpp::SubscriptionOptions subOptions;
-  subOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  rclcpp::SubscriptionOptions imageOptions;
+  imageOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
-  const rclcpp::QoS qos{/*history_depth*/ 2};
+  rclcpp::SubscriptionOptions otherOptions;
+  otherOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+  const auto reliableQoS = rclcpp::QoS(rclcpp::KeepAll{}).durability_volatile().reliable();
 
   auto subscribeImage = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-        *this, channel, qos,
+        *this, channel, reliableQoS,
         [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
           this->onImage(cameraName, channel, std::move(msg));
         },
-        subOptions);
+        imageOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection image %s (loans=%d)", channel.c_str(),
                 subscription->can_loan_messages());
     imageSubscribers_.push_back(std::move(subscription));
@@ -105,11 +109,11 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
 
   auto subscribeDetection = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::Detection>(
-        *this, channel, qos,
+        *this, channel, reliableQoS,
         [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::Detection> msg) {
           this->onDetection(cameraName, channel, *msg);
         },
-        subOptions);
+        otherOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to detection results %s (loans=%d)", channel.c_str(),
                 subscription->can_loan_messages());
     detectionSubscribers_.push_back(std::move(subscription));
@@ -117,11 +121,11 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
 
   auto subscribeTrackState = [&](std::string cameraName, std::string channel) {
     auto subscription = rclcpp::create_subscription<zoo_msgs::msg::TrackState>(
-        *this, channel, qos,
+        *this, channel, reliableQoS,
         [this, cameraName, channel](std::shared_ptr<const zoo_msgs::msg::TrackState> msg) {
           this->onTrackState(cameraName, channel, *msg);
         },
-        subOptions);
+        otherOptions);
     RCLCPP_INFO(get_logger(), "Subscribed to track state results %s (loans=%d)", channel.c_str(),
                 subscription->can_loan_messages());
     trackStateSubscribers_.push_back(std::move(subscription));
@@ -129,7 +133,7 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
 
   // Subscribe to all cameras
   for (const auto &name : cameraNames) {
-    imageCaches_.emplace(name, std::make_unique<ImageQueue>());
+    imageCaches_.emplace(name, std::make_unique<CameraData>());
 
     // subscribeImage(name, name + "/detections/image"); // Detection image, full res but in sync with detections
     subscribeImage(name, name + "/image"); // Full-res image from camera
@@ -143,25 +147,41 @@ RerunForwarder::RerunForwarder(const rclcpp::NodeOptions &options) : Node("rerun
 void RerunForwarder::onImage(const std::string &cameraName, const std::string & /*channel*/,
                              std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_image"};
-  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received image %s (id=%s)", cameraName.c_str(),
-  //                      msg.header.frame_id.data.data());
+  // RCLCPP_INFO(get_logger(), "Received image %s (id=%lu)", cameraName.c_str(), msg->header.frame_id);
 
   // Store the image in the cache to use when we get the detections
-  ImageQueue &cache = *imageCaches_[cameraName];
-  cache.pushImage(std::move(msg));
-  // zoo_rs_image_callback(rsHandle_, cameraName.c_str(), channel.c_str(), &msg);
+  CameraData &cameraData = *imageCaches_[cameraName];
+
+  auto dataLock = std::unique_lock<std::mutex>{cameraData.mutex};
+  if (cameraData.images.isFull()) {
+    while (cameraData.lastDetectionFrameId < cameraData.images.front()->header.frame_id) {
+      // The queue is full and the oldest frame in it is newer than the last detection.
+      // Block and wait until the detections catch up.
+      dataLock.unlock();
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      // Check if the app is shutting down so we don't spin forever
+      const bool shouldQuit = !rclcpp::contexts::get_global_default_context()->shutdown_reason().empty();
+      if (shouldQuit) {
+        return;
+      }
+      dataLock.lock();
+    }
+  }
+  cameraData.images.pushImage(std::move(msg));
 }
 
 void RerunForwarder::onDetection(const std::string &cameraName, const std::string &channel,
                                  const zoo_msgs::msg::Detection &msg) {
   nvtx3::scoped_range nvtxLabel{"rerun_detection"};
-  // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Received detection %s (id=%s)", cameraName.c_str(),
-  //                      msg.header.frame_id.data.data());
-
-  std::string_view id = getMsgString(msg.header.frame_id);
 
   // Find image
-  std::shared_ptr<const zoo_msgs::msg::Image12m> image = imageCaches_[cameraName]->popImage(id);
+  std::shared_ptr<const zoo_msgs::msg::Image12m> image;
+  {
+    CameraData &cameraData = *imageCaches_[cameraName];
+    auto dataLock = std::unique_lock<std::mutex>{cameraData.mutex};
+    cameraData.lastDetectionFrameId = msg.header.frame_id;
+    image = cameraData.images.popImage(msg.header.frame_id);
+  }
   if (image != nullptr) {
     // Image with same frame id found
     // Forward and clear cache

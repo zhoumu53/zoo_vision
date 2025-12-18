@@ -70,6 +70,10 @@ add_executable(zoo_vision
   src/utils.hpp
   src/utils.cpp
   src/timings.hpp
+  src/profiler.hpp
+  src/profiler.cpp
+  src/profiler_log_node.hpp
+  src/profiler_log_node.cpp
   src/stats.hpp
   src/stats.cpp
   src/replay_clock.hpp

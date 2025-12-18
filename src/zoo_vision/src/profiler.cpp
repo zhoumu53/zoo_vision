@@ -11,31 +11,18 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
-#pragma once
+/*
+ * Profiler.cpp
+ *
+ *  Created on: May 9, 2013
+ *      Author: danielh
+ */
 
-#include "rclcpp/rclcpp.hpp"
-#include "zoo_msgs/msg/image12m.hpp"
-
-#include <deque>
-#include <mutex>
-#include <unordered_map>
+#include "zoo_vision/profiler.hpp"
 
 namespace zoo {
-class ImageQueue {
-public:
-  using SharedPtrImage = std::shared_ptr<const zoo_msgs::msg::Image12m>;
-  ImageQueue();
 
-  void pushImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
-  SharedPtrImage popImage(uint64_t id);
+std::unique_ptr<Profiler> Profiler::gInstance;
+thread_local std::stack<ProfilerSectionData *> *Profiler::activeStack_ = nullptr;
 
-  SharedPtrImage &front() { return queue_.front(); }
-  bool isFull() const { return queue_.size() >= maxCacheSize_; }
-
-private:
-  size_t maxCacheSize_ = 20;
-
-  std::mutex queueMutex_;
-  std::deque<SharedPtrImage> queue_;
-};
 } // namespace zoo

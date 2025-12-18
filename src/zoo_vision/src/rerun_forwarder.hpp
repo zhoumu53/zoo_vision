@@ -33,7 +33,13 @@ public:
   void onDetection(const std::string &cameraTopic, const std::string &channel, const zoo_msgs::msg::Detection &msg);
   void onTrackState(const std::string &cameraTopic, const std::string &channel, const zoo_msgs::msg::TrackState &msg);
 
-  std::unordered_map<std::string, std::unique_ptr<ImageQueue>> imageCaches_;
+private:
+  struct CameraData {
+    std::mutex mutex;
+    ImageQueue images;
+    uint64_t lastDetectionFrameId = 0;
+  };
+  std::unordered_map<std::string, std::unique_ptr<CameraData>> imageCaches_;
 
   void *rsHandle_;
   std::vector<std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>>> imageSubscribers_;
