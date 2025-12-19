@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::string> cameraNames = config["enabled_cameras"];
 
-  rclcpp::executors::MultiThreadedExecutor exec{rclcpp::ExecutorOptions(), cameraNames.size() + 10};
+  rclcpp::executors::MultiThreadedExecutor exec{rclcpp::ExecutorOptions(), cameraNames.size() + 20};
 
   rclcpp::NodeOptions options;
   options.use_intra_process_comms(true);

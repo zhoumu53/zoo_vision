@@ -75,12 +75,16 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   // Set up paths to store improvement images
   std::filesystem::create_directories(config_.rootPathImprove);
 
+  rclcpp::SubscriptionOptions subscriptionOptions{};
+  subscriptionOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
   const auto videoQoS =
       rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, videoQoS, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
+      *this, imageTopic, videoQoS,
+      [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
         try {
           this->onImage(std::move(msg));
         } catch (const ZooVisionError &e) {
@@ -93,7 +97,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
           RCLCPP_ERROR(this->get_logger(), "Exception:\n%s\nTerminating\n", e.what());
           std::terminate();
         }
-      });
+      },
+      subscriptionOptions);
 
   // Publish detections
   {
