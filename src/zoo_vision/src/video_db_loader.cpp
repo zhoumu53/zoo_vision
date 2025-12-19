@@ -211,7 +211,7 @@ auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time
 void VideoDBLoader::onTimer() {
   ProfileStackGuard stackGuard{profilerStack_};
   profileTic_.tic();
-  ProfileSection s{"VideoDBLoader::onTimer"};
+  ProfileSection s{"onTimer"};
 
   std::optional<Clock::time_point> newReplayTime;
 
@@ -235,12 +235,16 @@ void VideoDBLoader::onTimer() {
     msg->step = msg->width * 3 * sizeof(char);
 
     cv::Mat3b image = wrapMat3bFromMsg(*msg);
-    loadImage(cameraData, image);
-    if (!cameraData.videoStream_.has_value()) {
-      loadNextVideo(cameraName, cameraData);
+    {
+      ProfileSection s{"loadImage"};
+
       loadImage(cameraData, image);
-      if (image.empty()) {
-        RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
+      if (!cameraData.videoStream_.has_value()) {
+        loadNextVideo(cameraName, cameraData);
+        loadImage(cameraData, image);
+        if (image.empty()) {
+          RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
+        }
       }
     }
     if (image.empty()) {
@@ -263,9 +267,15 @@ void VideoDBLoader::onTimer() {
     }
 
     // TODO: converting BGR->RGB like this is inefficient!
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-    cameraData.publisher_->publish(std::move(msg));
-    cameraData.rateLimiter->addToQueue();
+    {
+      ProfileSection s{"cvtColor"};
+      cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    }
+    {
+      ProfileSection s{"publish"};
+      cameraData.publisher_->publish(std::move(msg));
+      cameraData.rateLimiter->addToQueue();
+    }
   }
 
   if (!newReplayTime.has_value()) {
@@ -290,8 +300,11 @@ void VideoDBLoader::onTimer() {
   }
 
   // Wait for processing after all images have been published
-  for (auto &[cameraName, cameraData] : cameras_) {
-    cameraData.rateLimiter->waitForProcessing();
+  {
+    ProfileSection s{"rateLimiter"};
+    for (auto &[cameraName, cameraData] : cameras_) {
+      cameraData.rateLimiter->waitForProcessing();
+    }
   }
 }
 

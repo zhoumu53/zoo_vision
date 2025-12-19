@@ -14,14 +14,18 @@
 #include "zoo_vision/profiler_log_node.hpp"
 
 #include "zoo_vision/profiler.hpp"
+#include "zoo_vision/utils.hpp"
 
+#include <nlohmann/json.hpp>
 #include <rclcpp/create_timer.hpp>
 
 namespace zoo {
 
 ProfilerLogNode::ProfilerLogNode(const rclcpp::NodeOptions &options) : rclcpp::Node("profiler_log_node", options) {
+  const auto &config = getConfig();
+  const int interval = config["profile_log_interval_s"].get<int>();
   timer0_ = create_wall_timer(std::chrono::seconds(10), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
-  timer_ = create_wall_timer(std::chrono::minutes(5), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
+  timer_ = create_wall_timer(std::chrono::seconds(interval), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
 }
 
 void ProfilerLogNode::onTimer() {

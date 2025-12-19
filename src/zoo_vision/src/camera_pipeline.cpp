@@ -129,7 +129,7 @@ void CameraPipeline::dynamicConfig(Vector2i imageSize) {
 void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
   ProfileStackGuard stackGuard{profilerStack_};
   onImageProfileTic_.tic();
-  ProfileSection s{"CameraPipline::onImage"};
+  ProfileSection s{"onImage"};
 
   const auto &imageMsg = *imageMsgPtr;
   const auto frameId = imageMsg.header.frame_id;
