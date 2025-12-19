@@ -78,7 +78,8 @@ VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options)
     loadVideo(cameraName, cameraData, replayNow_);
   }
 
-  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); });
+  timerCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); }, timerCbGroup_);
 }
 
 void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,

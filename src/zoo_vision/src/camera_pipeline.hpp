@@ -93,6 +93,7 @@ private:
   ImageEmbedder embedder_;
   TrackCountRecorder trackCountRecorder_;
 
+  rclcpp::CallbackGroup::SharedPtr onImageCbGroup_;
   std::shared_ptr<rclcpp::Subscription<zoo_msgs::msg::Image12m>> imageSubscriber_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Detection>> detectionPublisher_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::TrackState>> trackStatePublisher_;

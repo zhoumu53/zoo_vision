@@ -44,7 +44,7 @@ VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loade
   replayStart_ = replayNow_ = Clock::now();
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
-  timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
+  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); });
 }
 
 void VideoLoader::loadVideos(const std::span<const std::string> videoFiles,

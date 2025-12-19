@@ -64,6 +64,8 @@ private:
   Clock::time_point replayNow_;
 
   std::unordered_map<std::string, CameraData> cameras_;
+
+  rclcpp::CallbackGroup::SharedPtr timerCbGroup_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   std::stack<ProfilerSectionData *> profilerStack_;

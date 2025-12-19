@@ -76,7 +76,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
   std::filesystem::create_directories(config_.rootPathImprove);
 
   rclcpp::SubscriptionOptions subscriptionOptions{};
-  subscriptionOptions.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  onImageCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  subscriptionOptions.callback_group = onImageCbGroup_;
 
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
@@ -223,10 +224,12 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  auto trackUpdateStats = [&]() -> TrackUpdateStats {
+  TrackUpdateStats trackUpdateStats;
+  {
     ProfileSection s{"trackMatcher"};
-    return trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
-  }();
+    trackUpdateStats =
+        trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+  }
   if (config_.recordDetectionLoss) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
@@ -258,7 +261,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
     at::Tensor patches_u8;
     {
-      ProfileSection s{"trackMatcher"};
+      ProfileSection s{"extractCrops"};
       cropper_.extractCrops(patches_u8, imageTensorCPU,
                             {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection},
                             bboxes);
