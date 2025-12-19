@@ -301,7 +301,7 @@ void VideoDBLoader::onTimer() {
   static std::optional<std::chrono::system_clock::time_point> gLastLogSystemTime{};
   {
     if (gLastLogReplayTime.has_value()) {
-      constexpr auto LOG_INTERVAL = std::chrono::seconds(15);
+      constexpr auto LOG_INTERVAL = std::chrono::seconds(60);
       const auto replayDuration =
           std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - *gLastLogReplayTime);
       if (replayDuration > LOG_INTERVAL) {
