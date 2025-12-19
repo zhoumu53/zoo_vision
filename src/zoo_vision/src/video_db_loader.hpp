@@ -16,6 +16,7 @@
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
 #include "zoo_vision/profiler.hpp"
+#include "zoo_vision/stats.hpp"
 
 #include <opencv2/highgui/highgui.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -67,6 +68,8 @@ private:
 
   rclcpp::CallbackGroup::SharedPtr timerCbGroup_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  RunningStats imageCountStats_;
 
   std::stack<ProfilerSectionData *> profilerStack_;
   ProfileTicOnly profileTic_;

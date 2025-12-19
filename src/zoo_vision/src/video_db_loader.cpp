@@ -215,6 +215,8 @@ void VideoDBLoader::onTimer() {
 
   std::optional<Clock::time_point> newReplayTime;
 
+  int imageCount = 0;
+
   for (auto &[cameraName, cameraData] : cameras_) {
     // Try to load the next video if we are not at the end of the list
     if (!cameraData.videoStream_.has_value() && cameraData.currentVideo_ != cameraData.videoList_.end()) {
@@ -276,7 +278,9 @@ void VideoDBLoader::onTimer() {
       cameraData.publisher_->publish(std::move(msg));
       cameraData.rateLimiter->addToQueue();
     }
+    imageCount++;
   }
+  imageCountStats_.push(static_cast<float32_t>(imageCount));
 
   if (!newReplayTime.has_value()) {
     RCLCPP_WARN(get_logger(), "No images produced");
@@ -306,14 +310,18 @@ void VideoDBLoader::onTimer() {
         const float32_t speedFactor =
             static_cast<float32_t>(replayDuration.count()) / static_cast<float32_t>(systemDuration.count());
         RCLCPP_INFO(get_logger(),
-                    std::format("Replay time: {}, replay speed: {:.1f}x", replayNow_, speedFactor).c_str());
+                    std::format("Replay time: {}, replay speed: {:.1f}x, mean camera count per frame: {:.1}",
+                                replayNow_, speedFactor, imageCountStats_.mean())
+                        .c_str());
+        imageCountStats_.clear();
         gLastLogReplayTime = replayNow_;
         gLastLogSystemTime = std::chrono::system_clock::now();
       }
     } else {
       gLastLogReplayTime = replayNow_;
       gLastLogSystemTime = std::chrono::system_clock::now();
-      RCLCPP_INFO(get_logger(), std::format("Replay time at start: {}", replayNow_).c_str());
+      RCLCPP_INFO(get_logger(),
+                  std::format("Replay time at start: {}, image count: {}", replayNow_, imageCount).c_str());
     }
   }
 
