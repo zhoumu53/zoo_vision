@@ -25,6 +25,7 @@ public:
   void onTimer();
 
 private:
+  std::shared_ptr<rclcpp::WallTimer<rclcpp::VoidCallbackType>> timer0_;
   std::shared_ptr<rclcpp::WallTimer<rclcpp::VoidCallbackType>> timer_;
 };
 } // namespace zoo

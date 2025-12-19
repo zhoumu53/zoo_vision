@@ -20,10 +20,15 @@
 namespace zoo {
 
 ProfilerLogNode::ProfilerLogNode(const rclcpp::NodeOptions &options) : rclcpp::Node("profiler_log_node", options) {
-  timer_ = create_wall_timer(std::chrono::seconds(5), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
+  timer0_ = create_wall_timer(std::chrono::seconds(10), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
+  timer_ = create_wall_timer(std::chrono::minutes(5), rclcpp::VoidCallbackType([this]() { this->onTimer(); }));
 }
 
 void ProfilerLogNode::onTimer() {
+  if (timer0_) {
+    timer0_->cancel();
+    timer0_ = nullptr;
+  }
   std::cout << "Profiling timings:\n" << Profiler::Instance() << std::endl;
   Profiler::Instance().reset();
 }
