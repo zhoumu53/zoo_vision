@@ -61,6 +61,8 @@ VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options)
 
   const nlohmann::json &config = getConfig();
 
+  skipFrameCount_ = config["skip_frame_count"].get<int>();
+
   // Load database
   std::vector<std::string> enabledCameras = config["enabled_cameras"];
   std::filesystem::path videoDatabase = config["video_db"];
@@ -252,7 +254,12 @@ void VideoDBLoader::onTimer() {
     if (image.empty()) {
       continue;
     }
-
+    if (cameraData.videoStream_.has_value()) {
+      ProfileSection s{"skipFrames"};
+      for (int i = 0; i < skipFrameCount_; ++i) {
+        cameraData.videoStream_->grab();
+      }
+    }
     {
       const auto frameIndex = static_cast<uint64_t>(cameraData.videoStream_->get(cv::CAP_PROP_POS_FRAMES) - 1);
       const std::filesystem::path videoFile = cameraData.currentVideo_->videoFile;

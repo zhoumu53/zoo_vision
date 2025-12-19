@@ -62,6 +62,7 @@ private:
   void loadImage(CameraData &cameraData, cv::Mat3b &img);
   void onTimer();
 
+  int skipFrameCount_;
   Clock::time_point replayNow_;
 
   std::unordered_map<std::string, CameraData> cameras_;
