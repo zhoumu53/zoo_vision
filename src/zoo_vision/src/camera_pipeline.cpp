@@ -214,12 +214,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Localize in world
-  {
-    Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
-                                                   detectionMsg.world_positions.size() / 3);
+  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
+                                                 detectionMsg.world_positions.size() / 3);
 
-    locator_.worldFromBboxes(worldPositionsMap, segmenterResult.bboxesInDetection);
-  }
+  locator_.worldFromBboxes(worldPositionsMap, segmenterResult.bboxesInDetection);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
@@ -271,7 +269,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     // Save track images
     if (config_.recordTracks) {
       ProfileSection s{"recordTracks"};
-      recordTracks(sysTime, frameId, trackIds, patches_u8);
+      recordTracks(sysTime, frameId, trackIds, patches_u8, worldPositionsMap);
     }
   }
 
@@ -368,7 +366,7 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
 }
 
 void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, const std::span<const uint32_t> trackIds,
-                                  const at::Tensor &patches) {
+                                  const at::Tensor &patches,const Eigen::Ref<const Eigen::Matrix3Xf> &worldPositions) {
   at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).flip(3).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;
@@ -380,7 +378,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, cons
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    track.writer.writeFrame(frameId, patchesRgb[idx]);
+    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx));
   }
 }
 

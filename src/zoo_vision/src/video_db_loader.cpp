@@ -292,11 +292,29 @@ void VideoDBLoader::onTimer() {
   assert(newReplayTime.has_value());
   replayNow_ = *newReplayTime;
 
-  static int64_t minutesLastLog = 0;
-  const int64_t minutesNow = std::chrono::duration_cast<std::chrono::minutes>(replayNow_.time_since_epoch()).count();
-  if (abs(minutesNow - minutesLastLog) > 5) {
-    minutesLastLog = minutesNow;
-    RCLCPP_INFO(get_logger(), "Replay time: %s", std::format("{}", replayNow_).c_str());
+  // Keep track of wall time vs replay time to print how fast we are going.
+  static std::optional<Clock::time_point> gLastLogReplayTime{};
+  static std::optional<std::chrono::system_clock::time_point> gLastLogSystemTime{};
+  {
+    if (gLastLogReplayTime.has_value()) {
+      constexpr auto LOG_INTERVAL = std::chrono::seconds(15);
+      const auto replayDuration =
+          std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - *gLastLogReplayTime);
+      if (replayDuration > LOG_INTERVAL) {
+        const auto systemDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now() - *gLastLogSystemTime);
+        const float32_t speedFactor =
+            static_cast<float32_t>(replayDuration.count()) / static_cast<float32_t>(systemDuration.count());
+        RCLCPP_INFO(get_logger(),
+                    std::format("Replay time: {}, replay speed: {:.1f}x", replayNow_, speedFactor).c_str());
+        gLastLogReplayTime = replayNow_;
+        gLastLogSystemTime = std::chrono::system_clock::now();
+      }
+    } else {
+      gLastLogReplayTime = replayNow_;
+      gLastLogSystemTime = std::chrono::system_clock::now();
+      RCLCPP_INFO(get_logger(), std::format("Replay time at start: {}", replayNow_).c_str());
+    }
   }
 
   // Wait for processing after all images have been published

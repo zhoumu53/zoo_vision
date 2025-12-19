@@ -94,6 +94,7 @@ using Matrix3Xf = Eigen::Matrix3Xf;
 template <class T, int dims> using Vector = Eigen::Matrix<T, dims, 1>;
 using Vector2i = Vector<int, 2>;
 using Vector2f = Vector<float32_t, 2>;
+using Vector3f = Vector<float32_t, 3>;
 
 using Polygon = std::vector<Vector2i>;
 

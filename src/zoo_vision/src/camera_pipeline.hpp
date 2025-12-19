@@ -68,7 +68,7 @@ private:
   void dynamicConfig(Vector2i imageSize);
 
   void recordTracks(const SysTime time, uint64_t frameId, const std::span<const uint32_t> trackIds,
-                    const at::Tensor &patches);
+                    const at::Tensor &patches, const Eigen::Ref<const Eigen::Matrix3Xf> &worldPositions);
   void publishTrackState(const zoo_msgs::msg::Header &imageHeader, const TKeyframeIndex newKeyframeIndex,
                          const TrackData &track);
   void publishTrackClosed(const zoo_msgs::msg::Header &imageHeader, const TrackData &track);
