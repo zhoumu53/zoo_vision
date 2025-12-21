@@ -67,10 +67,10 @@ struct TrackData {
   std::vector<float32_t> scoreHistory;
 
   TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_,
-            const std::filesystem::path &rootTracksPath)
+            const std::filesystem::path &rootTracksPath, float32_t fps)
       : byteTrack{std::move(byteTrack_)}, id{static_cast<TrackId>(byteTrack->getTrackId())}, startTime{startTime_},
         lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()},
-        writer{rootTracksPath, *this} {
+        writer{rootTracksPath, *this, fps} {
     timestampHistory.push_back(startTime_);
     boxHistory.push_back(box);
     scoreHistory.push_back(score);
@@ -104,8 +104,8 @@ public:
 
   TrackMatcher(const std::filesystem::path &rootTracksPath);
 
-  TrackUpdateStats update(Clock::time_point now, std::span<const AlignedBox2f> boxes, std::span<const float32_t> scores,
-                          std::span<TrackId> outputTrackIds);
+  TrackUpdateStats update(Clock::time_point now, float32_t fps, std::span<const AlignedBox2f> boxes,
+                          std::span<const float32_t> scores, std::span<TrackId> outputTrackIds);
 
   TrackData &getTrackData(TrackId id);
 

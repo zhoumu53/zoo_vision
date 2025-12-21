@@ -167,14 +167,18 @@ public:
 #ifdef ENABLE_PROFILER
   ProfileTicOnly(const std::string &sectionKey) : sectionKey_{sectionKey} {}
 
-  void tic() {
+  std::optional<ProfilerClock::duration> tic() {
+    std::optional<ProfilerClock::duration> result{};
+
     const auto now = ProfilerClock::now();
     if (lastTic_.has_value()) {
       const auto duration = now - *lastTic_;
       Profiler::Instance().popActiveSection(duration);
+      result = duration;
     }
     lastTic_ = now;
     Profiler::Instance().pushActiveSection(sectionKey_);
+    return result;
   }
 
 private:

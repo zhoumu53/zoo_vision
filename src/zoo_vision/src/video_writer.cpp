@@ -13,16 +13,17 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/video_writer.hpp"
+#include <iostream>
 
 namespace zoo {
 VideoWriter::VideoWriter() {}
 
 VideoWriter::~VideoWriter() {}
 
-bool VideoWriter::open(std::string_view filename, Vector2i frameSize) {
+bool VideoWriter::open(std::string_view filename, Vector2i frameSize, float32_t fps) {
   const std::vector<int> params{{cv::VIDEOWRITER_PROP_IS_COLOR, 1 /*, cv::VIDEOWRITER_PROP_QUALITY, 0*/}};
   const auto fourcc = "h264";
-  return writer_.open(std::string(filename), cv::VideoWriter::fourcc(fourcc[0], fourcc[1], fourcc[2], fourcc[3]), 30,
+  return writer_.open(std::string(filename), cv::VideoWriter::fourcc(fourcc[0], fourcc[1], fourcc[2], fourcc[3]), fps,
                       cv::Size{frameSize[0], frameSize[1]}, params);
 }
 void VideoWriter::write(const cv::Mat3b &img) { writer_ << img; }

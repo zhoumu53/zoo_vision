@@ -57,7 +57,7 @@ void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const
 
 } // namespace
 
-TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track) : track_{track} {
+TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track, float32_t fps) : track_{track} {
   const std::filesystem::path trackPath = getTrackPath(rootTracksPath, track.startTime, track.id);
   std::filesystem::create_directories(trackPath.parent_path());
 
@@ -92,7 +92,7 @@ TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData 
   const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mkv");
   const Vector2i cropSize = {PatchCropper::CROP_SIZE, PatchCropper::CROP_SIZE};
 
-  if (!trackVideo_.open(videoPath.string(), cropSize)) {
+  if (!trackVideo_.open(videoPath.string(), cropSize, fps)) {
     throw std::runtime_error(std::format("Could not create track video ({})", videoPath.string()));
   }
 }

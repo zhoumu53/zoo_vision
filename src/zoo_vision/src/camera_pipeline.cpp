@@ -68,7 +68,7 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
       cudaStream_{}, trackMatcher_{config_.rootPathImprove / "tracks" / cameraName_},
       segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      trackCountRecorder_(cameraName_), onImageProfileTic_{"CameraPipline::tic"} {
+      trackCountRecorder_(cameraName_), meanFps_{30}, onImageProfileTic_{"CameraPipline::tic"} {
 
   rateLimiter_ = gCameraLimiters[cameraName_].get();
 
@@ -138,6 +138,22 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   rateSampler_.tick();
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
+
+  // Update fps filter
+  {
+    if (!lastFrameTime_.has_value()) {
+      // We need fps to write track videos properly. Skip first frame.
+      lastFrameTime_ = sysTime;
+      return;
+    }
+    const auto duration = sysTime - *lastFrameTime_;
+    const float32_t duration_us =
+        static_cast<float32_t>(std::chrono::duration_cast<std::chrono::microseconds>(duration).count());
+    const float32_t fps = 1e6f / duration_us;
+    meanFps_.push(fps);
+  }
+  lastFrameTime_ = sysTime;
+
   std::optional<at::cuda::CUDAStreamGuard> streamGuard;
   if (cudaStream_.has_value()) {
     streamGuard.emplace(*cudaStream_);
@@ -225,8 +241,12 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   TrackUpdateStats trackUpdateStats;
   {
     ProfileSection s{"trackMatcher"};
+
+    const float32_t fps = meanFps_.mean();
+    CHECK_GE(std::abs(fps), 1e-3f);
+
     trackUpdateStats =
-        trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+        trackMatcher_.update(sysTime, fps, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
   }
   if (config_.recordDetectionLoss) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
@@ -366,7 +386,7 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
 }
 
 void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, const std::span<const uint32_t> trackIds,
-                                  const at::Tensor &patches,const Eigen::Ref<const Eigen::Matrix3Xf> &worldPositions) {
+                                  const at::Tensor &patches, const Eigen::Ref<const Eigen::Matrix3Xf> &worldPositions) {
   at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).flip(3).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;

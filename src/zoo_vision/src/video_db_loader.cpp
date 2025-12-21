@@ -129,6 +129,10 @@ void VideoDBLoader::openVideo(const std::string & /*cameraName*/, CameraData &ca
                 cameraData.frameSize.height, std::format("{:%Y-%m-%d %T}", replayNow_).c_str(),
                 std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
 
+    const float32_t videoFps = cameraData.videoStream_->get(cv::CAP_PROP_FPS);
+    const float32_t replayFps = videoFps / (skipFrameCount_ + 1);
+    RCLCPP_INFO(get_logger(), "Video FPS=%f, serving frames at FPS=%f", videoFps, replayFps);
+
     // Adjust time
     const int64_t offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - info.startTime).count();
     if (offsetMs > 0) {

@@ -36,7 +36,7 @@ struct TrackData;
 
 class TrackWriter {
 public:
-  TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track);
+  TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track, float32_t fps);
 
   void writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition);
   void close(SysTime time);

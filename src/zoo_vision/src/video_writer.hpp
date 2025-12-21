@@ -32,7 +32,7 @@ public:
   ~VideoWriter();
 
   bool isOpen() const { return writer_.isOpened(); }
-  bool open(std::string_view filename, Vector2i frameSize);
+  bool open(std::string_view filename, Vector2i frameSize, float32_t fps);
   void write(const cv::Mat3b &img);
 
 private:
