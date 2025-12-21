@@ -61,6 +61,15 @@ find_package(TorchVision REQUIRED)
 # nvtext
 include("${nvtx3_SOURCE_DIR}/c/nvtxImportedTargets.cmake")
 
+# ffmpeg
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+    libavformat
+    libavcodec
+    libavutil
+    libavdevice
+    libswscale
+)
 ####################################
 # zoo_vision package
 add_executable(zoo_vision 
@@ -168,6 +177,7 @@ target_link_libraries(zoo_vision
   opencv_highgui
   yolos_cpp
   bytetrack
+  PkgConfig::LIBAV
 )
 
 install(TARGETS

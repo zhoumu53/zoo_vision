@@ -21,6 +21,9 @@
 #include <memory>
 
 namespace zoo {
+namespace detail {
+class VideoWriterImpl;
+}
 
 /* Class dedicated to write videos.
 We want to abstract cv::VideoWriter away because OpenCV does not allow
@@ -31,11 +34,11 @@ public:
   VideoWriter();
   ~VideoWriter();
 
-  bool isOpen() const { return writer_.isOpened(); }
-  bool open(std::string_view filename, Vector2i frameSize, float32_t fps);
+  bool isOpen() const { return impl_ != nullptr; }
+  bool open(const std::string &filename, Vector2i frameSize, float32_t fps);
   void write(const cv::Mat3b &img);
 
 private:
-  cv::VideoWriter writer_;
+  std::unique_ptr<detail::VideoWriterImpl> impl_;
 };
 } // namespace zoo
