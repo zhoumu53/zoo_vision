@@ -97,7 +97,7 @@
   "record_masks": false,
   "profile_log_interval_s": 300,
   "skip_frame_count": 4,
-  "track_bitrate": 4000,
+  "track_crf": 23,
   "live_stream": false,
   "video_db": "/media/dherrera/ElephantsWD/elephants/videos/video_db.json",
   "videos": [],

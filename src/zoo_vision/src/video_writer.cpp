@@ -109,7 +109,7 @@ public:
   VideoWriterImpl(const std::string &filename, Vector2i frameSize, float32_t fps);
   ~VideoWriterImpl();
 
-  void write(const cv::Mat3b &img);
+  void write(const uint8_t *imgRgb, int stride);
 
 private:
   int64_t frameIndex_ = 0;
@@ -131,44 +131,36 @@ VideoWriterImpl::VideoWriterImpl(const std::string &filename, Vector2i frameSize
   // return writer_.open(std::string(filename), cv::VideoWriter::fourcc(fourcc[0], fourcc[1], fourcc[2], fourcc[3]),
   // fps,
   //                     cv::Size{frameSize[0], frameSize[1]}, params);
-  AVDictionary *opt = nullptr;
-
   swsContext_.reset(sws_getContext(frameSize[0], frameSize[1], AV_PIX_FMT_RGB24, frameSize[0], frameSize[1],
                                    AV_PIX_FMT_YUV420P, 0, nullptr, nullptr, nullptr));
   CHECK_NOT_NULL(swsContext_);
 
   // Open output file
   constexpr auto CODEC_ID = AV_CODEC_ID_H265;
-
-  AVOutputFormat fmt{};
-  fmt.name = "mp4";
-  fmt.video_codec = CODEC_ID;
-  fmt.audio_codec = AV_CODEC_ID_NONE;
-  fmt.subtitle_codec = AV_CODEC_ID_NONE;
+  const auto *defaultFmt = av_guess_format(nullptr, filename.c_str(), nullptr);
+  if (defaultFmt == nullptr) {
+    throw ZooVisionError("Could not guess default video format for: "s + filename);
+  }
   {
-    auto [ctx, error_value] = av::make_avformat_output_context(&fmt, nullptr, filename.c_str());
+    auto [ctx, error_value] = av::make_avformat_output_context(defaultFmt, nullptr, nullptr);
     if (ctx == nullptr) {
       // Could not open output context
-      throw std::runtime_error("Could not create video output context: "s + av::make_error_string(error_value));
+      throw ZooVisionError("Could not create video output context: "s + av::make_error_string(error_value));
     }
     outputContext_ = std::move(ctx);
   }
-  outputContext_->oformat = &fmt;
-  outputContext_->video_codec_id = CODEC_ID;
-
   // New video stream
   stream_ = avformat_new_stream(outputContext_.get(), nullptr);
   CHECK_NOT_NULL(stream_);
   stream_->index = 0;
   stream_->sample_aspect_ratio = AVRational{frameSize[0], frameSize[1]};
-  stream_->time_base = AVRational{static_cast<int>(fps * 1000.f), 1000};
+  stream_->time_base = AVRational{1000, static_cast<int>(fps * 1000.f)};
   stream_->codecpar->codec_id = CODEC_ID;
-  stream_->codecpar->bit_rate = 4000; // getConfig()["track_bitrate"].get<int>();
   stream_->codecpar->format = AV_PIX_FMT_YUV420P;
   stream_->codecpar->width = frameSize[0];
   stream_->codecpar->height = frameSize[1];
 
-  av_dump_format(outputContext_.get(), 0, filename.c_str(), 1);
+  // av_dump_format(outputContext_.get(), 0, filename.c_str(), 1);
 
   // Open codec
   outputContext_->video_codec = avcodec_find_encoder(CODEC_ID);
@@ -178,6 +170,12 @@ VideoWriterImpl::VideoWriterImpl(const std::string &filename, Vector2i frameSize
   codecContext_->pix_fmt = AV_PIX_FMT_YUV420P;
   codecContext_->width = frameSize[0];
   codecContext_->height = frameSize[1];
+
+  av_opt_set(codecContext_->priv_data, "preset", "ultrafast", AV_OPT_SEARCH_CHILDREN);
+  const int crf = getConfig()["track_crf"].get<int>();
+  av_opt_set(codecContext_->priv_data, "crf", std::to_string(crf).c_str(), AV_OPT_SEARCH_CHILDREN);
+  av_opt_set(codecContext_->priv_data, "x265-params", "log-level=warning", AV_OPT_SEARCH_CHILDREN);
+
   {
     const int error = avcodec_open2(codecContext_.get(), outputContext_->video_codec, nullptr);
     CHECK_EQ(error, 0);
@@ -197,33 +195,35 @@ VideoWriterImpl::VideoWriterImpl(const std::string &filename, Vector2i frameSize
   {
     auto [ioCtx, error] = av::io_open(filename, AVIO_FLAG_WRITE);
     if (ioCtx == nullptr) {
-      throw std::runtime_error("Could not open video file for writting ("s + filename + "): "s +
-                               av::make_error_string(error));
+      throw ZooVisionError("Could not open video file for writting ("s + filename + "): "s +
+                           av::make_error_string(error));
     }
     ioCtx_ = std::move(ioCtx);
   }
   outputContext_->pb = ioCtx_.get();
 
   {
-    const int error = avformat_init_output(outputContext_.get(), &opt);
+    const int error = avformat_init_output(outputContext_.get(), nullptr);
     CHECK_GE(error, 0);
   }
   {
-    const int error = avformat_write_header(outputContext_.get(), &opt);
-    CHECK_GE(error, 0);
+    const int error = avformat_write_header(outputContext_.get(), nullptr);
+    if (error < 0) {
+      throw ZooVisionError("Could not write video header. Error: "s + av::make_error_string(error));
+    }
   }
 }
 
-void VideoWriterImpl::write(const cv::Mat3b &img) {
+void VideoWriterImpl::write(const uint8_t *imgRgb, int stride) {
   CHECK_EQ(av_buffer_is_writable(frame_->buf[0]), 1);
 
-  const int srcStrides[1] = {img.step[0]};
-  uint8_t *outSlices[2] = {frame_->buf[0]->data, frame_->buf[1]->data};
+  const int srcStrides[1] = {stride};
+  auto outSlices = reinterpret_cast<uint8_t *const *>(frame_->data);
   CHECK_NOT_NULL(outSlices[0]);
-  CHECK_NOT_NULL(outSlices[1]);
+  // CHECK_NOT_NULL(outSlices[1]);
   CHECK_GE(frame_->linesize[0], 1);
-  CHECK_GE(frame_->linesize[1], 1);
-  sws_scale(swsContext_.get(), &img.data, srcStrides, 0, img.rows, outSlices, frame_->linesize);
+  // CHECK_GE(frame_->linesize[1], 1);
+  sws_scale(swsContext_.get(), &imgRgb, srcStrides, 0, codecContext_->height, outSlices, frame_->linesize);
 
   // // Wrap buffer with cv::Mat3b
   // cv::Mat3b buffer{};
@@ -250,7 +250,7 @@ void VideoWriterImpl::write(const cv::Mat3b &img) {
       if (error == AVERROR(EAGAIN) || error == AVERROR_EOF) {
         break;
       } else if (error < 0) {
-        throw std::runtime_error("Could not retrieve encoder packet: "s + av::make_error_string(error));
+        throw ZooVisionError("Could not retrieve encoder packet: "s + av::make_error_string(error));
       }
     }
 
@@ -276,5 +276,5 @@ bool VideoWriter::open(const std::string &filename, Vector2i frameSize, float32_
   impl_ = std::make_unique<detail::VideoWriterImpl>(filename, frameSize, fps);
   return true;
 }
-void VideoWriter::write(const cv::Mat3b &img) { impl_->write(img); }
+void VideoWriter::write(const uint8_t *imgRgb, int stride) { impl_->write(imgRgb, stride); }
 } // namespace zoo

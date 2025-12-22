@@ -39,6 +39,28 @@
 using namespace std::chrono_literals;
 using namespace at::indexing;
 
+namespace cv {
+
+// Define opencv DataType for Eigen Vectors so that we can use it inside the fillConvexPoly() function.
+template <typename _Tp> class DataType<Eigen::Vector2<_Tp>> {
+public:
+  typedef Eigen::Vector2<_Tp> value_type;
+  typedef Eigen::Vector2<typename DataType<_Tp>::work_type> work_type;
+  typedef _Tp channel_type;
+
+  enum {
+    generic_type = 0,
+    channels = 2,
+    fmt = traits::SafeFmt<channel_type>::fmt + ((channels - 1) << 8),
+    depth = DataType<channel_type>::depth,
+    type = CV_MAKETYPE(depth, channels)
+  };
+
+  typedef Vec<channel_type, channels> vec_type;
+};
+
+} // namespace cv
+
 namespace zoo {
 namespace {
 

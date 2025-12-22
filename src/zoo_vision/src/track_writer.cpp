@@ -89,7 +89,7 @@ TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData 
   writeHeader(infoFd_);
 
   // Start video
-  const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mkv");
+  const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mp4");
   const Vector2i cropSize = {PatchCropper::CROP_SIZE, PatchCropper::CROP_SIZE};
 
   if (!trackVideo_.open(videoPath.string(), cropSize, fps)) {
@@ -106,7 +106,7 @@ void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage, cons
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);
-  trackVideo_.write(cropCv);
+  trackVideo_.write(cropCv.data, cropCv.step[0]);
 }
 
 void TrackWriter::close(SysTime time) { (void)time; }
