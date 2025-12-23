@@ -78,6 +78,8 @@ CameraPipelineConfig readConfig() {
   res.detectionImageSize = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
 
   res.rootPathImprove = config["record_root"].get<std::string>();
+
+  res.defaultFps = 25.f / (1.f + config["skip_frame_count"].get<int>());
   return res;
 }
 } // namespace
@@ -163,18 +165,17 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   // Update fps filter
   {
-    if (!lastFrameTime_.has_value()) {
-      // We need fps to write track videos properly. Skip first frame.
-      lastFrameTime_ = sysTime;
-      return;
+    if (lastFrameTime_.has_value()) {
+      const auto duration = sysTime - *lastFrameTime_;
+      const int64_t duration_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+      // Check for broken duration counter
+      if (duration_us > 0) {
+        const float32_t fps = 1e6f / static_cast<float32_t>(duration_us);
+        meanFps_.push(fps);
+      }
     }
-    const auto duration = sysTime - *lastFrameTime_;
-    const float32_t duration_us =
-        static_cast<float32_t>(std::chrono::duration_cast<std::chrono::microseconds>(duration).count());
-    const float32_t fps = 1e6f / duration_us;
-    meanFps_.push(fps);
+    lastFrameTime_ = sysTime;
   }
-  lastFrameTime_ = sysTime;
 
   std::optional<at::cuda::CUDAStreamGuard> streamGuard;
   if (cudaStream_.has_value()) {
@@ -264,8 +265,8 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   {
     ProfileSection s{"trackMatcher"};
 
-    const float32_t fps = meanFps_.mean();
-    CHECK_GE(std::abs(fps), 1e-3f);
+    const float32_t fps = meanFps_.sampleCount() > 0 ? meanFps_.mean() : config_.defaultFps;
+    CHECK_GE(fps, 1e-3f);
 
     trackUpdateStats =
         trackMatcher_.update(sysTime, fps, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);

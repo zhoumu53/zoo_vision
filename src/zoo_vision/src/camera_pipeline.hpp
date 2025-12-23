@@ -45,6 +45,8 @@ struct CameraPipelineConfig {
   Vector2i detectionImageSize;
   std::filesystem::path rootPathImprove;
 
+  float32_t defaultFps;
+  
   bool recordDetectionLoss;
   bool recordTracks;
   bool recordKeyframes;

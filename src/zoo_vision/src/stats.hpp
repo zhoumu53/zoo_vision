@@ -84,6 +84,8 @@ public:
     stats_.push(value);
   }
 
+  size_t sampleCount() const { return samples_.size(); }
+
 private:
   size_t capacity_;
   std::deque<float> samples_;
