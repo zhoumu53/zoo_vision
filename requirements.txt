@@ -60,3 +60,6 @@ psycopg2-binary # Postgresql adapter for python
 
 cvat-sdk
 cvat-cli
+
+# Dashboard server
+flask
