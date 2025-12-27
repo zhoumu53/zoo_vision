@@ -1,3 +1,12 @@
+"""
+This is the webserver that accompanies the zoo_grafana panel plugin.
+It serves the track images associated with a timestamp.
+
+To start:
+flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
+
+"""
+
 import io
 from base64 import encodebytes
 from PIL import Image
@@ -21,7 +30,13 @@ def find_images():
     # Parse args
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp_str = request.args.get("timestamp", "2025-03-16T00:53:59")
-    timestamp = datetime.fromisoformat(timestamp_str)
+    print(timestamp_str)
+    if ":" in timestamp_str:
+        timestamp = datetime.fromisoformat(timestamp_str)
+    else:
+        timestamp_num = float(timestamp_str) / 1000
+        print(timestamp_num)
+        timestamp = datetime.fromtimestamp(timestamp_num)
 
     # Get image
     image = find_track_image(camera, timestamp)
