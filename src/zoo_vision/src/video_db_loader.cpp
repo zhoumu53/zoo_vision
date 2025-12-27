@@ -55,10 +55,13 @@ std::chrono::system_clock::time_point parseTime(std::string_view timeStr) {
 
 } // namespace
 
-VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_db_loader", options) {
+VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options)
+    : Node("video_db_loader", options), profileTic_{"VidoeDBLoader::tic"} {
   RCLCPP_INFO(get_logger(), "Starting video_db_loader");
 
   const nlohmann::json &config = getConfig();
+
+  skipFrameCount_ = config["skip_frame_count"].get<int>();
 
   // Load database
   std::vector<std::string> enabledCameras = config["enabled_cameras"];
@@ -70,12 +73,15 @@ VideoDBLoader::VideoDBLoader(const rclcpp::NodeOptions &options) : Node("video_d
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
   // Load videos
+  const auto videoQoS =
+      rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
   for (auto &[cameraName, cameraData] : cameras_) {
-    cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", 10);
+    cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", videoQoS);
     loadVideo(cameraName, cameraData, replayNow_);
   }
 
-  timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
+  timerCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); }, timerCbGroup_);
 }
 
 void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
@@ -94,11 +100,12 @@ void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
   replayNow_ = parseTime(databaseStartTime);
 
   // Read all videos
-  for (const std::string_view camera : enabledCameras) {
+  for (const std::string &camera : enabledCameras) {
     nlohmann::json cameraJson = databaseJson["cameras"][camera];
 
     const auto pair = cameras_.emplace(std::make_pair(camera, CameraData()));
     CameraData &cameraData = pair.first->second;
+    cameraData.rateLimiter = gCameraLimiters[camera].get();
 
     for (auto [videoJson, startTimeJson, endTimeJson] :
          std::ranges::views::zip(cameraJson["videos"], cameraJson["start_times"], cameraJson["end_times"])) {
@@ -121,6 +128,10 @@ void VideoDBLoader::openVideo(const std::string & /*cameraName*/, CameraData &ca
     RCLCPP_INFO(get_logger(), "Resolution=%dx%d, now=%s, start time=%s", cameraData.frameSize.width,
                 cameraData.frameSize.height, std::format("{:%Y-%m-%d %T}", replayNow_).c_str(),
                 std::format("{:%Y-%m-%d %T}", *cameraData.videoStartTime_).c_str());
+
+    const float32_t videoFps = cameraData.videoStream_->get(cv::CAP_PROP_FPS);
+    const float32_t replayFps = videoFps / (skipFrameCount_ + 1);
+    RCLCPP_INFO(get_logger(), "Video FPS=%f, serving frames at FPS=%f", videoFps, replayFps);
 
     // Adjust time
     const int64_t offsetMs = std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - info.startTime).count();
@@ -204,7 +215,13 @@ auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time
 }
 
 void VideoDBLoader::onTimer() {
+  ProfileStackGuard stackGuard{profilerStack_};
+  profileTic_.tic();
+  ProfileSection s{"onTimer"};
+
   std::optional<Clock::time_point> newReplayTime;
+
+  int imageCount = 0;
 
   for (auto &[cameraName, cameraData] : cameras_) {
     // Try to load the next video if we are not at the end of the list
@@ -226,24 +243,33 @@ void VideoDBLoader::onTimer() {
     msg->step = msg->width * 3 * sizeof(char);
 
     cv::Mat3b image = wrapMat3bFromMsg(*msg);
-    loadImage(cameraData, image);
-    if (!cameraData.videoStream_.has_value()) {
-      loadNextVideo(cameraName, cameraData);
+    {
+      ProfileSection s{"loadImage"};
+
       loadImage(cameraData, image);
-      if (image.empty()) {
-        RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
+      if (!cameraData.videoStream_.has_value()) {
+        loadNextVideo(cameraName, cameraData);
+        loadImage(cameraData, image);
+        if (image.empty()) {
+          RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
+        }
       }
     }
     if (image.empty()) {
       continue;
     }
-
+    if (cameraData.videoStream_.has_value()) {
+      ProfileSection s{"skipFrames"};
+      for (int i = 0; i < skipFrameCount_; ++i) {
+        cameraData.videoStream_->grab();
+      }
+    }
     {
       const auto frameIndex = static_cast<uint64_t>(cameraData.videoStream_->get(cv::CAP_PROP_POS_FRAMES) - 1);
       const std::filesystem::path videoFile = cameraData.currentVideo_->videoFile;
       const std::string videoName = videoFile.stem();
       setMsgString(msg->header.video_filename, videoName);
-      setMsgString(msg->header.frame_id, std::to_string(frameIndex).c_str());
+      msg->header.frame_id = frameIndex;
     }
 
     if (!newReplayTime.has_value() && cameraData.videoStream_.has_value()) {
@@ -254,9 +280,18 @@ void VideoDBLoader::onTimer() {
     }
 
     // TODO: converting BGR->RGB like this is inefficient!
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-    cameraData.publisher_->publish(std::move(msg));
+    {
+      ProfileSection s{"cvtColor"};
+      cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    }
+    {
+      ProfileSection s{"publish"};
+      cameraData.publisher_->publish(std::move(msg));
+      cameraData.rateLimiter->addToQueue();
+    }
+    imageCount++;
   }
+  imageCountStats_.push(static_cast<float32_t>(imageCount));
 
   if (!newReplayTime.has_value()) {
     RCLCPP_WARN(get_logger(), "No images produced");
@@ -272,11 +307,41 @@ void VideoDBLoader::onTimer() {
   assert(newReplayTime.has_value());
   replayNow_ = *newReplayTime;
 
-  static int64_t minutesLastLog = 0;
-  const int64_t minutesNow = std::chrono::duration_cast<std::chrono::minutes>(replayNow_.time_since_epoch()).count();
-  if (abs(minutesNow - minutesLastLog) > 5) {
-    minutesLastLog = minutesNow;
-    RCLCPP_INFO(get_logger(), "Replay time: %s", std::format("{}", replayNow_).c_str());
+  // Keep track of wall time vs replay time to print how fast we are going.
+  static std::optional<Clock::time_point> gLastLogReplayTime{};
+  static std::optional<std::chrono::system_clock::time_point> gLastLogSystemTime{};
+  {
+    if (gLastLogReplayTime.has_value()) {
+      constexpr auto LOG_INTERVAL = std::chrono::seconds(60);
+      const auto replayDuration =
+          std::chrono::duration_cast<std::chrono::milliseconds>(replayNow_ - *gLastLogReplayTime);
+      if (replayDuration > LOG_INTERVAL) {
+        const auto systemDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now() - *gLastLogSystemTime);
+        const float32_t speedFactor =
+            static_cast<float32_t>(replayDuration.count()) / static_cast<float32_t>(systemDuration.count());
+        RCLCPP_INFO(get_logger(),
+                    std::format("Replay time: {}, replay speed: {:.1f}x, mean camera count per frame: {:.1}",
+                                replayNow_, speedFactor, imageCountStats_.mean())
+                        .c_str());
+        imageCountStats_.clear();
+        gLastLogReplayTime = replayNow_;
+        gLastLogSystemTime = std::chrono::system_clock::now();
+      }
+    } else {
+      gLastLogReplayTime = replayNow_;
+      gLastLogSystemTime = std::chrono::system_clock::now();
+      RCLCPP_INFO(get_logger(),
+                  std::format("Replay time at start: {}, image count: {}", replayNow_, imageCount).c_str());
+    }
+  }
+
+  // Wait for processing after all images have been published
+  {
+    ProfileSection s{"rateLimiter"};
+    for (auto &[cameraName, cameraData] : cameras_) {
+      cameraData.rateLimiter->waitForProcessing();
+    }
   }
 }
 

@@ -17,11 +17,11 @@
 #include "zoo_vision/utils.hpp"
 
 #include <date/chrono_io.h>
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <rclcpp/time.hpp>
-#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -44,7 +44,7 @@ VideoLoader::VideoLoader(const rclcpp::NodeOptions &options) : Node("video_loade
   replayStart_ = replayNow_ = Clock::now();
   RCLCPP_INFO(get_logger(), "Replay start time: %s", std::format("{:%Y-%m-%d %T}", replayNow_).c_str());
 
-  timer_ = create_wall_timer(40ms, [this]() { this->onTimer(); });
+  timer_ = create_wall_timer(1ms, [this]() { this->onTimer(); });
 }
 
 void VideoLoader::loadVideos(const std::span<const std::string> videoFiles,
@@ -59,9 +59,7 @@ void VideoLoader::loadVideos(const std::span<const std::string> videoFiles,
     cv::VideoCapture cvVideo;
     const bool ok = cvVideo.open(videoFile);
     if (ok) {
-      if (!gCameraLimiters.empty()) {
-        cameraData.rateLimiter = gCameraLimiters[cameraName].get();
-      }
+      cameraData.rateLimiter = gCameraLimiters[cameraName].get();
       cameraData.publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName + "/image", 10);
       cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
                                         static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_HEIGHT))};
@@ -106,7 +104,7 @@ void VideoLoader::onTimer() {
     msg->header.stamp =
         rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
     setMsgString(msg->header.video_filename, cameraData.videoFile.stem().c_str());
-    setMsgString(msg->header.frame_id, std::to_string(frameIndex_).c_str());
+    msg->header.frame_id = frameIndex_;
     setMsgString(msg->encoding, "rgb8");
     msg->width = cameraData.frameSize.width;
     msg->height = cameraData.frameSize.height;
@@ -132,6 +130,7 @@ void VideoLoader::onTimer() {
     framePublished = true;
 
     if (cameraData.rateLimiter != nullptr) {
+      cameraData.rateLimiter->addToQueue();
       cameraData.rateLimiter->waitForProcessing();
     }
   }

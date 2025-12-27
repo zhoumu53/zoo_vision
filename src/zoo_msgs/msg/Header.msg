@@ -3,4 +3,4 @@ builtin_interfaces/Time stamp
 
 # Transform frame with which this data is associated.
 zoo_msgs/String video_filename
-zoo_msgs/String frame_id
+uint64 frame_id

@@ -32,11 +32,34 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
 #include <stacktrace>
 #include <string.h>
 
 using namespace std::chrono_literals;
 using namespace at::indexing;
+
+namespace cv {
+
+// Define opencv DataType for Eigen Vectors so that we can use it inside the fillConvexPoly() function.
+template <typename _Tp> class DataType<Eigen::Vector2<_Tp>> {
+public:
+  typedef Eigen::Vector2<_Tp> value_type;
+  typedef Eigen::Vector2<typename DataType<_Tp>::work_type> work_type;
+  typedef _Tp channel_type;
+
+  enum {
+    generic_type = 0,
+    channels = 2,
+    fmt = traits::SafeFmt<channel_type>::fmt + ((channels - 1) << 8),
+    depth = DataType<channel_type>::depth,
+    type = CV_MAKETYPE(depth, channels)
+  };
+
+  typedef Vec<channel_type, channels> vec_type;
+};
+
+} // namespace cv
 
 namespace zoo {
 namespace {
@@ -55,6 +78,8 @@ CameraPipelineConfig readConfig() {
   res.detectionImageSize = Vector2i{detectionImageJson["width"].get<int>(), detectionImageJson["height"].get<int>()};
 
   res.rootPathImprove = config["record_root"].get<std::string>();
+
+  res.defaultFps = 25.f / (1.f + config["skip_frame_count"].get<int>());
   return res;
 }
 } // namespace
@@ -67,17 +92,24 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
       cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
       cudaStream_{}, trackMatcher_{config_.rootPathImprove / "tracks" / cameraName_},
       segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      trackCountRecorder_(cameraName_) {
+      trackCountRecorder_(cameraName_), meanFps_{30}, onImageProfileTic_{"CameraPipline::tic"} {
 
-  rateLimiter_ = gCameraLimiters.empty() ? nullptr : gCameraLimiters[cameraName_].get();
+  rateLimiter_ = gCameraLimiters[cameraName_].get();
 
   // Set up paths to store improvement images
   std::filesystem::create_directories(config_.rootPathImprove);
 
+  rclcpp::SubscriptionOptions subscriptionOptions{};
+  onImageCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  subscriptionOptions.callback_group = onImageCbGroup_;
+
   // Subscribe to receive images from camera
   const auto imageTopic = cameraName_ + "/image";
+  const auto videoQoS =
+      rclcpp::QoS(rclcpp::KeepLast{ImageRateLimiter::MAX_QUEUE_SIZE}).durability_volatile().reliable();
   imageSubscriber_ = rclcpp::create_subscription<zoo_msgs::msg::Image12m>(
-      *this, imageTopic, 10, [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
+      *this, imageTopic, videoQoS,
+      [this](std::shared_ptr<zoo_msgs::msg::Image12m> msg) {
         try {
           this->onImage(std::move(msg));
         } catch (const ZooVisionError &e) {
@@ -90,7 +122,8 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
           RCLCPP_ERROR(this->get_logger(), "Exception:\n%s\nTerminating\n", e.what());
           std::terminate();
         }
-      });
+      },
+      subscriptionOptions);
 
   // Publish detections
   {
@@ -118,13 +151,32 @@ void CameraPipeline::dynamicConfig(Vector2i imageSize) {
 }
 
 void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPtr) {
-  const auto &imageMsg = *imageMsgPtr;
-  const auto frameId = getMsgString(imageMsg.header.frame_id);
+  ProfileStackGuard stackGuard{profilerStack_};
+  onImageProfileTic_.tic();
+  ProfileSection s{"onImage"};
 
-  // RCLCPP_INFO(get_logger(), "Pipeline, id=%s", imageMsg.header.frame_id.data.data());
+  const auto &imageMsg = *imageMsgPtr;
+  const auto frameId = imageMsg.header.frame_id;
+
+  // RCLCPP_INFO(get_logger(), "Pipeline, id=%lu", imageMsg.header.frame_id);
 
   rateSampler_.tick();
   const SysTime sysTime = sysTimeFromRos(imageMsg.header.stamp);
+
+  // Update fps filter
+  {
+    if (lastFrameTime_.has_value()) {
+      const auto duration = sysTime - *lastFrameTime_;
+      const int64_t duration_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+      // Check for broken duration counter
+      if (duration_us > 0) {
+        const float32_t fps = 1e6f / static_cast<float32_t>(duration_us);
+        meanFps_.push(fps);
+      }
+    }
+    lastFrameTime_ = sysTime;
+  }
+
   std::optional<at::cuda::CUDAStreamGuard> streamGuard;
   if (cudaStream_.has_value()) {
     streamGuard.emplace(*cudaStream_);
@@ -147,8 +199,11 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   ////////////////////////////////////////////////////////////
   // Black out masked areas
-  for (const auto &poly : calibration_.maskPolygons_) {
-    cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
+  {
+    ProfileSection s{"blackout_areas"};
+    for (const auto &poly : calibration_.maskPolygons_) {
+      cv::fillConvexPoly(img, poly, cv::Scalar(0, 0, 0));
+    }
   }
 
   ////////////////////////////////////////////////////////////
@@ -166,7 +221,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   SegmenterResult segmenterResult;
   {
     cv::Mat3b detectionImage;
-    cv::resize(img, detectionImage, {config_.detectionImageSize.x(), config_.detectionImageSize.y()});
+    {
+      ProfileSection s{"resize"};
+      cv::resize(img, detectionImage, {config_.detectionImageSize.x(), config_.detectionImageSize.y()});
+    }
 
     const Vector2i detectionImageSize = segmenter_->getDetectionImageSize();
     const int64_t MAX_DETECTION_COUNT = zoo_msgs::msg::Detection::MAX_DETECTION_COUNT;
@@ -175,7 +233,10 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     detectionMsg.masks.sizes[2] = detectionImageSize.x();
     segmenterResult.masks = mapRosTensor(detectionMsg.masks);
 
-    segmenter_->onImage(segmenterResult, /*imageNorm*/ {}, detectionImage);
+    {
+      ProfileSection s{"segmenter"};
+      segmenter_->onImage(segmenterResult, /*imageNorm*/ {}, detectionImage);
+    }
 
     // Copy results to detectionMsg
     detectionMsg.detection_count = segmenterResult.bboxesInDetection.size();
@@ -192,18 +253,24 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Localize in world
-  {
-    Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
-                                                   detectionMsg.world_positions.size() / 3);
+  Eigen::Map<Eigen::Matrix3Xf> worldPositionsMap(detectionMsg.world_positions.data(), 3,
+                                                 detectionMsg.world_positions.size() / 3);
 
-    locator_.worldFromBboxes(worldPositionsMap, segmenterResult.bboxesInDetection);
-  }
+  locator_.worldFromBboxes(worldPositionsMap, segmenterResult.bboxesInDetection);
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Assign track ids
   auto trackIds = std::span{detectionMsg.track_ids.data(), detectionMsg.detection_count};
-  auto trackUpdateStats =
-      trackMatcher_.update(sysTime, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+  TrackUpdateStats trackUpdateStats;
+  {
+    ProfileSection s{"trackMatcher"};
+
+    const float32_t fps = meanFps_.sampleCount() > 0 ? meanFps_.mean() : config_.defaultFps;
+    CHECK_GE(fps, 1e-3f);
+
+    trackUpdateStats =
+        trackMatcher_.update(sysTime, fps, segmenterResult.bboxesInDetection, segmenterResult.scores, trackIds);
+  }
   if (config_.recordDetectionLoss) {
     if (!trackUpdateStats.justMissedTracks.empty()) {
       saveImageToImproveDetection(sysTime, img);
@@ -234,20 +301,26 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
     auto bboxes = std::span{detectionMsg.bboxes.data(), detectionMsg.detection_count};
 
     at::Tensor patches_u8;
-    cropper_.extractCrops(patches_u8, imageTensorCPU,
-                          {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection}, bboxes);
+    {
+      ProfileSection s{"extractCrops"};
+      cropper_.extractCrops(patches_u8, imageTensorCPU,
+                            {detectionMsg.scalex_image_from_detection, detectionMsg.scaley_image_from_detection},
+                            bboxes);
+    }
     // at::Tensor patchesNorm = normalizer_.normalize(patches_f32);
 
     // Save track images
     if (config_.recordTracks) {
-      recordTracks(sysTime, frameId, trackIds, patches_u8);
+      ProfileSection s{"recordTracks"};
+      recordTracks(sysTime, frameId, trackIds, patches_u8, worldPositionsMap);
     }
   }
 
   // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Publishing detection");
-  detectionPublisher_->publish(std::move(detectionMsgPtr));
+  {
+    ProfileSection s{"publishing"};
 
-  if (rateLimiter_) {
+    detectionPublisher_->publish(std::move(detectionMsgPtr));
     rateLimiter_->signalProcessingComplete();
   }
 }
@@ -335,8 +408,8 @@ void CameraPipeline::saveImageToImproveBehaviour(SysTime time, TBehaviour behavi
   }
 }
 
-void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frameId,
-                                  const std::span<const uint32_t> trackIds, const at::Tensor &patches) {
+void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, const std::span<const uint32_t> trackIds,
+                                  const at::Tensor &patches, const Eigen::Ref<const Eigen::Matrix3Xf> &worldPositions) {
   at::Tensor patchesRgb = patches.permute({0, 2, 3, 1}).flip(3).to(at::kCPU).contiguous();
 
   static std::mutex g_mutex;
@@ -348,7 +421,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, std::string_view frame
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    track.writer.writeFrame(frameId, patchesRgb[idx]);
+    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx));
   }
 }
 
@@ -401,14 +474,12 @@ void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
   }
 }
 
-void CameraPipeline::recordMasks(std::string_view videoFile, std::string_view frameId, std::span<TrackId> trackIds,
+void CameraPipeline::recordMasks(std::string_view videoFile, uint64_t frameId, std::span<TrackId> trackIds,
                                  const at::Tensor &masks) {
-  int frameId2 = parseInt(frameId);
-
   for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
     const std::filesystem::path dir =
         config_.rootPathImprove / "masks" / videoFile / std::format("track_{:04}", trackId);
-    const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId2) + ".png");
+    const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId) + ".png");
 
     const cv::Mat1b mask = wrapCvFromTensor1b(masks.index({index}));
 

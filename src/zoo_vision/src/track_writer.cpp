@@ -38,10 +38,10 @@ std::filesystem::path getTrackPath(const std::filesystem::path &rootTracksPath, 
 }
 
 void writeHeader(std::ofstream &fd) {
-  fd << "frame_id,timestamp,bbox_top,bbox_left,bbox_bottom,bbox_right,score" << std::endl;
+  fd << "frame_id,timestamp,bbox_top,bbox_left,bbox_bottom,bbox_right,score,world_x,world_y" << std::endl;
 }
 
-void writeRow(std::ofstream &fd, const TrackData &track, std::string_view frameId) {
+void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const Vector3f &worldPosition) {
   CHECK_TRUE(!track.timestampHistory.empty());
   CHECK_EQ(track.timestampHistory.size(), track.boxHistory.size());
   CHECK_EQ(track.timestampHistory.size(), track.scoreHistory.size());
@@ -51,12 +51,13 @@ void writeRow(std::ofstream &fd, const TrackData &track, std::string_view frameI
   const float32_t score = track.scoreHistory.back();
 
   fd << frameId << "," << std::format("{0:%Y-%m-%d} {0:%T}", time) << "," << bbox.min()[0] << "," << bbox.min()[1]
-     << "," << bbox.max()[0] << "," << bbox.max()[1] << "," << score << std::endl;
+     << "," << bbox.max()[0] << "," << bbox.max()[1] << "," << score << "," << worldPosition[0] << ","
+     << worldPosition[1] << std::endl;
 }
 
 } // namespace
 
-TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track) : track_{track} {
+TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track, float32_t fps) : track_{track} {
   const std::filesystem::path trackPath = getTrackPath(rootTracksPath, track.startTime, track.id);
   std::filesystem::create_directories(trackPath.parent_path());
 
@@ -88,24 +89,24 @@ TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData 
   writeHeader(infoFd_);
 
   // Start video
-  const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mkv");
+  const std::filesystem::path videoPath = std::filesystem::path(trackPath).replace_extension(".mp4");
   const Vector2i cropSize = {PatchCropper::CROP_SIZE, PatchCropper::CROP_SIZE};
 
-  if (!trackVideo_.open(videoPath.string(), cropSize)) {
+  if (!trackVideo_.open(videoPath.string(), cropSize, fps)) {
     throw std::runtime_error(std::format("Could not create track video ({})", videoPath.string()));
   }
 }
 
-void TrackWriter::writeFrame(std::string_view frameId, const at::Tensor &cropImage) {
+void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition) {
   CHECK_EQ(static_cast<int>(cropImage.size(1)), PatchCropper::CROP_SIZE);
   CHECK_EQ(static_cast<int>(cropImage.size(0)), PatchCropper::CROP_SIZE);
 
   CHECK_TRUE(infoFd_.is_open());
-  writeRow(infoFd_, track_, frameId);
+  writeRow(infoFd_, track_, frameId, worldPosition);
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);
-  trackVideo_.write(cropCv);
+  trackVideo_.write(cropCv.data, cropCv.step[0]);
 }
 
 void TrackWriter::close(SysTime time) { (void)time; }

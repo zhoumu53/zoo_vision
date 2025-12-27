@@ -11,22 +11,18 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
+/*
+ * Profiler.cpp
+ *
+ *  Created on: May 9, 2013
+ *      Author: danielh
+ */
 
-#include "rclcpp/rclcpp.hpp"
-#include "zoo_vision/rerun_forwarder.hpp"
-#include "zoo_vision/zoo_camera.hpp"
-#include <memory>
+#include "zoo_vision/profiler.hpp"
 
-int main(int argc, char *argv[]) {
-  rclcpp::init(argc, argv);
-  rclcpp::executors::SingleThreadedExecutor exec;
-  rclcpp::NodeOptions options;
-  // auto camera_node = std::make_shared<zoo::ZooCamera>(options);
-  auto rerun_node = std::make_shared<zoo::RerunForwarder>(options);
+namespace zoo {
 
-  // exec.add_node(camera_node);
-  exec.add_node(rerun_node);
-  exec.spin();
-  rclcpp::shutdown();
-  return 0;
-}
+std::unique_ptr<Profiler> Profiler::gInstance;
+thread_local std::stack<ProfilerSectionData *> *Profiler::activeStack_ = nullptr;
+
+} // namespace zoo

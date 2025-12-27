@@ -21,14 +21,17 @@
 namespace zoo {
 class ImageRateLimiter {
 public:
+  static constexpr int32_t MAX_QUEUE_SIZE = 20;
+
   ImageRateLimiter() = default;
+  void addToQueue();
   void waitForProcessing();
   void signalProcessingComplete();
 
 private:
   std::mutex mutex_;
   std::condition_variable condition_;
-  int count = 0;
+  int32_t count = 0;
 };
 
 extern std::unordered_map<std::string, std::unique_ptr<ImageRateLimiter>> gCameraLimiters;

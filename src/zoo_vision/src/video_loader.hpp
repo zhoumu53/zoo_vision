@@ -13,10 +13,11 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include "zoo_vision/image_rate_limiter.hpp"
+
 #include <opencv2/highgui/highgui.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 #include <filesystem>
 #include <memory>

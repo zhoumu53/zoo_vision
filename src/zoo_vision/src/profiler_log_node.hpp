@@ -13,30 +13,19 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
-#include "zoo_vision/types.hpp"
-
-#include <filesystem>
-#include <memory>
+#include <rclcpp/node.hpp>
+#include <rclcpp/timer.hpp>
 
 namespace zoo {
-namespace detail {
-class VideoWriterImpl;
-}
 
-/* Class dedicated to write videos.
-We want to abstract cv::VideoWriter away because OpenCV does not allow
-configuring the bitrate and the track videos have terrible quality.
-We'll use directly libav soon to have better control.*/
-class VideoWriter {
+class ProfilerLogNode : public rclcpp::Node {
 public:
-  VideoWriter();
-  ~VideoWriter();
+  explicit ProfilerLogNode(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
-  bool isOpen() const { return impl_ != nullptr; }
-  bool open(const std::string &filename, Vector2i frameSize, float32_t fps);
-  void write(const uint8_t *imgRgb, int stride);
+  void onTimer();
 
 private:
-  std::unique_ptr<detail::VideoWriterImpl> impl_;
+  std::shared_ptr<rclcpp::WallTimer<rclcpp::VoidCallbackType>> timer0_;
+  std::shared_ptr<rclcpp::WallTimer<rclcpp::VoidCallbackType>> timer_;
 };
 } // namespace zoo

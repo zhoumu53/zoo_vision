@@ -28,7 +28,7 @@ TrackData &TrackMatcher::getTrackData(TrackId id) {
   return *it->second;
 }
 
-TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const AlignedBox2f> boxes,
+TrackUpdateStats TrackMatcher::update(Clock::time_point now, float32_t fps, std::span<const AlignedBox2f> boxes,
                                       std::span<const float32_t> scores, std::span<TrackId> outputTrackIds) {
   TrackUpdateStats result;
 
@@ -60,7 +60,7 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, std::span<const Ali
     auto it = tracks_.find(output->getTrackId());
     if (it == tracks_.end()) {
       // Not present in our table, add
-      auto newTrack = std::make_unique<TrackData>(std::move(output), now, rootCameraPath_);
+      auto newTrack = std::make_unique<TrackData>(std::move(output), now, rootCameraPath_, fps);
       result.newTracks.push_back(newTrack.get());
       tracks_.insert({newTrack->id, std::move(newTrack)});
     } else {

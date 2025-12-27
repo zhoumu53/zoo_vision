@@ -24,7 +24,6 @@
 #include <stdexcept>
 
 #include <Eigen/Dense>
-#include <opencv2/core/types.hpp>
 
 using float32_t = float;
 
@@ -32,34 +31,27 @@ using float32_t = float;
   if (!(a == b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
+#define CHECK_NE(a, b)                                                                                                 \
+  if (!(a != b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a "!=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
+  }
+
+#define CHECK_NOT_NULL(a)                                                                                              \
+  if (!(a != nullptr)) {                                                                                               \
+    throw ZooVisionError(std::format("Check failed: " #a "!=nullptr"));                                                \
+  }
 
 #define CHECK_TRUE(a) CHECK_EQ((a), true)
+#define CHECK_FALSE(a) CHECK_EQ((a), false)
 
 #define CHECK_LE(a, b)                                                                                                 \
   if (!(a <= b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "<=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
-
-namespace cv {
-// Define opencv DataType for Eigen Vectors so that we can use it inside the fillConvexPoly() function.
-template <typename _Tp> class DataType<Eigen::Vector2<_Tp>> {
-public:
-  typedef Eigen::Vector2<_Tp> value_type;
-  typedef Eigen::Vector2<typename DataType<_Tp>::work_type> work_type;
-  typedef _Tp channel_type;
-
-  enum {
-    generic_type = 0,
-    channels = 2,
-    fmt = traits::SafeFmt<channel_type>::fmt + ((channels - 1) << 8),
-    depth = DataType<channel_type>::depth,
-    type = CV_MAKETYPE(depth, channels)
-  };
-
-  typedef Vec<channel_type, channels> vec_type;
-};
-
-} // namespace cv
+#define CHECK_GE(a, b)                                                                                                 \
+  if (!(a >= b)) {                                                                                                     \
+    throw ZooVisionError(std::format("Check failed: " #a ">=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
+  }
 
 namespace zoo {
 
@@ -80,6 +72,7 @@ using Matrix3Xf = Eigen::Matrix3Xf;
 template <class T, int dims> using Vector = Eigen::Matrix<T, dims, 1>;
 using Vector2i = Vector<int, 2>;
 using Vector2f = Vector<float32_t, 2>;
+using Vector3f = Vector<float32_t, 3>;
 
 using Polygon = std::vector<Vector2i>;
 

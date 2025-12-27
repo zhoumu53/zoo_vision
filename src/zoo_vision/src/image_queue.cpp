@@ -24,13 +24,13 @@ ImageQueue::ImageQueue() {}
 void ImageQueue::pushImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg) {
   // Store the image in the cache to use when we get the detections
   std::lock_guard<std::mutex> lock(queueMutex_);
-  if (queue_.size() >= maxCacheSize_) {
+  if (isFull()) {
     queue_.pop_front();
   }
   queue_.push_back(std::move(msg));
 }
 
-auto ImageQueue::popImage(std::string_view id) -> SharedPtrImage {
+auto ImageQueue::popImage(uint64_t id) -> SharedPtrImage {
   // Find image
   SharedPtrImage image = nullptr;
   {
@@ -39,9 +39,8 @@ auto ImageQueue::popImage(std::string_view id) -> SharedPtrImage {
     auto matchingImageIt = queue_.begin();
     for (; matchingImageIt != queue_.end(); ++matchingImageIt) {
       const auto &image_i = **matchingImageIt;
-      std::string_view id_i = getMsgString(image_i.header.frame_id);
 
-      if (id.compare(id_i) == 0) {
+      if (id == image_i.header.frame_id) {
         break;
       }
     }

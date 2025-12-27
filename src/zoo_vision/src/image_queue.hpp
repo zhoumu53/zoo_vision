@@ -27,7 +27,10 @@ public:
   ImageQueue();
 
   void pushImage(std::shared_ptr<const zoo_msgs::msg::Image12m> msg);
-  SharedPtrImage popImage(std::string_view id);
+  SharedPtrImage popImage(uint64_t id);
+
+  SharedPtrImage &front() { return queue_.front(); }
+  bool isFull() const { return queue_.size() >= maxCacheSize_; }
 
 private:
   size_t maxCacheSize_ = 20;
