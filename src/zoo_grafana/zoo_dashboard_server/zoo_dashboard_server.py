@@ -25,8 +25,8 @@ def get_response_image(image_path):
     return encoded_img
 
 
-@app.route("/find_images", methods=["GET"])
-def find_images():
+@app.route("/track_images", methods=["GET"])
+def track_images():
     # Parse args
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp_str = request.args.get("timestamp", "2025-03-16T00:53:59")

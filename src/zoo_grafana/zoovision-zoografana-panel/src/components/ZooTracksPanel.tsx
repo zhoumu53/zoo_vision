@@ -1,12 +1,15 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PanelProps, DataHoverEvent } from '@grafana/data';
 import { ZooTracksOptions } from 'types';
 import { css, cx } from '@emotion/css';
-import { useStyles2, useTheme2 } from '@grafana/ui';
+import { useStyles2 } from '@grafana/ui';
 import { PanelDataErrorView } from '@grafana/runtime';
 
-interface Props extends PanelProps<ZooTracksOptions> { }
+const ZOO_DASHBOARD_SERVER = "127.0.0.1:5000";
+const DEFAULT_TIMESTAMP = 1742096040000;
 const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
+
+interface Props extends PanelProps<ZooTracksOptions> { }
 
 const getStyles = () => {
   return {
@@ -32,11 +35,28 @@ const getStyles = () => {
       display: flex;
       flex-flow: row;
     `,
+    trackImage: css`
+      max-width: 100%;
+      max-height: 100%;
+    `,
+
   };
 };
 
+function buildTrackImagesUrl(cameraName: string, timestamp: number): string {
+  return `http://${ZOO_DASHBOARD_SERVER}/track_images?camera=${cameraName}&timestamp=${timestamp}`;
+}
+
 export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id }) => {
   const styles = useStyles2(getStyles);
+
+  const [currentTimestamp, setCurrentTimestamp] = useState<number>(DEFAULT_TIMESTAMP);
+  const [imagesCamera0, imagesSetState0] = useState<string>(buildTrackImagesUrl(CAMERAS[0], DEFAULT_TIMESTAMP));
+  const [imagesCamera1, imagesSetState1] = useState<string>(buildTrackImagesUrl(CAMERAS[1], DEFAULT_TIMESTAMP));
+  const [imagesCamera2, imagesSetState2] = useState<string>(buildTrackImagesUrl(CAMERAS[2], DEFAULT_TIMESTAMP));
+  const [imagesCamera3, imagesSetState3] = useState<string>(buildTrackImagesUrl(CAMERAS[3], DEFAULT_TIMESTAMP));
+  const cameraImages = [imagesCamera0, imagesCamera1, imagesCamera2, imagesCamera3];
+  const cameraSetState = [imagesSetState0, imagesSetState1, imagesSetState2, imagesSetState3];
 
   useEffect(() => {
     const subscriber = eventBus.getStream(DataHoverEvent).subscribe((event) => {
@@ -45,35 +65,20 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         return;
       }
 
-      let textElement = document.getElementById('time-label');
-      if (textElement != null) {
-        let timestamp_s = new Date(0)
-        timestamp_s.setUTCMilliseconds(timestamp)
-        textElement.innerHTML = `Time: ${timestamp_s.toISOString()}`;
-      }
+      setCurrentTimestamp(timestamp);
 
-      for (var index in CAMERAS) {
-        let name = CAMERAS[index];
-        let imgElement = document.getElementById(`track-image${index}`) as HTMLImageElement;
-        if (imgElement != null) {
-          imgElement.src = `http://127.0.0.1:5000/find_images?camera=${name}&timestamp=${timestamp}`
-        }
+      for (const index in CAMERAS) {
+        cameraSetState[index](buildTrackImagesUrl(CAMERAS[index], timestamp));
       }
     });
 
     return () => {
       subscriber.unsubscribe();
     };
-  }, [eventBus]);
+  });
 
   if (data.series.length === 0) {
     return <PanelDataErrorView fieldConfig={fieldConfig} panelId={id} data={data} needsStringField />;
-  }
-
-  let widthPerImage = width / CAMERAS.length;
-  let size = (widthPerImage > height) ? height : widthPerImage;
-  if (size > 512) {
-    size = 512;
   }
 
   return (
@@ -86,7 +91,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         `
       )}
     >
-      <div id="time-label">Time:</div>
+      <div id="time-label">Time: {new Date(currentTimestamp).toLocaleString()}</div>
       <div className={cx(styles.rowFlex)}>
         <div className={cx(styles.areaName)}>
           <h2>
@@ -95,11 +100,11 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           <div className={cx(styles.rowFlex)}>
             <div>
               <div>Cam017</div>
-              <img id="track-image1" width={size} height={size} />
+              <img className={cx(styles.trackImage)} src={cameraImages[1]} />
             </div>
             <div>
               <div>Cam018</div>
-              <img id="track-image2" width={size} height={size} />
+              <img className={cx(styles.trackImage)} src={cameraImages[2]} />
             </div>
           </div>
         </div>
@@ -110,11 +115,11 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           <div className={cx(styles.rowFlex)}>
             <div>
               <div>Cam016</div>
-              <img id="track-image0" width={size} height={size} />
+              <img className={cx(styles.trackImage)} src={cameraImages[0]} />
             </div>
             <div>
               <div>Cam019</div>
-              <img id="track-image3" width={size} height={size} />
+              <img className={cx(styles.trackImage)} src={cameraImages[3]} />
             </div>
           </div>
         </div>
