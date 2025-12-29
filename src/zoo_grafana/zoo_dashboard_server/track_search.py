@@ -4,6 +4,7 @@ from pathlib import Path
 import logging
 import numpy as np
 import bisect
+from dataclasses import dataclass
 import cv2
 
 logger = logging.getLogger(__name__)
@@ -14,64 +15,71 @@ CAMERAS = ["zag_elp_cam_016"]
 MAX_DISTANCE_SEC = 5
 
 
-def find_track_image(camera: str, timestamp: datetime):
-    day_path = ROOT_FOLDER / camera / timestamp.strftime("%Y-%m-%d")
-
-    if not day_path.exists():
-        # Day is not in database, return silently
-        return None
-    if not day_path.is_dir():
-        logger.error("Path should be a directory: %s", day_path)
-        return None
-
-    # Get all tracks
-    track_paths = [f for f in day_path.glob("*.csv")]
-    times = [f.name[1:7] for f in track_paths]
-
-    sorted_indices = np.argsort(times)
-    track_paths = list(map(track_paths.__getitem__, sorted_indices))
-    times = list(map(times.__getitem__, sorted_indices))
-
-    target_time = timestamp.strftime("%H%M%S")
-    ind = bisect.bisect_right(times, target_time)
-    if ind == 0:
-        return None
-
-    csv_path = track_paths[ind - 1]
-    video_path = csv_path.with_suffix(".mkv")
-
-    # Read track details and find the relevant frame
-    data = pd.read_csv(
-        csv_path,
-        usecols=["frame_id", "timestamp"],
-        dtype={"frame_id": np.int64},
-        parse_dates=["timestamp"],
-    )
-
-    ind = bisect.bisect_right(data["timestamp"].to_list(), timestamp)
-    if ind == 0:
-        return None
-    video_timestamp = data["timestamp"][ind - 1]
-    distance = abs((video_timestamp - timestamp).total_seconds())
-    if distance > MAX_DISTANCE_SEC:
-        return None
-
-    video_frameid = data.index[ind - 1]
-
-    # Open the actual video and skip to desired frame
-    video = cv2.VideoCapture(str(video_path))
-    video.set(cv2.CAP_PROP_POS_FRAMES, video_frameid)
-    ok, image = video.read()
-    if not ok:
-        logger.error("Error reading video: %s, frame: %d", video_path, video_frameid)
-    return image
+@dataclass
+class DayData:
+    csv_paths: list[Path]
+    start_timestamps: list[datetime]
+    end_timestamps: list[datetime]
+    frame_timestamps: list[pd.Series]
 
 
-def find_all_track_images(timestamp: datetime):
+def get_day_path(camera: str, timestamp: datetime) -> Path:
+    return ROOT_FOLDER / camera / timestamp.strftime("%Y-%m-%d")
+
+
+def read_track_ranges(path: Path) -> DayData:
+    data = DayData([], [], [], [])
+    for f in sorted(path.glob("*.csv")):
+        # Read track details
+        df_timestamps = pd.read_csv(
+            f,
+            usecols=["timestamp"],
+            parse_dates=["timestamp"],
+        )
+        ds_timestamps = df_timestamps["timestamp"]
+
+        data.csv_paths.append(f)
+        data.frame_timestamps.append(ds_timestamps)
+        data.start_timestamps.append(ds_timestamps.iloc[0])
+        data.end_timestamps.append(ds_timestamps.iloc[-1])
+
+    return data
+
+
+def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray]:
     images = []
-    for camera in CAMERAS:
-        image = find_track_image(camera, timestamp)
-        if image is not None:
-            images.append(image)
+    count = len(day_data.start_timestamps)
+    for i in range(count):
+        start = day_data.start_timestamps[i]
+        if start > timestamp:
+            # All tracks start too late from this index on
+            break
 
+        end = day_data.end_timestamps[i]
+        if end < timestamp:
+            # Timestamp is not in the range, skip
+            continue
+
+        frame_timestamps = day_data.frame_timestamps[i]
+        ind = bisect.bisect_right(frame_timestamps.to_list(), timestamp)
+        if ind == 0:
+            continue
+        video_timestamp = frame_timestamps[ind - 1]
+        distance = abs((video_timestamp - timestamp).total_seconds())
+        if distance > MAX_DISTANCE_SEC:
+            continue
+
+        video_frameid = ind - 1
+
+        # Open the actual video and skip to desired frame
+        video_path = day_data.csv_paths[i].with_suffix(".mkv")
+        video = cv2.VideoCapture(str(video_path))
+        video.set(cv2.CAP_PROP_POS_FRAMES, video_frameid)
+        ok, image = video.read()
+        if not ok:
+            logger.error(
+                "Error reading video: %s, frame: %d", video_path, video_frameid
+            )
+            continue
+        images.append(image)
     return images
