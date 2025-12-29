@@ -63,3 +63,4 @@ cvat-cli
 
 # Dashboard server
 flask
+flask-cors

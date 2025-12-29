@@ -3,7 +3,6 @@ import { PanelProps, DataHoverEvent } from '@grafana/data';
 import { ZooTracksOptions } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
-import { PanelDataErrorView } from '@grafana/runtime';
 
 const ZOO_DASHBOARD_SERVER = "127.0.0.1:5000";
 const DEFAULT_TIMESTAMP = 1742096040000;
@@ -30,6 +29,7 @@ const getStyles = () => {
     `,
     areaName: css`
       padding: 10px;
+      width: 50%;
     `,
     rowFlex: css`
       display: flex;
@@ -38,6 +38,9 @@ const getStyles = () => {
     trackImage: css`
       max-width: 100%;
       max-height: 100%;
+      border-style: solid;
+      border-width: thin;
+      border-color: gray;
     `,
 
   };
@@ -47,16 +50,34 @@ function buildTrackImagesUrl(cameraName: string, timestamp: number): string {
   return `http://${ZOO_DASHBOARD_SERVER}/track_images?camera=${cameraName}&timestamp=${timestamp}`;
 }
 
+async function fetchImages(cameraName: string, timestamp: number, setState: (state: any) => void) {
+  const data = await fetch(buildTrackImagesUrl(cameraName, timestamp));
+  const dataJson = await data.json();
+  setState(dataJson["result"])
+}
+
+async function changeTimestamp(timestamp: number, setCurrentTimestamp: any, cameraSetState: any) {
+  setCurrentTimestamp(timestamp);
+
+  for (const index in CAMERAS) {
+    fetchImages(CAMERAS[index], timestamp, cameraSetState[index]);
+  }
+}
+
 export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id }) => {
   const styles = useStyles2(getStyles);
 
-  const [currentTimestamp, setCurrentTimestamp] = useState<number>(DEFAULT_TIMESTAMP);
-  const [imagesCamera0, imagesSetState0] = useState<string>(buildTrackImagesUrl(CAMERAS[0], DEFAULT_TIMESTAMP));
-  const [imagesCamera1, imagesSetState1] = useState<string>(buildTrackImagesUrl(CAMERAS[1], DEFAULT_TIMESTAMP));
-  const [imagesCamera2, imagesSetState2] = useState<string>(buildTrackImagesUrl(CAMERAS[2], DEFAULT_TIMESTAMP));
-  const [imagesCamera3, imagesSetState3] = useState<string>(buildTrackImagesUrl(CAMERAS[3], DEFAULT_TIMESTAMP));
+  const [currentTimestamp, setCurrentTimestamp] = useState<number>(0);
+  const [imagesCamera0, imagesSetState0] = useState<string[]>([]);
+  const [imagesCamera1, imagesSetState1] = useState<string[]>([]);
+  const [imagesCamera2, imagesSetState2] = useState<string[]>([]);
+  const [imagesCamera3, imagesSetState3] = useState<string[]>([]);
   const cameraImages = [imagesCamera0, imagesCamera1, imagesCamera2, imagesCamera3];
   const cameraSetState = [imagesSetState0, imagesSetState1, imagesSetState2, imagesSetState3];
+
+  if (currentTimestamp === 0) {
+    changeTimestamp(DEFAULT_TIMESTAMP, setCurrentTimestamp, cameraSetState);
+  }
 
   useEffect(() => {
     const subscriber = eventBus.getStream(DataHoverEvent).subscribe((event) => {
@@ -64,12 +85,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       if (timestamp == null) {
         return;
       }
-
-      setCurrentTimestamp(timestamp);
-
-      for (const index in CAMERAS) {
-        cameraSetState[index](buildTrackImagesUrl(CAMERAS[index], timestamp));
-      }
+      changeTimestamp(timestamp, setCurrentTimestamp, cameraSetState);
     });
 
     return () => {
@@ -77,9 +93,16 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
     };
   });
 
-  if (data.series.length === 0) {
-    return <PanelDataErrorView fieldConfig={fieldConfig} panelId={id} data={data} needsStringField />;
-  }
+  const makeImages = (index: number) => {
+    return <div>
+      <div>{CAMERAS[index]}</div>
+      {
+        cameraImages[index].map((value, index, _arr) =>
+          <img key={index} className={cx(styles.trackImage)} src={`data:image/jpeg;base64,${value}`} />)
+      }
+    </div>
+
+  };
 
   return (
     <div
@@ -98,14 +121,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             Sand box mit
           </h2>
           <div className={cx(styles.rowFlex)}>
-            <div>
-              <div>Cam017</div>
-              <img className={cx(styles.trackImage)} src={cameraImages[1]} />
-            </div>
-            <div>
-              <div>Cam018</div>
-              <img className={cx(styles.trackImage)} src={cameraImages[2]} />
-            </div>
+            {makeImages(1)}
+            {makeImages(2)}
           </div>
         </div>
         <div className={cx(styles.areaName)}>
@@ -113,14 +130,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             Sand box ohne
           </h2>
           <div className={cx(styles.rowFlex)}>
-            <div>
-              <div>Cam016</div>
-              <img className={cx(styles.trackImage)} src={cameraImages[0]} />
-            </div>
-            <div>
-              <div>Cam019</div>
-              <img className={cx(styles.trackImage)} src={cameraImages[3]} />
-            </div>
+            {makeImages(0)}
+            {makeImages(3)}
           </div>
         </div>
       </div>
