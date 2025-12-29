@@ -4,6 +4,7 @@ import { ZooTracksOptions } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
+
 const ZOO_DASHBOARD_SERVER = "127.0.0.1:5000";
 const DEFAULT_TIMESTAMP = 1742096040000;
 const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
@@ -16,17 +17,6 @@ const getStyles = () => {
       font-family: Open Sans;
       position: relative;
     `,
-    svg: css`
-      position: absolute;
-      top: 0;
-      left: 0;
-    `,
-    textBox: css`
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      padding: 10px;
-    `,
     areaName: css`
       padding: 10px;
       width: 50%;
@@ -34,6 +24,12 @@ const getStyles = () => {
     rowFlex: css`
       display: flex;
       flex-flow: row;
+    `,
+    cameraBlock: css`
+      width: 50%;
+      display: flex;
+      flex-flow: column;
+      overflow: auto;
     `,
     trackImage: css`
       max-width: 100%;
@@ -93,15 +89,13 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
     };
   });
 
-  const makeImages = (index: number) => {
-    return <div>
-      <div>{CAMERAS[index]}</div>
-      {
-        cameraImages[index].map((value, index, _arr) =>
-          <img key={index} className={cx(styles.trackImage)} src={`data:image/jpeg;base64,${value}`} />)
-      }
-    </div>
-
+  const makeImages = (cameraIndex: number) => {
+    return <>
+      <div>{CAMERAS[cameraIndex]}</div>
+      {cameraImages[cameraIndex].map((value, index) =>
+        <img key={index} src={`data:image/jpeg;base64,${value}`} className={cx(styles.trackImage)} />
+      )}
+    </>
   };
 
   return (
@@ -111,6 +105,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         css`
           width: ${width}px;
           height: ${height}px;
+          overflow: auto;
         `
       )}
     >
@@ -121,8 +116,12 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             Sand box mit
           </h2>
           <div className={cx(styles.rowFlex)}>
-            {makeImages(1)}
-            {makeImages(2)}
+            <div className={cx(styles.cameraBlock)}>
+              {makeImages(1)}
+            </div>
+            <div className={cx(styles.cameraBlock)}>
+              {makeImages(2)}
+            </div>
           </div>
         </div>
         <div className={cx(styles.areaName)}>
@@ -130,8 +129,12 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             Sand box ohne
           </h2>
           <div className={cx(styles.rowFlex)}>
-            {makeImages(0)}
-            {makeImages(3)}
+            <div className={cx(styles.cameraBlock)}>
+              {makeImages(0)}
+            </div>
+            <div className={cx(styles.cameraBlock)}>
+              {makeImages(3)}
+            </div>
           </div>
         </div>
       </div>
