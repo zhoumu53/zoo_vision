@@ -366,7 +366,7 @@ def export_tracklets(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract track clips and CSVs from tracking JSONL.")
     parser.add_argument("--date", default='20251129', help="Input JSONL file (stitched)")
-    parser.add_argument("--jsonl", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7_tracks.jsonl', help="Path to tracking JSONL file.")
+    parser.add_argument("--jsonl", type=Path, default='/media/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7_tracks.jsonl', help="Path to tracking JSONL file.")
     parser.add_argument("--output-size", type=int, default=224, help="Square crop/resize size.")
     parser.add_argument("--bbox-format", type=str, default="auto", choices=["auto", "xyxy", "xywh"], help="BBox format in JSON.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])

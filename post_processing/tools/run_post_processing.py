@@ -7,6 +7,7 @@ Command-line interface for running post-processing (Stage 3).
 import argparse
 import json
 import logging
+from pyexpat import features
 import sys
 from pathlib import Path
 
@@ -79,17 +80,17 @@ def parse_args() -> argparse.Namespace:
     
     # Required arguments
     parser.add_argument("--date", default='20251129', help="Input JSONL file (stitched)")
-    parser.add_argument("--record_root", type=Path, default='/media/dherrera/ElephantsWD/elephants/test', help="Root directory for records.")
+    parser.add_argument("--record-root", type=Path, default='/media/ElephantsWD/elephants/test', help="Root directory for records.")
     parser.add_argument("--config", type=Path, default='/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml', help="ReID config file path.")
-    parser.add_argument("--checkpoint", type=Path, default='/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
+    parser.add_argument("--checkpoint", type=Path, default='/media/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument("--start-time", type=str, default="15:30:00", help="Start time for processing (HH:MM:SS)." \
-    " Default is 15:30:00 to cover night time from PM to AM.    ")
+    " Default is 15:30:00 to cover night time from PM to AM.")
     parser.add_argument("--end-time", type=str, default="23:59:59", help="End time for processing (HH:MM:SS)." \
     " Default is 23:59:59 next day to cover night time from PM to AM.    ")
     ### behavior model
     parser.add_argument("--behavior-model", type=Path, default="/media/mu/zoo_vision/models/sleep/vit/v2_no_validation/config.ptc", help="Behavior classification model path (optional).")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
-    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for inference.")
+    parser.add_argument("--batch-size", type=int, default=256, help="Batch size for inference.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing processed files.")
     parser.add_argument("--gallery-path", type=Path, default=None, help="Path to gallery features NPZ file.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -129,6 +130,7 @@ def main():
     if gallery_path is None: 
         gallery_path = args.checkpoint.parent / "pred_features" / "train_iid" / "pytorch_result_e.npz"
         logger.info(f"No gallery path provided. Using default gallery path: {gallery_path}")
+    gallery_features, gallery_labels = reid_model.load_features(gallery_path)
 
     behavior_model = None
     if args.behavior_model is not None:
@@ -181,7 +183,6 @@ def main():
             npz_path = track_file.with_suffix(".npz")
             if npz_path.exists() and not args.overwrite:
                 
-                
                 voted_identity_label = load_npz_files(npz_path).get('voted_labels', 'unknown')
                 logger.info("NPZ file already exists for %s, loaded voted label: %s", track_filename, voted_identity_label)
                 
@@ -191,9 +192,10 @@ def main():
                 voted_identity_label = run_feature_extraction(
                     video_path=track_file,
                     reid_model=reid_model,
+                    gallery_features=gallery_features,
+                    gallery_labels=gallery_labels,
                     device=args.device,
-                    batch_size=args.batch_size,
-                    gallery_path=gallery_path,
+                    batch_size=args.batch_size
                 )
             tracklet_id2identity[track_filename] = voted_identity_label
             # print(f"Tracklet {track_filename} assigned identity: {voted_identity_label}")
@@ -207,65 +209,94 @@ def main():
     start_time = args.start_time
     end_time = args.end_time
 
+
+    time_splits = [
+        ("00:00:00", "07:30:00"),
+        ("16:30:00", "23:59:59"),
+    ]
+
+
     for camera_id in camera_ids:
-        track_dir = get_track_dir(
-            record_root=args.record_root,
-            cam_id=camera_id,
-            date=args.date,
-        )
-    
-        tracklet_manager = TrackletManager(
-            track_dir=track_dir,
-            camera_id=camera_id,
-            num_identities=2,   ## TODO: set dynamically? with human prior?
-            logger=logger,
-            start_time=start_time,
-            end_time=end_time,
-        )
-        tracklet_manager.load_tracklets_for_camera()
-        print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
 
-        # Test the new bidirectional gallery-based stitching
-        print("\n" + "="*80)
-        print("Testing BIDIRECTIONAL GALLERY-based stitching (recommended for elephants)")
-        print("="*80)
-        tracklet_manager.stitch_tracklets_bidirectional(
-            max_gap_frames=600,
-            local_sim_th=0.5,
-            gallery_sim_th=0.45,
-            head_k=5,
-            tail_k=5,
-            gallery_k=10,
-            w_local=0.6,
-            w_gallery=0.4,
-        )
-        tracklet_manager.save_stitched_tracklets()
+        for start_time, end_time in time_splits:
 
-        # Visualize results
-        from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
-        visualize_stitched_tracks_pairs(
-            tracklet_manager.tracklets,
-            output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
-            camera_id=camera_id,
-            head_k=3,
-            tail_k=3,
-            max_chains=None,
-            max_tracklets_per_chain=None,
-            cell_h=256,
-            cell_w=256,
-            logger_=logger,
-        )
+            track_dir = get_track_dir(
+                record_root=args.record_root,
+                cam_id=camera_id,
+                date=args.date,
+            )
         
-        from tests.validate_stitching_timeline import validate_stitched_timelines
-        validate_stitched_timelines(
-            tracklet_manager.tracklets,
-            camera_id=camera_id,
-            logger_=logger,
-        )
+            tracklet_manager = TrackletManager(
+                track_dir=track_dir,
+                camera_id=camera_id,
+                num_identities=2,   ## TODO: set dynamically? with human prior?
+                logger=logger,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            tracklet_manager.load_tracklets_for_camera()
+            print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
 
-        print("validate_stitched_timelines", validate_stitched_timelines)
+            # Test the new bidirectional gallery-based stitching
+            print("\n" + "="*80)
+            print("Testing BIDIRECTIONAL GALLERY-based stitching (recommended for elephants)")
+            print("="*80)
+            tracklet_manager.stitch_tracklets_bidirectional(
+                max_gap_frames=600,
+                local_sim_th=0.5,
+                gallery_sim_th=0.45,
+                head_k=5,
+                tail_k=5,
+                gallery_k=10,
+                w_local=0.6,
+                w_gallery=0.4,
+            )
 
-        ### TODO: visualization - validate_stitched_ids
+            agg_features = tracklet_manager.aggregate_tracklet_features()
+
+            known_labels = ['Indi', 'Chandra']  # Example known labels for this camera
+
+            if known_labels is not None:
+                valid_indices = [i for i, label in enumerate(gallery_labels) if label in known_labels]
+                g_feats = gallery_features[valid_indices]
+                g_labels = [gallery_labels[i] for i in valid_indices]
+
+            ### ReID - assign identity labels to stitched tracklets
+            trackid2identity_label = {}
+            for tid in tracklet_manager.track_ids:
+                features = agg_features[tid]
+                matched_labels = reid_model.match_to_gallery(features, g_feats, gallery_labels=g_labels, top_k=1)[-1][0]
+                print(f"Stitched Tracklet ID {tid} matched identity: {matched_labels}")
+                trackid2identity_label[tid] = matched_labels
+
+            tracklet_manager.save_stitched_tracklets(trackid2identity_label=trackid2identity_label)
+            
+            
+            # # Visualize results
+            # from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
+            # visualize_stitched_tracks_pairs(
+            #     tracklet_manager.tracklets,
+            #     output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
+            #     camera_id=camera_id,
+            #     head_k=3,
+            #     tail_k=3,
+            #     max_chains=None,
+            #     max_tracklets_per_chain=None,
+            #     cell_h=256,
+            #     cell_w=256,
+            #     logger_=logger,
+            # )
+            
+            # from tests.validate_stitching_timeline import validate_stitched_timelines
+            # validate_stitched_timelines(
+            #     tracklet_manager.tracklets,
+            #     camera_id=camera_id,
+            #     logger_=logger,
+            # )
+
+            # print("validate_stitched_timelines", validate_stitched_timelines)
+
+            ### TODO: visualization - validate_stitched_ids
 
 
     

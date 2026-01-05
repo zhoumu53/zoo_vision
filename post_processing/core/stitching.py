@@ -94,7 +94,7 @@ def stitch_tracklets_bidirectional_gallery(
             continue
         
         try:
-            feats, frame_ids, _ = load_embedding(t.feature_path)
+            feats, frame_ids, _, _ = load_embedding(t.feature_path)
         except Exception as e:
             log.exception(
                 f"[bidirectional] Failed to load embedding from {t.feature_path} for tracklet {i}: {e}"

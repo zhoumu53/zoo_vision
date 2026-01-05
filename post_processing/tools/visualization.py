@@ -42,7 +42,7 @@ def _extract_head_tail_frames_from_video(
         return None, None
 
     try:
-        feats, frame_ids, video_path = load_embedding(tracklet.feature_path)
+        feats, frame_ids, video_path, _ = load_embedding(tracklet.feature_path)
     except Exception as e:
         log.exception(
             f"[viz] Failed to load embedding for tracklet {tracklet.track_id}: {e}"
@@ -511,7 +511,7 @@ def _extract_rep_frame(
         return None
 
     try:
-        feats, frame_ids, video_path = load_embedding(tracklet.feature_path)
+        feats, frame_ids, video_path, _ = load_embedding(tracklet.feature_path)
     except Exception as e:
         log.exception(
             f"[plot] Failed to load embedding for tracklet {tracklet.track_id}: {e}"

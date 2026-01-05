@@ -152,13 +152,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--search-root",
         type=Path,
-        default=Path("/media/dherrera/ElephantsWD/tracking_results"),
+        default=Path("/media/ElephantsWD/tracking_results"),
         help="Root directory to search for tracking JSONL files.",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/media/dherrera/ElephantsWD/elephants/test/tracks"),
+        default=Path("/media/ElephantsWD/elephants/test/tracks"),
         help="Root directory to store extracted tracks and features (organized by camera/date).",
     )
     parser.add_argument("--output-size", type=int, default=512, help="Square crop/resize size.")
@@ -174,7 +174,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth"),
+        default=Path("/media/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth"),
         help="ReID checkpoint path.",
     )
     parser.add_argument(

@@ -12,7 +12,7 @@ directories:
   raw_video_dir: "/mnt/camera_nas"
   
   # Output base directory
-  output_base_dir: "/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams"
+  output_base_dir: "/media/ElephantsWD/tracking_results/tracking_w_behavior_4cams"
   
 # ==============================================================================
 # Model Paths

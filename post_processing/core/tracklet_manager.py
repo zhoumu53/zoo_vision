@@ -9,7 +9,7 @@ import numpy as np
 
 import logging
 logger = logging.getLogger(__name__)
-
+from post_processing.utils import load_embedding
 
 ## TODO: remove redundant items in Tracklet dataclass
 @dataclass
@@ -218,8 +218,8 @@ class TrackletManager:
                  track_dir: Path,
                  camera_id: str, 
                  num_identities: int = 2,
-                 start_time: Optional[datetime] = None,
-                 end_time: Optional[datetime] = None,
+                 start_time: Optional[datetime] = "17:00:00",
+                 end_time: Optional[datetime] = "00:00:00",
                  logger =None,
                  invalid_zones_dir: Path = Path('/media/mu/zoo_vision/data/invalid_zones'),
                  height: int = 1520,
@@ -339,7 +339,37 @@ class TrackletManager:
               f"valid tracklets: {len(self.tracklets)-n_invalid}")
 
 
-    def save_stitched_tracklets(self, save_path: Path = None) -> None:
+    def aggregate_tracklet_features(self) -> None:
+        """Aggregate features for all loaded tracklets, and store the average features."""
+
+        self.track_ids = set([t.track_id for t in self.tracklets if t.stitched_id is not None])
+
+        agg_features = {
+            t_id: [] for t_id in self.track_ids
+        }
+
+        for t in self.tracklets:
+            if t.feature_path and t.feature_path.exists():
+                if t.stitched_id is None:
+                    continue
+                feats, frame_ids, _, avg_feat = load_embedding(t.feature_path)
+                agg_features[t.stitched_id].append(avg_feat)
+            
+        # now N, 1, D -> N, D -> avg to (1, D)
+
+        for t_id in self.track_ids:
+            if len(agg_features[t_id]) > 0:
+                features = np.array(agg_features[t_id]).squeeze(1)
+                agg_features[t_id] = features.mean(axis=0, keepdims=True)  # (1, D)
+
+            else:
+                agg_features[t_id] = None
+
+        return agg_features
+
+                
+
+    def save_stitched_tracklets(self, save_path: Path = None, trackid2identity_label: dict = None) -> None:
         """
         Save stitched tracklets metadata to json file.
         This does NOT save per-frame data or features,
@@ -359,13 +389,18 @@ class TrackletManager:
         if self.start_time and self.end_time:
             time_range_str = f"{self.start_time.strftime('%H%M%S')}_{self.end_time.strftime('%H%M%S')}"
         else:
+            ### TODO -- split into night / daytime
             time_range_str = "fullday"
+        
         save_path = Path(save_path) if save_path else self.track_dir / f"stitched_tracklets_cam{self.camera_id}_{time_range_str}.json"
         save_path.parent.mkdir(parents=True, exist_ok=True)
 
         stitched_map: Dict[str, List[Dict[str, object]]] = {}
         for t in self.tracklets:
             sid = "unassigned" if t.stitched_id is None else str(t.stitched_id)
+            avg_tracklet_label = t.identity_label if t.identity_label != "unknown" else (
+                trackid2identity_label.get(t.stitched_id, "unknown") if trackid2identity_label else "unknown"
+            )
             stitched_map.setdefault(sid, []).append(
                 {
                     "track_id": t.track_id,
@@ -375,7 +410,9 @@ class TrackletManager:
                     "track_video_path": str(t.track_video_path) if t.track_video_path else "",
                     "stitched_id": t.stitched_id,
                     "camera_id": t.camera_id,
-                    "identity_label": t.identity_label,
+                    "avg_tracklet_label": avg_tracklet_label,  ### avg embedding from all tracklets
+                    "voted_label": t.identity_label,   ### voted label from this track
+                    "identity_label": t.identity_label,   ### final label
                     "invalid_flag": t.invalid_flag,
                     "start_timestamp": t.start_timestamp.isoformat() if isinstance(t.start_timestamp, datetime) else "",
                     "end_timestamp": t.end_timestamp.isoformat() if isinstance(t.end_timestamp, datetime) else "",
@@ -453,7 +490,7 @@ if __name__ == "__main__":
     start_time = None
     end_time   = None
 
-    track_dir=Path(f"/media/dherrera/ElephantsWD/elephants/test/tracks/zag_elp_cam_{camera_id}/{date}")
+    track_dir=Path(f"/media/ElephantsWD/elephants/test/tracks/zag_elp_cam_{camera_id}/{date}")
     
     tracklet_manager = TrackletManager(
         track_dir=track_dir,
@@ -481,30 +518,33 @@ if __name__ == "__main__":
         w_gallery=0.4,
     )
 
-    # Visualize results
-    from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
-    visualize_stitched_tracks_pairs(
-        tracklet_manager.tracklets,
-        output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
-        camera_id=camera_id,
-        head_k=3,
-        tail_k=3,
-        max_chains=None,
-        max_tracklets_per_chain=None,
-        cell_h=256,
-        cell_w=256,
-        logger_=logger,
-    )
+    # tracklet_manager.save_stitched_tracklets()
+    tracklet_manager.aggregate_tracklet_features()
+
+    # # Visualize results
+    # from post_processing.tools.visualization import visualize_stitched_tracks_pairs, plot_stitched_ids_on_original_frames
+    # visualize_stitched_tracks_pairs(
+    #     tracklet_manager.tracklets,
+    #     output_dir=Path("/media/mu/zoo_vision/post_processing/scrips/out"),
+    #     camera_id=camera_id,
+    #     head_k=3,
+    #     tail_k=3,
+    #     max_chains=None,
+    #     max_tracklets_per_chain=None,
+    #     cell_h=256,
+    #     cell_w=256,
+    #     logger_=logger,
+    # )
     
-    from tests.validate_stitching_timeline import validate_stitched_timelines
-    validate_stitched_timelines(
-        tracklet_manager.tracklets,
-        camera_id=camera_id,
-        logger_=logger,
-    )
+    # from tests.validate_stitching_timeline import validate_stitched_timelines
+    # validate_stitched_timelines(
+    #     tracklet_manager.tracklets,
+    #     camera_id=camera_id,
+    #     logger_=logger,
+    # )
 
 
-    print("validate_stitched_timelines", validate_stitched_timelines)
+    # print("validate_stitched_timelines", validate_stitched_timelines)
 
 
     # ## TODO - vis - tracks

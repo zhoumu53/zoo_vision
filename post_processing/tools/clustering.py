@@ -57,7 +57,7 @@ def load_dataset(track_dir: Path, last_k: int = 1) -> Tuple[np.ndarray, List[str
     videos: List[Path] = []
 
     for npz_path in list_npz_files(track_dir):
-        feats, frame_ids, video_path = load_embedding(npz_path)
+        feats, frame_ids, video_path, _ = load_embedding(npz_path)
         k = min(last_k, len(feats))
         start = len(feats) - k
         for idx in range(start, len(feats)):
@@ -214,7 +214,7 @@ def run_clustering(track_dir: Path, n_clusters: int = 6, output: Path | None = N
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cluster track embeddings and visualize results.")
-    parser.add_argument("--track-dir", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250318/20250318_15/ZAG-ELP-CAM-019-20250318-155551-1742309751619-7/tracks', help="Directory containing track .npz and .mkv files.")
+    parser.add_argument("--track-dir", type=Path, default='/media/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20250318/20250318_15/ZAG-ELP-CAM-019-20250318-155551-1742309751619-7/tracks', help="Directory containing track .npz and .mkv files.")
     parser.add_argument("--clusters", type=int, default=2, help="Number of clusters.")
     parser.add_argument("--last-k", type=int, default=1, help="Number of last frames per track to include (e.g., 10).")
     parser.add_argument("--output", type=Path, help="Optional output path for the plot (png/html).")

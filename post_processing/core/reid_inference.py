@@ -137,7 +137,6 @@ class ReIDInference:
         effective_k = min(top_k, gallery_features.shape[0])
         scores, indices = torch.topk(similarity, effective_k, dim=1)
 
-        # if  gallery_labels is not None:
         if gallery_labels is not None:
             matched_labels = []
             for i in range(indices.shape[0]):
@@ -146,9 +145,9 @@ class ReIDInference:
                     idx = indices[i, j].item()
                     matched.append(gallery_labels[idx])
                 matched_labels.append(matched)
-            # print("np.array(matched_labels).shape: ", np.array(matched_labels).shape)
+            # print("np.array(matched_labels).shape: ", np.array(matched_labels).shape, np.array(scores.cpu().numpy()).shape)
             return scores, indices, matched_labels
-        return scores, indices
+        return scores, indices, None
     
     def save_features(
         self,
@@ -178,7 +177,7 @@ class ReIDInference:
         self,
         load_path: str | Path,
     ) -> Tuple[torch.Tensor, np.ndarray, np.ndarray]:
-        """Load feature database from NPZ file, returns (features, labels, ids)."""
+        """Load feature database from NPZ file, returns (features, label, ids)."""
         load_path = Path(load_path)
         
         if not load_path.exists():
@@ -186,14 +185,11 @@ class ReIDInference:
         
         data = np.load(load_path, allow_pickle=True)
 
-        print("data keys: ", data.keys())
-        
+        labels = data.get("label", None)
         features = torch.from_numpy(data["feature"]).float()
-        features = torch.nn.functional.normalize(features, dim=1)
         features = features.to(self.device)
-        
         self.logger.info("Loaded %d features from %s", len(features), load_path)
-        return features, data["label"]
+        return features, labels
     
     def run_prediction(
         self,

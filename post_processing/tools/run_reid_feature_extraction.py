@@ -2,7 +2,7 @@ import argparse
 import logging
 from pathlib import Path
 import sys
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -57,6 +57,7 @@ def extract_reid_features_from_video(
     reid_model: ReIDInference,
     batch_size: int = 32,
     skip_frames: bool = True,
+    fps : int = 25,
 ) -> Tuple[np.ndarray, List[int], np.ndarray:]:
     """
     Extract ReID features for every frame in a video.
@@ -82,13 +83,27 @@ def extract_reid_features_from_video(
     ### len(loader) gives total number of frames
     total_frames = len(loader)
     indices = list(range(total_frames))
-    if total_frames > 100 and skip_frames:
-        n_skip = total_frames // 100 ### we want ~100 frames -> for reid voting
-        logger.info(f"Video has {total_frames} frames, skipping every {n_skip} frames to limit to ~100 frames.")
-        indices = list(range(0, total_frames, n_skip))
-        #### always include K=10 head, tail frames -- to capture start / end --- for stitching
-        indices = sorted(set(indices + list(range(10)) + list(range(total_frames - 10, total_frames))))
 
+    # Keep ~1 frame every 4 second (fps=25), and still force-include head/tail frames.
+    if total_frames > fps and skip_frames:
+        step = max(1, int(fps) * 4)
+
+        logger.info(
+            f"Video has {total_frames} frames. Sampling 0.25 fps with step={step} frames "
+            f"(~{total_frames/step:.1f} samples) + head/tail anchors."
+        )
+
+        indices = list(range(0, total_frames, step))
+
+        # Always include K head/tail frames (guard for short videos)
+        K = 10
+        head = list(range(0, min(K, total_frames)))
+        tail_start = max(0, total_frames - K)
+        tail = list(range(tail_start, total_frames))
+
+        indices = sorted(set(indices + head + tail))
+    else:
+        indices = list(range(total_frames))
 
     for idx, frame in enumerate(loader):
         if idx not in indices:
@@ -131,7 +146,18 @@ def save_features_npz(
     save_path: Path = None,
     metadata: dict | None = None,
 ) -> None:
-    """Save features and frame ids to compressed NPZ."""
+    """
+    Save ReID features and associated data to a compressed NPZ file.
+    Args:
+        features: (N, D) numpy array of ReID features.
+        frame_ids: List of frame indices corresponding to each feature.
+        avg_embedding: (1, D) numpy array of average embedding.
+        matched_labels: List of matched labels per frame.
+        avg_matched_labels: List of matched labels for average embedding.
+        voted_labels: List of voted labels per frame.
+        save_path: Path to save the NPZ file.
+        metadata: Optional dictionary of metadata to include.
+    """
     save_path = save_path.with_suffix(".npz")
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -149,27 +175,73 @@ def save_features_npz(
     logger.info("Saved %d features to %s", len(frame_ids), save_path)
 
 
-def vote_matched_labels(matched_labels: List[List[str]], topk: int = 1) -> List[str]:
+def vote_matched_labels(matched_labels: List[List[str]]) -> List[str]:
     """Given matched labels per frame, return the most common label."""
-    from collections import Counter
-
     voted_labels = []
     for labels in matched_labels:
         if labels:
-            most_common = Counter(labels).most_common(topk)[0][0]
+            most_common = labels[0]
             voted_labels.append(most_common)
         else:
             voted_labels.append("unknown")
     return voted_labels
 
 
+# def run_feature_extraction(
+#     video_path: Path,
+#     reid_model: ReIDInference,
+#     device: str = "cpu",
+#     batch_size: int = 32,
+#     gallery_path: Path = None,
+#     known_labels: Optional[List[str]] = ['Thai'],
+# ) -> str:
+#     """High-level helper: load model, extract features, and save alongside the video."""
+#     features, frame_ids, avg_embedding = extract_reid_features_from_video(
+#         video_path=video_path,
+#         reid_model=reid_model,
+#         batch_size=batch_size
+#     )
+
+#     logger.info(f"Extracted {len(features)} features from video {video_path.name}")
+
+#     ### TODO: load gallery features from Known Group (I&C or P&F)
+#     gallery_features, gallery_labels = reid_model.load_features(gallery_path) 
+
+#     matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+#     avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
+    
+#     voted_labels = vote_matched_labels(matched_labels, topk=1)
+#     # most common label
+#     voted_label = max(set(voted_labels), key=voted_labels.count)
+#     print(f"Voted labels for video {video_path.name}: {voted_label}")
+
+#     save_path = video_path.with_suffix(".npz")
+#     save_features_npz(
+#         features=features,
+#         frame_ids=frame_ids,
+#         avg_embedding=avg_embedding,
+#         matched_labels=matched_labels,
+#         avg_matched_labels=avg_matched_labels,
+#         voted_labels=voted_label,
+#         save_path=save_path,
+#         metadata={
+#             "video": str(video_path),
+#             "device": device,
+#         },
+#     )
+#     print()
+#     return voted_label
+
+
+
 def run_feature_extraction(
     video_path: Path,
     reid_model: ReIDInference,
+    gallery_features: np.ndarray,
+    gallery_labels: List[str],
     device: str = "cpu",
     batch_size: int = 32,
-    gallery_path: Path = None,
-    group: list = None,  ### TODO: for future use - group info (I&C vs P&F)
+    known_labels: Optional[List[str]] = None,
 ) -> str:
     """High-level helper: load model, extract features, and save alongside the video."""
     features, frame_ids, avg_embedding = extract_reid_features_from_video(
@@ -178,16 +250,27 @@ def run_feature_extraction(
         batch_size=batch_size
     )
 
-    ### TODO: load gallery features from Known Group (I&C or P&F)
-    gallery_features, gallery_labels = reid_model.load_features(gallery_path) 
+    matched_labels=[]
+    avg_matched_labels=[]
+    voted_label = ''
+
+    # ### filter gallery to only known labels
+    # if known_labels is not None:
+    #     valid_indices = [i for i, label in enumerate(gallery_labels) if label in known_labels]
+    #     gallery_features = gallery_features[valid_indices]
+    #     gallery_labels = [gallery_labels[i] for i in valid_indices]
+
+    # DO REID MATCHING ON STITCHED TRACKS -- NOT NOW
     matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+    # print(f"Matched labels for video {video_path.name}: {matched_labels}")
     avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
+    # print(f"Avg matched labels for video {video_path.name}: {avg_matched_labels}")
     
-    voted_labels = vote_matched_labels(matched_labels, topk=1)
+    voted_labels = vote_matched_labels(matched_labels)
     # most common label
     voted_label = max(set(voted_labels), key=voted_labels.count)
-    print(f"Voted labels for video {video_path.name}: {voted_label}")
-
+    # print(f"Voted labels for video {video_path.name}: {voted_label}")
+    
     save_path = video_path.with_suffix(".npz")
     save_features_npz(
         features=features,
@@ -205,12 +288,11 @@ def run_feature_extraction(
     print()
     return voted_label
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract ReID features for a video/track and save to NPZ.")
-    parser.add_argument("--video", type=Path, default='/media/dherrera/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/tracks', help="Path or directory to video or track clip (e.g., .mkv).")
+    parser.add_argument("--video", type=Path, default='/media/ElephantsWD/tracking_results/tracking_w_behavior_4cams/20251129/20251129_01/ZAG-ELP-CAM-016-20251129-011949-1764375589549-7/tracks', help="Path or directory to video or track clip (e.g., .mkv).")
     parser.add_argument("--config", type=Path, default='/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml', help="ReID config file path.")
-    parser.add_argument("--checkpoint", type=Path, default='/media/dherrera/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
+    parser.add_argument("--checkpoint", type=Path, default='/media/ElephantsWD/reid_models/logs/swin_adamw_lr0003_bs64_softmax_triplet/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for inference.")
     parser.add_argument("--gallery-path", type=Path, default=None, help="Optional gallery features NPZ path for matching.")
