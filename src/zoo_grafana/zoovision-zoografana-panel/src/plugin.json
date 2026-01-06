@@ -4,7 +4,9 @@
   "name": "Zoo_grafana",
   "id": "zoovision-zoografana-panel",
   "info": {
-    "keywords": ["panel"],
+    "keywords": [
+      "panel"
+    ],
     "description": "",
     "author": {
       "name": "Zoo vision"

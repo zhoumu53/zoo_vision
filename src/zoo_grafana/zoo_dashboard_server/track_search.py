@@ -6,6 +6,7 @@ import numpy as np
 import bisect
 from dataclasses import dataclass
 import cv2
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -81,5 +82,6 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
                 "Error reading video: %s, frame: %d", video_path, video_frameid
             )
             continue
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         images.append(image)
     return images

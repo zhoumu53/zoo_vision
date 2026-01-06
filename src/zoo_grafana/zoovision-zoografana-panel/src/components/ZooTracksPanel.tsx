@@ -6,7 +6,7 @@ import { useStyles2 } from '@grafana/ui';
 
 
 const ZOO_DASHBOARD_SERVER = "127.0.0.1:5000";
-const DEFAULT_TIMESTAMP = 1742096040000;
+const DEFAULT_TIMESTAMP_MS = 1742096040000;
 const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
 
 interface Props extends PanelProps<ZooTracksOptions> { }
@@ -24,46 +24,56 @@ const getStyles = () => {
     rowFlex: css`
       display: flex;
       flex-flow: row;
+      width: 100%;
     `,
     cameraBlock: css`
       width: 50%;
-      display: flex;
-      flex-flow: column;
-      overflow: auto;
     `,
-    trackImage: css`
-      max-width: 100%;
-      max-height: 100%;
+    trackImageContainer: css`
+      width: 100%;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      padding: 1px;
+    `,
+    trackImageDiv: css`
+      max-width: 50%;
       border-style: solid;
       border-width: thin;
       border-color: gray;
+    `,
+    trackImage: css`
+      width: 100%;
+      height: 100%;
     `,
 
   };
 };
 
-function buildTrackImagesUrl(cameraName: string, timestamp: number): string {
-  return `http://${ZOO_DASHBOARD_SERVER}/track_images?camera=${cameraName}&timestamp=${timestamp}`;
+function buildTrackImagesUrl(cameraName: string, timestamp_ms: number): string {
+  const timestamp_s = timestamp_ms / 1000;
+  const utcOffset_s = new Date().getTimezoneOffset() * 60;
+  const timestampUtc_s = timestamp_s + utcOffset_s;
+  return `http://${ZOO_DASHBOARD_SERVER}/track_images?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
-async function fetchImages(cameraName: string, timestamp: number, setState: (state: any) => void) {
-  const data = await fetch(buildTrackImagesUrl(cameraName, timestamp));
+async function fetchImages(cameraName: string, timestamp_ms: number, setCurrentTimestamp: any, setState: (state: any) => void) {
+  const data = await fetch(buildTrackImagesUrl(cameraName, timestamp_ms));
   const dataJson = await data.json();
-  setState(dataJson["result"])
+  setCurrentTimestamp(dataJson["timestamp"])
+  setState(dataJson["images"])
 }
 
-async function changeTimestamp(timestamp: number, setCurrentTimestamp: any, cameraSetState: any) {
-  setCurrentTimestamp(timestamp);
-
+async function changeTimestamp(timestamp_ms: number, setCurrentTimestamp: any, cameraSetState: any) {
   for (const index in CAMERAS) {
-    fetchImages(CAMERAS[index], timestamp, cameraSetState[index]);
+    fetchImages(CAMERAS[index], timestamp_ms, setCurrentTimestamp, cameraSetState[index]);
   }
 }
 
 export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id }) => {
   const styles = useStyles2(getStyles);
 
-  const [currentTimestamp, setCurrentTimestamp] = useState<number>(0);
+  const [currentTimestamp, setCurrentTimestamp] = useState<string>("");
   const [imagesCamera0, imagesSetState0] = useState<string[]>([]);
   const [imagesCamera1, imagesSetState1] = useState<string[]>([]);
   const [imagesCamera2, imagesSetState2] = useState<string[]>([]);
@@ -71,17 +81,20 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
   const cameraImages = [imagesCamera0, imagesCamera1, imagesCamera2, imagesCamera3];
   const cameraSetState = [imagesSetState0, imagesSetState1, imagesSetState2, imagesSetState3];
 
-  if (currentTimestamp === 0) {
-    changeTimestamp(DEFAULT_TIMESTAMP, setCurrentTimestamp, cameraSetState);
+  if (currentTimestamp === "") {
+    changeTimestamp(DEFAULT_TIMESTAMP_MS, setCurrentTimestamp, cameraSetState);
   }
 
   useEffect(() => {
     const subscriber = eventBus.getStream(DataHoverEvent).subscribe((event) => {
-      let timestamp = event.payload.point.time;
-      if (timestamp == null) {
+      if (event.payload.point == null) {
         return;
       }
-      changeTimestamp(timestamp, setCurrentTimestamp, cameraSetState);
+      let timestamp_ms = event.payload.point.time;
+      if (timestamp_ms == null) {
+        return;
+      }
+      changeTimestamp(timestamp_ms, setCurrentTimestamp, cameraSetState);
     });
 
     return () => {
@@ -90,12 +103,16 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
   });
 
   const makeImages = (cameraIndex: number) => {
-    return <>
+    return <div className={cx(styles.cameraBlock)}>
       <div>{CAMERAS[cameraIndex]}</div>
-      {cameraImages[cameraIndex].map((value, index) =>
-        <img key={index} src={`data:image/jpeg;base64,${value}`} className={cx(styles.trackImage)} />
-      )}
-    </>
+      <div className={cx(styles.trackImageContainer)}>
+        {cameraImages[cameraIndex].map((value, index) =>
+          <div className={cx(styles.trackImageDiv)}>
+            <img key={index} src={`data:image/jpeg;base64,${value}`} className={cx(styles.trackImage)} />
+          </div>
+        )}
+      </div>
+    </div>
   };
 
   return (
@@ -109,19 +126,15 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         `
       )}
     >
-      <div id="time-label">Time: {new Date(currentTimestamp).toLocaleString()}</div>
+      <div id="time-label">Time: {currentTimestamp}</div>
       <div className={cx(styles.rowFlex)}>
         <div className={cx(styles.areaName)}>
           <h2>
             Sand box mit
           </h2>
           <div className={cx(styles.rowFlex)}>
-            <div className={cx(styles.cameraBlock)}>
-              {makeImages(1)}
-            </div>
-            <div className={cx(styles.cameraBlock)}>
-              {makeImages(2)}
-            </div>
+            {makeImages(1)}
+            {makeImages(2)}
           </div>
         </div>
         <div className={cx(styles.areaName)}>
@@ -129,12 +142,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             Sand box ohne
           </h2>
           <div className={cx(styles.rowFlex)}>
-            <div className={cx(styles.cameraBlock)}>
-              {makeImages(0)}
-            </div>
-            <div className={cx(styles.cameraBlock)}>
-              {makeImages(3)}
-            </div>
+            {makeImages(0)}
+            {makeImages(3)}
           </div>
         </div>
       </div>
