@@ -53,3 +53,24 @@ python scripts/datasets/cleaning/compress_tracks.py -i /media/dherrera/Elephants
 
 # Linux tips
 `Ctrl-R` in the terminal searches for past commands. Very useful to not type everything from scratch.
+
+# Systemd commands
+These commands allow us to write programs in the background without needing to be logged in the machine.
+```
+systemd-run --user -u <svc_name> <cmd>
+systemctl status --user <svc_name>
+systemctl stop --user <svc_name>
+
+# Show logs in console
+journalctl --user -u <svc_name>
+
+# Dump logs to text file
+journalctl --user --no-tail -u <svc_name> > log.txt
+```
+An example to run the tracker in the background:
+```
+systemd-run --user -u zoo_vision_svc bash /home/dherrera/git/zoo_vision/build/RelWithDebInfo/run_zoo_vision.sh
+systemctl status --user zoo_vision_svc
+journalctl --user -u zoo_vision_svc
+```
+

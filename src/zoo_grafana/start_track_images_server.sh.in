@@ -1,0 +1,4 @@
+cd ${CMAKE_SOURCE_DIR}
+source ${CMAKE_SOURCE_DIR}/activate_ros.sh
+cd src/zoo_grafana/zoo_dashboard_server
+waitress-serve --port 5000 --call zoo_dashboard_server:create_app

@@ -28,3 +28,4 @@ add_dependencies(_cargo-build_zoo_vision_rs  zoo_msgs)
 # target_link_libraries(zoo_vision_rs INTERFACE zoo_msgs)
 
 add_subdirectory(src/zoo_vision)
+add_subdirectory(src/zoo_grafana)
