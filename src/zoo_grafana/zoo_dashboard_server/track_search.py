@@ -25,6 +25,16 @@ def get_day_path(track_root_path: Path, camera: str, timestamp: datetime) -> Pat
     return track_root_path / camera / timestamp.strftime("%Y-%m-%d")
 
 
+def get_video_path(csv_path: Path) -> Path:
+    path = csv_path.with_suffix(".mkv")
+    if path.exists():
+        return path
+    path = csv_path.with_suffix(".mp4")
+    if path.exists():
+        return path
+    raise RuntimeError(f"Video for track {csv_path} does not exist on disk.")
+
+
 def read_track_ranges(path: Path) -> DayData:
     data = DayData([], [], [], [])
     for f in sorted(path.glob("*.csv")):
@@ -70,7 +80,7 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
         video_frameid = ind - 1
 
         # Open the actual video and skip to desired frame
-        video_path = day_data.csv_paths[i].with_suffix(".mkv")
+        video_path = get_video_path(day_data.csv_paths[i])
         video = cv2.VideoCapture(str(video_path))
         video.set(cv2.CAP_PROP_POS_FRAMES, video_frameid)
         ok, image = video.read()
