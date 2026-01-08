@@ -86,11 +86,11 @@
   "rerun_config": {
     "low_res": false,
     "save_to_disk": false,
-    "recording_filename": "/media/dherrera/ElephantsWD/elephants/rerun_recordings/new/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
+    "recording_filename": "/media/ElephantsWD/elephants/rerun_recordings/new/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
     "max_seconds_per_recording": 1800
   },
   "video_root": "/mnt/camera_nas",
-  "record_root": "/media/dherrera/ElephantsWD/elephants/bytetrack",
+  "record_root": "/media/ElephantsWD/elephants/xmas_h265",
   "record_detection_loss": false,
   "record_keyframes": false,
   "record_tracks": true,
@@ -100,7 +100,7 @@
   "skip_frame_count": 4,
   "track_crf": 23,
   "live_stream": false,
-  "video_db": "/media/dherrera/ElephantsWD/elephants/bytetrack/video_db.json",
+  "video_db": "/media/ElephantsWD/elephants/bytetrack/video_db.json",
   "videos": [],
   "replay_time": "2025-01-25T05:00:29",
   "enabled_cameras": [
