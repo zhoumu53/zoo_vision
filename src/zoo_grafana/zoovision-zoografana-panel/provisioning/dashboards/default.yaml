@@ -1,0 +1,7 @@
+apiVersion: 1
+
+providers:
+  - name: 'zoo_grafana'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

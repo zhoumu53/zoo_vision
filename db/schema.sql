@@ -22,7 +22,7 @@ INSERT INTO identities(id, name)
 	(0, 'Invalid'),
 	(1, 'Chandra'),
 	(2, 'Indi'),
-	(3, 'Fahra'),
+	(3, 'Farha'),
 	(4, 'Panang'),
 	(5, 'Thai');
 
@@ -87,6 +87,7 @@ CREATE TABLE summary_per_visibility (
 CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
 GRANT INSERT ON tracks,observations,summary_per_behaviour,summary_per_visibility TO zoo_vision;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO zoo_vision;
 
 CREATE USER grafanareader WITH PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO grafanareader;
