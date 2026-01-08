@@ -4,8 +4,8 @@ import { ZooTracksOptions } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
+const NO_IMAGE_JPG = require('../img/no_image.jpg');
 
-const ZOO_DASHBOARD_SERVER = "127.0.0.1:5000";
 const DEFAULT_TIMESTAMP_MS = 1742096040000;
 const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
 
@@ -50,23 +50,37 @@ const getStyles = () => {
   };
 };
 
-function buildTrackImagesUrl(cameraName: string, timestamp_ms: number): string {
+function buildTrackImagesUrl(track_images_url: string, cameraName: string, timestamp_ms: number): string {
   const timestamp_s = timestamp_ms / 1000;
   const utcOffset_s = new Date().getTimezoneOffset() * 60;
   const timestampUtc_s = timestamp_s + utcOffset_s;
-  return `http://${ZOO_DASHBOARD_SERVER}/track_images?camera=${cameraName}&timestamp=${timestampUtc_s}`;
+  return `${track_images_url}?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
-async function fetchImages(cameraName: string, timestamp_ms: number, setCurrentTimestamp: any, setState: (state: any) => void) {
-  const data = await fetch(buildTrackImagesUrl(cameraName, timestamp_ms));
-  const dataJson = await data.json();
-  setCurrentTimestamp(dataJson["timestamp"])
-  setState(dataJson["images"])
+async function fetchImages(url: string, setCurrentTimestamp: any, setState: (state: any) => void) {
+  let image_src = [""];
+  let server_timestamp = "";
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(response.statusText);
+    }
+    const dataJson = await response.json();
+    server_timestamp = dataJson["timestamp"];
+    image_src = dataJson["images"].map((jpg_data: string) => `data:image/jpeg;base64,${jpg_data}`);
+  } catch (e) {
+    console.log("Error fetching %s: %s", url, e);
+    server_timestamp = "n/a"
+    image_src = [NO_IMAGE_JPG];
+  }
+  setCurrentTimestamp(server_timestamp)
+  setState(image_src);
 }
 
-async function changeTimestamp(timestamp_ms: number, setCurrentTimestamp: any, cameraSetState: any) {
+async function changeTimestamp(track_images_url: string, timestamp_ms: number, setCurrentTimestamp: any, cameraSetState: any) {
   for (const index in CAMERAS) {
-    fetchImages(CAMERAS[index], timestamp_ms, setCurrentTimestamp, cameraSetState[index]);
+    const url = buildTrackImagesUrl(track_images_url, CAMERAS[index], timestamp_ms);
+    fetchImages(url, setCurrentTimestamp, cameraSetState[index]);
   }
 }
 
@@ -82,7 +96,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
   const cameraSetState = [imagesSetState0, imagesSetState1, imagesSetState2, imagesSetState3];
 
   if (currentTimestamp === "") {
-    changeTimestamp(DEFAULT_TIMESTAMP_MS, setCurrentTimestamp, cameraSetState);
+    changeTimestamp(options.track_images_url, DEFAULT_TIMESTAMP_MS, setCurrentTimestamp, cameraSetState);
   }
 
   useEffect(() => {
@@ -94,7 +108,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       if (timestamp_ms == null) {
         return;
       }
-      changeTimestamp(timestamp_ms, setCurrentTimestamp, cameraSetState);
+      changeTimestamp(options.track_images_url, timestamp_ms, setCurrentTimestamp, cameraSetState);
     });
 
     return () => {
@@ -107,8 +121,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       <div>{CAMERAS[cameraIndex]}</div>
       <div className={cx(styles.trackImageContainer)}>
         {cameraImages[cameraIndex].map((value, index) =>
-          <div className={cx(styles.trackImageDiv)}>
-            <img key={index} src={`data:image/jpeg;base64,${value}`} className={cx(styles.trackImage)} />
+          <div key={index} className={cx(styles.trackImageDiv)}>
+            <img src={value} className={cx(styles.trackImage)} />
           </div>
         )}
       </div>

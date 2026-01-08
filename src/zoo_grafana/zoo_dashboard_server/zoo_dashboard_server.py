@@ -7,9 +7,11 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 
 """
 
-from .track_search import *
+from project_root import PROJECT_ROOT
+from track_search import *
 
 import io
+import json
 from base64 import encodebytes
 from PIL import Image
 from flask import Flask, request, jsonify, send_file
@@ -41,6 +43,14 @@ def read_track_ranges_cached(path: Path) -> DayData:
     return read_track_ranges(path)
 
 
+@cache.memoize(30 * 60)
+def get_config():
+    config_path = PROJECT_ROOT / "data" / "config.json"
+    with config_path.open() as f:
+        config = json.load(f)
+    return config
+
+
 def parse_timestamp() -> datetime:
     timestamp_str = request.args.get("timestamp", "2025-03-16 00:53:59")
     if ":" in timestamp_str:
@@ -66,13 +76,15 @@ def parse_timestamp() -> datetime:
 
 
 def track_images(camera: str, timestamp: datetime):
+    config = get_config()
+    track_root_path = Path(config["record_root"]) / "tracks"
 
     # Get images from previous, current, and next days
     # to avoid any time zone issues.
     images = []
     for offset in [-1, 0, +1]:
         timeoffset = timestamp + timedelta(days=offset)
-        day_path = get_day_path(camera, timeoffset)
+        day_path = get_day_path(track_root_path, camera, timeoffset)
         day_data = read_track_ranges_cached(day_path)
         images_i = find_track_images(day_data, timestamp)
         images.extend(images_i)
@@ -113,3 +125,11 @@ def test_track_image_get():
     image_pil.save(raw_bytes, "JPEG")
     raw_bytes.seek(0)
     return send_file(raw_bytes, mimetype="image/jpg")
+
+
+def create_app() -> Flask:
+    """
+    Used to call from command line:
+        waitress-serve --port 5000 --call zoo_dashboard_server:create_app
+    """
+    return app

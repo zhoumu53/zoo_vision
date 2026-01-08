@@ -6,13 +6,10 @@ import numpy as np
 import bisect
 from dataclasses import dataclass
 import cv2
-import pytz
+
 
 logger = logging.getLogger(__name__)
 
-ROOT_FOLDER = Path("/data/xmas/tracks")
-# CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"]
-CAMERAS = ["zag_elp_cam_016"]
 MAX_DISTANCE_SEC = 5
 
 
@@ -24,8 +21,8 @@ class DayData:
     frame_timestamps: list[pd.Series]
 
 
-def get_day_path(camera: str, timestamp: datetime) -> Path:
-    return ROOT_FOLDER / camera / timestamp.strftime("%Y-%m-%d")
+def get_day_path(track_root_path: Path, camera: str, timestamp: datetime) -> Path:
+    return track_root_path / camera / timestamp.strftime("%Y-%m-%d")
 
 
 def read_track_ranges(path: Path) -> DayData:
