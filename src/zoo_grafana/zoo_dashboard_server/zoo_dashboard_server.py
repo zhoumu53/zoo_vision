@@ -52,26 +52,28 @@ def get_config():
 
 
 def parse_timestamp() -> datetime:
-    timestamp_str = request.args.get("timestamp", "2025-03-16 00:53:59")
+    # Server is en zurich so we want all dates in this timezone
+    tz = pytz.timezone("Europe/Zurich")
+
+    timestamp_str = request.args.get("timestamp", "2025-02-09T20:56:00")
     if ":" in timestamp_str:
-        timestamp = dateutil.parser.parse(timestamp_str)
+        all_tzinfos = {x: pytz.timezone(x) for x in pytz.all_timezones}
+        timestamp = dateutil.parser.parse(timestamp_str, tzinfos=all_tzinfos)
 
-        ##### THIS IS NOT USED. Timezones are a mess ####
-        # all_tzinfos = {x: pytz.timezone(x) for x in pytz.all_timezones}
-        # timestamp = dateutil.parser.parse(timestamp_str, tzinfos=all_tzinfos)
-
-        # Assume date is in swiss timezone if no timezone is given
-        # if timestamp.tzinfo is None:
-        #     tz = pytz.timezone("Europe/Zurich")
-        #     timestamp = tz.localize(timestamp, is_dst=False)
-
-        # Drop the timezone offset by moving to utc
-        # We want to use all timestamps as utc
-        # timestamp = timestamp.astimezone(pytz.utc)
-        #########
+        if timestamp.tzinfo is None:
+            # Assume date is in swiss timezone if no timezone is given
+            timestamp = tz.localize(timestamp, is_dst=False)
+        else:
+            # Convert to zurich timezone
+            timestamp = timestamp.astimezone(tz)
     else:
         timestamp_s = float(timestamp_str)
         timestamp = datetime.fromtimestamp(timestamp_s)
+        # Assume a numeric date is in utc
+        timestamp = pytz.utc.localize(timestamp, is_dst=False)
+        # Convert to zurich timezone
+        timestamp = timestamp.astimezone(tz)
+
     return timestamp
 
 
@@ -103,7 +105,7 @@ def track_images_get():
     # Return json with all images for this camera
     return jsonify(
         {
-            "timestamp": timestamp,
+            "timestamp": timestamp.strftime("%a, %d %b %Y %H:%M:%S %Z"),
             "timestamp2": timestamp.timestamp(),
             "images": images_base64,
         }

@@ -6,7 +6,7 @@ import numpy as np
 import bisect
 from dataclasses import dataclass
 import cv2
-
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,10 @@ def read_track_ranges(path: Path) -> DayData:
             parse_dates=["timestamp"],
         )
         ds_timestamps = df_timestamps["timestamp"]
+
+        # All server data is stored in CET timezone
+        # FIXME: we should store timezone in the timestamp itself
+        ds_timestamps = ds_timestamps.dt.tz_localize(pytz.timezone("Europe/Zurich"))
 
         data.csv_paths.append(f)
         data.frame_timestamps.append(ds_timestamps)
