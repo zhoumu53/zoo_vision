@@ -64,6 +64,7 @@ private:
 
   int skipFrameCount_;
   Clock::time_point replayNow_;
+  std::filesystem::path videoRootPath_;
 
   std::unordered_map<std::string, CameraData> cameras_;
 
