@@ -42,19 +42,25 @@ const getStyles = () => {
       border-width: thin;
       border-color: gray;
     `,
-    trackImage: css`
+    fillImage: css`
       width: 100%;
-      height: 100%;
     `,
 
   };
 };
 
-function buildTrackImagesUrl(track_images_url: string, cameraName: string, timestamp_ms: number): string {
+function buildTrackImagesUrl(track_images_server: string, cameraName: string, timestamp_ms: number): string {
   const timestamp_s = timestamp_ms / 1000;
   const utcOffset_s = new Date().getTimezoneOffset() * 60;
   const timestampUtc_s = timestamp_s + utcOffset_s;
-  return `${track_images_url}?camera=${cameraName}&timestamp=${timestampUtc_s}`;
+  return `${track_images_server}/track_images?camera=${cameraName}&timestamp=${timestampUtc_s}`;
+}
+
+function buildCameraImageUrl(track_images_server: string, cameraName: string, timestamp_ms: number): string {
+  const timestamp_s = timestamp_ms / 1000;
+  const utcOffset_s = new Date().getTimezoneOffset() * 60;
+  const timestampUtc_s = timestamp_s + utcOffset_s;
+  return `${track_images_server}/camera_image?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
 async function fetchImages(url: string, setCurrentTimestamp: any, setState: (state: any) => void) {
@@ -77,26 +83,35 @@ async function fetchImages(url: string, setCurrentTimestamp: any, setState: (sta
   setState(image_src);
 }
 
-async function changeTimestamp(track_images_url: string, timestamp_ms: number, setCurrentTimestamp: any, cameraSetState: any) {
+async function changeTimestamp(track_images_server: string, timestamp_ms: number, setCurrentTimestamp: any, cameraSetState: any, cameraImagesSetState: any) {
   for (const index in CAMERAS) {
-    const url = buildTrackImagesUrl(track_images_url, CAMERAS[index], timestamp_ms);
+    const url = buildTrackImagesUrl(track_images_server, CAMERAS[index], timestamp_ms);
     fetchImages(url, setCurrentTimestamp, cameraSetState[index]);
+    cameraImagesSetState[index](buildCameraImageUrl(track_images_server, CAMERAS[index], timestamp_ms));
   }
 }
 
 export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id }) => {
   const styles = useStyles2(getStyles);
 
-  const [currentTimestamp, setCurrentTimestamp] = useState<string>("");
-  const [imagesCamera0, imagesSetState0] = useState<string[]>([]);
-  const [imagesCamera1, imagesSetState1] = useState<string[]>([]);
-  const [imagesCamera2, imagesSetState2] = useState<string[]>([]);
-  const [imagesCamera3, imagesSetState3] = useState<string[]>([]);
-  const cameraImages = [imagesCamera0, imagesCamera1, imagesCamera2, imagesCamera3];
-  const cameraSetState = [imagesSetState0, imagesSetState1, imagesSetState2, imagesSetState3];
+  const [currentTimestamp, setCurrentTimestamp] = useState<string>("DEFAULT");
+  const [trackImages0, trackImagesSetState0] = useState<string[]>([]);
+  const [trackImages1, trackImagesSetState1] = useState<string[]>([]);
+  const [trackImages2, trackImagesSetState2] = useState<string[]>([]);
+  const [trackImages3, trackImagesSetState3] = useState<string[]>([]);
+  const trackImages = [trackImages0, trackImages1, trackImages2, trackImages3];
+  const trackImagesSetState = [trackImagesSetState0, trackImagesSetState1, trackImagesSetState2, trackImagesSetState3];
 
-  if (currentTimestamp === "") {
-    changeTimestamp(options.track_images_url, DEFAULT_TIMESTAMP_MS, setCurrentTimestamp, cameraSetState);
+  const [cameraImage0, cameraImageSetState0] = useState<string>("");
+  const [cameraImage1, cameraImageSetState1] = useState<string>("");
+  const [cameraImage2, cameraImageSetState2] = useState<string>("");
+  const [cameraImage3, cameraImageSetState3] = useState<string>("");
+  const cameraImages = [cameraImage0, cameraImage1, cameraImage2, cameraImage3];
+  const cameraImagesSetState = [cameraImageSetState0, cameraImageSetState1, cameraImageSetState2, cameraImageSetState3];
+
+  if (currentTimestamp === "DEFAULT") {
+    setCurrentTimestamp("");
+    changeTimestamp(options.track_images_server, DEFAULT_TIMESTAMP_MS, setCurrentTimestamp, trackImagesSetState, cameraImagesSetState);
   }
 
   useEffect(() => {
@@ -108,7 +123,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       if (timestamp_ms == null) {
         return;
       }
-      changeTimestamp(options.track_images_url, timestamp_ms, setCurrentTimestamp, cameraSetState);
+      changeTimestamp(options.track_images_server, timestamp_ms, setCurrentTimestamp, trackImagesSetState, cameraImagesSetState);
     });
 
     return () => {
@@ -119,13 +134,16 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
   const makeImages = (cameraIndex: number) => {
     return <div className={cx(styles.cameraBlock)}>
       <div>{CAMERAS[cameraIndex]}</div>
+      <div>Tracks</div>
       <div className={cx(styles.trackImageContainer)}>
-        {cameraImages[cameraIndex].map((value, index) =>
+        {trackImages[cameraIndex].map((value, index) =>
           <div key={index} className={cx(styles.trackImageDiv)}>
-            <img src={value} className={cx(styles.trackImage)} />
+            <img src={value} className={cx(styles.fillImage)} />
           </div>
         )}
       </div>
+      <div>Source</div>
+      <img src={cameraImages[cameraIndex]} className={cx(styles.fillImage)} />
     </div>
   };
 

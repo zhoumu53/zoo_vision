@@ -9,6 +9,7 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 
 from project_root import PROJECT_ROOT
 from track_search import *
+from camera_images import find_camera_image
 
 import io
 import json
@@ -20,6 +21,8 @@ from flask_caching import Cache
 from datetime import datetime, timedelta
 import dateutil
 
+DEFAULT_TIMESTAMP = "2025-02-09T20:56:00"
+
 config = {
     "CACHE_TYPE": "SimpleCache",  # Flask-Caching related configs
     "CACHE_DEFAULT_TIMEOUT": 300,
@@ -30,12 +33,24 @@ CORS(app)
 cache = Cache(app)
 
 
-def compress_and_encode(image: Image.Image):
+################################################
+# Image utils
+
+
+def compress_jpeg(image: Image.Image) -> io.BytesIO:
     byte_arr = io.BytesIO()
     image.save(byte_arr, format="JPEG")  # convert the PIL image to byte array
     byte_arr.seek(0)
+    return byte_arr
+
+
+def encode_base64(byte_arr: io.BytesIO) -> str:
     encoded_img = encodebytes(byte_arr.getvalue()).decode("ascii")  # encode as base64
     return encoded_img
+
+
+################################################
+# Track images
 
 
 @cache.memoize(30 * 60)
@@ -51,11 +66,10 @@ def get_config():
     return config
 
 
-def parse_timestamp() -> datetime:
+def parse_timestamp(timestamp_str: str) -> datetime:
     # Server is en zurich so we want all dates in this timezone
     tz = pytz.timezone("Europe/Zurich")
 
-    timestamp_str = request.args.get("timestamp", "2025-02-09T20:56:00")
     if ":" in timestamp_str:
         all_tzinfos = {x: pytz.timezone(x) for x in pytz.all_timezones}
         timestamp = dateutil.parser.parse(timestamp_str, tzinfos=all_tzinfos)
@@ -97,11 +111,13 @@ def track_images(camera: str, timestamp: datetime):
 @app.route("/track_images", methods=["GET"])
 def track_images_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
-    timestamp = parse_timestamp()
+    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
     images = track_images(camera, timestamp)
 
     # Compress and encode
-    images_base64 = [compress_and_encode(Image.fromarray(image)) for image in images]
+    images_base64 = [
+        encode_base64(compress_jpeg(Image.fromarray(image))) for image in images
+    ]
     # Return json with all images for this camera
     return jsonify(
         {
@@ -115,17 +131,49 @@ def track_images_get():
 @app.route("/test_track_image", methods=["GET"])
 def test_track_image_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
-    timestamp = parse_timestamp()
+    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
     images = track_images(camera, timestamp)
 
     if len(images) == 0:
         return send_file("static/no_image.jpg")
 
     # Compress and return
-    image_pil = Image.fromarray(images[0])
-    raw_bytes = io.BytesIO()
-    image_pil.save(raw_bytes, "JPEG")
-    raw_bytes.seek(0)
+    raw_bytes = compress_jpeg(Image.fromarray(images[0]))
+    return send_file(raw_bytes, mimetype="image/jpg")
+
+
+################################################
+# Camera images
+
+
+@cache.memoize(30 * 60)
+def get_video_db():
+    config = get_config()
+    video_db_file = Path(config["video_db"])
+    with video_db_file.open() as fd:
+        video_db = json.load(fd)
+    return video_db
+
+
+def camera_image(camera: str, timestamp: datetime):
+    config = get_config()
+    if "video_root" in config and config["video_root"] != "":
+        video_root = Path(config["video_root"])
+    else:
+        video_root = Path(config["video_db"]).parent
+
+    return find_camera_image(get_video_db(), video_root, camera, timestamp)
+
+
+@app.route("/camera_image", methods=["GET"])
+def camera_image_get():
+    camera = request.args.get("camera", "zag_elp_cam_016")
+    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+    image = camera_image(camera, timestamp)
+    if image is None:
+        return send_file("static/no_image.jpg")
+
+    raw_bytes = compress_jpeg(Image.fromarray(image))
     return send_file(raw_bytes, mimetype="image/jpg")
 
 
