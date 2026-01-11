@@ -18,7 +18,19 @@ class DayData:
     csv_paths: list[Path]
     start_timestamps: list[datetime]
     end_timestamps: list[datetime]
-    frame_timestamps: list[pd.Series]
+    csv_data: list[pd.DataFrame]
+
+
+@dataclass
+class Detection:
+    timestamp: datetime
+    image: np.ndarray
+    bbox_tlbr: tuple[int, int, int, int]
+    color: str
+    identity_id: int
+    identity_name: str
+    behaviour_id: int
+    behaviour_name: str
 
 
 def get_day_path(track_root_path: Path, camera: str, timestamp: datetime) -> Path:
@@ -44,21 +56,21 @@ def read_track_ranges(path: Path) -> DayData:
             usecols=["timestamp"],
             parse_dates=["timestamp"],
         )
-        ds_timestamps = df_timestamps["timestamp"]
-
         # All server data is stored in CET timezone
         # FIXME: we should store timezone in the timestamp itself
-        ds_timestamps = ds_timestamps.dt.tz_localize(pytz.timezone("Europe/Zurich"))
+        df_timestamps["timestamp"] = df_timestamps["timestamp"].dt.tz_localize(
+            pytz.timezone("Europe/Zurich")
+        )
 
         data.csv_paths.append(f)
-        data.frame_timestamps.append(ds_timestamps)
-        data.start_timestamps.append(ds_timestamps.iloc[0])
-        data.end_timestamps.append(ds_timestamps.iloc[-1])
+        data.csv_data.append(df_timestamps)
+        data.start_timestamps.append(df_timestamps["timestamp"].iloc[0])
+        data.end_timestamps.append(df_timestamps["timestamp"].iloc[-1])
 
     return data
 
 
-def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray]:
+def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]:
     images = []
     count = len(day_data.start_timestamps)
     for i in range(count):
@@ -72,7 +84,8 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
             # Timestamp is not in the range, skip
             continue
 
-        frame_timestamps = day_data.frame_timestamps[i]
+        csv_data = day_data.csv_data[i]
+        frame_timestamps = csv_data["timestamp"]
         ind = bisect.bisect_right(frame_timestamps.to_list(), timestamp)
         if ind == 0:
             continue
@@ -82,6 +95,8 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
             continue
 
         video_frameid = ind - 1
+
+        # Open the csv to read info
 
         # Open the actual video and skip to desired frame
         video_path = get_video_path(day_data.csv_paths[i])
@@ -94,5 +109,16 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
             )
             continue
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        images.append(image)
+        images.append(
+            Detection(
+                timestamp=video_timestamp,
+                image=image,
+                bbox_tlbr=(0, 0, 0, 0),
+                color="",
+                identity_id=0,
+                identity_name="",
+                behaviour_id=0,
+                behaviour_name="",
+            )
+        )
     return images

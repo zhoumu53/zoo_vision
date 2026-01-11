@@ -10,6 +10,7 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 from project_root import PROJECT_ROOT
 from track_search import *
 from camera_images import find_camera_image
+from dataclasses import asdict
 
 import io
 import json
@@ -21,6 +22,7 @@ from flask_caching import Cache
 from datetime import datetime, timedelta
 import dateutil
 
+DEFAULT_CAMERA = "zag_elp_cam_016"
 DEFAULT_TIMESTAMP = "2025-02-09T20:56:00"
 
 config = {
@@ -45,7 +47,9 @@ def compress_jpeg(image: Image.Image) -> io.BytesIO:
 
 
 def encode_base64(byte_arr: io.BytesIO) -> str:
-    encoded_img = encodebytes(byte_arr.getvalue()).decode("ascii")  # encode as base64
+    encoded_img = "data:image/jpeg;base64," + encodebytes(byte_arr.getvalue()).decode(
+        "ascii"
+    )
     return encoded_img
 
 
@@ -91,39 +95,43 @@ def parse_timestamp(timestamp_str: str) -> datetime:
     return timestamp
 
 
-def track_images(camera: str, timestamp: datetime):
+def track_images(camera: str, timestamp: datetime) -> list[Detection]:
     config = get_config()
     track_root_path = Path(config["record_root"]) / "tracks"
 
     # Get images from previous, current, and next days
     # to avoid any time zone issues.
-    images = []
+    detections = []
     for offset in [-1, 0, +1]:
         timeoffset = timestamp + timedelta(days=offset)
         day_path = get_day_path(track_root_path, camera, timeoffset)
         day_data = read_track_ranges_cached(day_path)
-        images_i = find_track_images(day_data, timestamp)
-        images.extend(images_i)
+        detections_i = find_track_images(day_data, timestamp)
+        detections.extend(detections_i)
 
-    return images
+    return detections
 
 
 @app.route("/track_images", methods=["GET"])
 def track_images_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
-    images = track_images(camera, timestamp)
+    detections = track_images(camera, timestamp)
 
-    # Compress and encode
-    images_base64 = [
-        encode_base64(compress_jpeg(Image.fromarray(image))) for image in images
-    ]
+    detections = [asdict(x) for x in detections]
+
+    # Compress and encode images
+    for detection in detections:
+        detection["image"] = encode_base64(
+            compress_jpeg(Image.fromarray(detection["image"]))
+        )
+
     # Return json with all images for this camera
     return jsonify(
         {
             "timestamp": timestamp.strftime("%a, %d %b %Y %H:%M:%S %Z"),
             "timestamp2": timestamp.timestamp(),
-            "images": images_base64,
+            "detections": detections,
         }
     )
 
@@ -132,13 +140,13 @@ def track_images_get():
 def test_track_image_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
-    images = track_images(camera, timestamp)
+    detections = track_images(camera, timestamp)
 
-    if len(images) == 0:
+    if len(detections) == 0:
         return send_file("static/no_image.jpg")
 
     # Compress and return
-    raw_bytes = compress_jpeg(Image.fromarray(images[0]))
+    raw_bytes = compress_jpeg(Image.fromarray(detections[0].image))
     return send_file(raw_bytes, mimetype="image/jpg")
 
 
@@ -162,18 +170,36 @@ def camera_image(camera: str, timestamp: datetime):
     else:
         video_root = Path(config["video_db"]).parent
 
-    return find_camera_image(get_video_db(), video_root, camera, timestamp)
+    image = find_camera_image(get_video_db(), video_root, camera, timestamp)
+    if image is None:
+        with open("static/no_image.jpg", "rb") as f:
+            raw_bytes = io.BytesIO(f.read())
+    else:
+        raw_bytes = compress_jpeg(Image.fromarray(image))
+    return raw_bytes
 
 
 @app.route("/camera_image", methods=["GET"])
 def camera_image_get():
-    camera = request.args.get("camera", "zag_elp_cam_016")
+    camera = request.args.get("camera", DEFAULT_CAMERA)
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
-    image = camera_image(camera, timestamp)
-    if image is None:
-        return send_file("static/no_image.jpg")
+    raw_bytes = camera_image(camera, timestamp)
 
-    raw_bytes = compress_jpeg(Image.fromarray(image))
+    return jsonify(
+        {
+            "timestamp": timestamp.strftime("%a, %d %b %Y %H:%M:%S %Z"),
+            "timestamp2": timestamp.timestamp(),
+            "image": encode_base64(raw_bytes),
+        }
+    )
+
+
+@app.route("/test_camera_image", methods=["GET"])
+def test_camera_image_get():
+    camera = request.args.get("camera", DEFAULT_CAMERA)
+    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+    raw_bytes = camera_image(camera, timestamp)
+
     return send_file(raw_bytes, mimetype="image/jpg")
 
 
