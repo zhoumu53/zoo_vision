@@ -14,7 +14,7 @@ interface Props extends PanelProps<ZooTracksOptions> { }
 interface Detection {
   timestamp: string;
   image: string;
-  bbox_tlbr: number[];
+  bbox_tlhw: number[];
   color: string;
   identity_id: number;
   identity_name: string;
@@ -84,6 +84,13 @@ const getStyles = () => {
       display: flex;
       justify-content: center;
       align-items: center;
+    `,
+    bbox: css`
+      z-index: 99998;
+      position: absolute;
+      border: 1px solid;
+      border-color: #FF0000FF;
+      background-color: #00000000;
     `
   };
 };
@@ -218,15 +225,23 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)} >Loading</div>
 
-        {trackImages[cameraIndex].detections.map((value, index) =>
+        {trackImages[cameraIndex].detections.map((detection, index) =>
           <div key={index} className={cx(styles.trackImageDiv)}>
-            <img src={value.image} className={cx(styles.trackImage)} />
+            <img src={detection.image} className={cx(styles.trackImage)} />
           </div>
         )}
       </div>
       <div>Source</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)}>Loading</div>
+        {trackImages[cameraIndex].detections.map((detection, index) =>
+          <div key={index} className={cx(styles.bbox)} style={{
+            top: `${detection.bbox_tlhw[0] * 100}%`,
+            left: `${detection.bbox_tlhw[1] * 100}% `,
+            height: `${detection.bbox_tlhw[2] * 100}% `,
+            width: `${detection.bbox_tlhw[3] * 100}% `
+          }} />
+        )}
         <img src={cameraImages[cameraIndex].image} className={cx(styles.fillImage)} />
       </div>
     </div>
@@ -237,9 +252,9 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       className={cx(
         styles.wrapper,
         css`
-          width: ${width}px;
-          height: ${height}px;
-          overflow: auto;
+          width:${width} px;
+        height: ${height}px;
+        overflow: auto;
         `
       )}
     >

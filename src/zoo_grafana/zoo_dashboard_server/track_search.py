@@ -23,9 +23,10 @@ class DayData:
 
 @dataclass
 class Detection:
+    csv_path: str
     timestamp: datetime
     image: np.ndarray
-    bbox_tlbr: tuple[int, int, int, int]
+    bbox_tlhw: tuple[int, int, int, int]
     color: str
     identity_id: int
     identity_name: str
@@ -53,7 +54,7 @@ def read_track_ranges(path: Path) -> DayData:
         # Read track details
         df_timestamps = pd.read_csv(
             f,
-            usecols=["timestamp"],
+            usecols=["timestamp", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"],
             parse_dates=["timestamp"],
         )
         # All server data is stored in CET timezone
@@ -89,17 +90,34 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]
         ind = bisect.bisect_right(frame_timestamps.to_list(), timestamp)
         if ind == 0:
             continue
-        video_timestamp = frame_timestamps[ind - 1]
+        csv_index = ind - 1
+        video_timestamp = frame_timestamps[csv_index]
         distance = abs((video_timestamp - timestamp).total_seconds())
         if distance > MAX_DISTANCE_SEC:
             continue
 
-        video_frameid = ind - 1
+        video_frameid = csv_index
 
-        # Open the csv to read info
+        # Read info from csv
+        width = 1060 / 2688 * 1520
+        height = 600 / 1520 * 2688
+        # TODO: top and left dimensions are flipped in the csv!!!
+        bbox_tlbr = (
+            csv_data["bbox_left"].iloc[csv_index] / width,
+            csv_data["bbox_top"].iloc[csv_index] / height,
+            csv_data["bbox_right"].iloc[csv_index] / width,
+            csv_data["bbox_bottom"].iloc[csv_index] / height,
+        )
+        bbox_tlhw = (
+            bbox_tlbr[0],
+            bbox_tlbr[1],
+            bbox_tlbr[2] - bbox_tlbr[0],
+            bbox_tlbr[3] - bbox_tlbr[1],
+        )
 
         # Open the actual video and skip to desired frame
-        video_path = get_video_path(day_data.csv_paths[i])
+        csv_path = day_data.csv_paths[i]
+        video_path = get_video_path(csv_path)
         video = cv2.VideoCapture(str(video_path))
         video.set(cv2.CAP_PROP_POS_FRAMES, video_frameid)
         ok, image = video.read()
@@ -111,9 +129,10 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         images.append(
             Detection(
+                csv_path=str(csv_path),
                 timestamp=video_timestamp,
                 image=image,
-                bbox_tlbr=(0, 0, 0, 0),
+                bbox_tlhw=bbox_tlhw,
                 color="",
                 identity_id=0,
                 identity_name="",
