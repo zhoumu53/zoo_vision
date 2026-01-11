@@ -99,6 +99,7 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]
         video_frameid = csv_index
 
         # Read info from csv
+        # TODO: top and left dimensions normalized with the wrong values!!!
         width = 1060 / 2688 * 1520
         height = 600 / 1520 * 2688
         # TODO: top and left dimensions are flipped in the csv!!!
