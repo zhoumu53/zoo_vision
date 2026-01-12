@@ -48,7 +48,8 @@ CREATE TABLE tracks (
     start_time      timestamp NOT NULL,
     end_time        timestamp NULL,  	-- Only valid after track is closed
     frame_count     int NULL,			-- Only valid after track is closed
-    identity_id     int NULL REFERENCES identities  -- ...  track is closed
+    identity_id     int NULL REFERENCES identities, -- ...  track is closed
+	track_filename  text NULL
 );
 
 CREATE TABLE identity_probs (
@@ -65,6 +66,8 @@ CREATE TABLE observations (
     behaviour_id	int NOT NULL REFERENCES behaviours,
     PRIMARY KEY (track_id, time)
 );
+CREATE INDEX ON observations (time);
+
 
 --------------------------------------------------------------
 -- Processed

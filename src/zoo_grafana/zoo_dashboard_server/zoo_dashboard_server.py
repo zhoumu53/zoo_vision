@@ -106,7 +106,7 @@ def track_images(camera: str, timestamp: datetime) -> list[Detection]:
         timeoffset = timestamp + timedelta(days=offset)
         day_path = get_day_path(track_root_path, camera, timeoffset)
         day_data = read_track_ranges_cached(day_path)
-        detections_i = find_track_images(day_data, timestamp)
+        detections_i = find_track_images(camera, day_data, timestamp)
         detections.extend(detections_i)
 
     return detections

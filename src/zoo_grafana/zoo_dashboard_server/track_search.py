@@ -5,12 +5,35 @@ import logging
 import numpy as np
 import bisect
 from dataclasses import dataclass
+import psycopg2
 import cv2
 import pytz
 
 logger = logging.getLogger(__name__)
 
 MAX_DISTANCE_SEC = 5
+CAMERA_ID_FROM_NAME = {
+    "zag_elp_cam_016": 0,
+    "zag_elp_cam_017": 1,
+    "zag_elp_cam_018": 2,
+    "zag_elp_cam_019": 3,
+}
+INDIVIDUAL_FROM_ID = {
+    0: "Invalid",
+    1: "Chandra",
+    3: "Farha",
+    2: "Indi",
+    4: "Panang",
+    5: "Thai",
+}
+COLOR_FROM_INDIVIDUAL_ID = {
+    0: "#777777",
+    1: "#73BF69",
+    2: "#F2CC0C",
+    3: "#5794F2",
+    4: "#FF9830",
+    5: "#F2495C",
+}
 
 
 @dataclass
@@ -71,8 +94,10 @@ def read_track_ranges(path: Path) -> DayData:
     return data
 
 
-def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]:
-    images = []
+def find_track_images(
+    camera: str, day_data: DayData, timestamp: datetime
+) -> list[Detection]:
+    detections = []
     count = len(day_data.start_timestamps)
     for i in range(count):
         start = day_data.start_timestamps[i]
@@ -128,7 +153,7 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]
             )
             continue
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        images.append(
+        detections.append(
             Detection(
                 csv_path=str(csv_path),
                 timestamp=video_timestamp,
@@ -141,4 +166,28 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[Detection]
                 behaviour_name="",
             )
         )
-    return images
+    # Query database for the identities
+    if len(detections) > 0:
+        all_tracknames = [Path(d.csv_path).stem for d in detections]
+        all_tracknames_filter = "(" + ",".join([f'"{x}"' for x in all_tracknames]) + ")"
+
+        with psycopg2.connect(
+            "dbname=zoo_vision user=grafanareader password=asdf"
+        ) as db_connection:
+            with db_connection.cursor() as db_cursor:
+                db_cursor.execute(
+                    "SELECT track_filename, identity_id "
+                    "FROM tracks "
+                    "WHERE camera_id=%s AND track_filename IN ("
+                    + ",".join(["%s" for _ in all_tracknames])
+                    + ")",
+                    (CAMERA_ID_FROM_NAME[camera.lower()], *all_tracknames),
+                )
+                results = db_cursor.fetchall()
+                identity_from_stem = {x[0]: x[1] for x in results}
+        for detection, csv_stem in zip(detections, all_tracknames):
+            detection.identity_id = identity_from_stem.get(csv_stem, 0)
+            detection.identity_name = INDIVIDUAL_FROM_ID[detection.identity_id]
+            detection.color = COLOR_FROM_INDIVIDUAL_ID[detection.identity_id]
+
+    return detections

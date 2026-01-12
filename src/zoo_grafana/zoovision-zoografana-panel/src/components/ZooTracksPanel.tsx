@@ -89,7 +89,6 @@ const getStyles = () => {
       z-index: 99998;
       position: absolute;
       border: 1px solid;
-      border-color: #FF0000FF;
       background-color: #00000000;
     `
   };
@@ -239,8 +238,17 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
             top: `${detection.bbox_tlhw[0] * 100}%`,
             left: `${detection.bbox_tlhw[1] * 100}% `,
             height: `${detection.bbox_tlhw[2] * 100}% `,
-            width: `${detection.bbox_tlhw[3] * 100}% `
-          }} />
+            width: `${detection.bbox_tlhw[3] * 100}% `,
+            borderColor: `${detection.color}`,
+          }}>
+            <div style={{
+              position: "absolute",
+              backgroundColor: 'gray',
+              top: '100%'
+            }}>
+              {detection.identity_name}
+            </div>
+          </div>
         )}
         <img src={cameraImages[cameraIndex].image} className={cx(styles.fillImage)} />
       </div>
