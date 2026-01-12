@@ -5,12 +5,35 @@ import logging
 import numpy as np
 import bisect
 from dataclasses import dataclass
+import psycopg2
 import cv2
-
+import pytz
 
 logger = logging.getLogger(__name__)
 
 MAX_DISTANCE_SEC = 5
+CAMERA_ID_FROM_NAME = {
+    "zag_elp_cam_016": 0,
+    "zag_elp_cam_017": 1,
+    "zag_elp_cam_018": 2,
+    "zag_elp_cam_019": 3,
+}
+INDIVIDUAL_FROM_ID = {
+    0: "Invalid",
+    1: "Chandra",
+    3: "Farha",
+    2: "Indi",
+    4: "Panang",
+    5: "Thai",
+}
+COLOR_FROM_INDIVIDUAL_ID = {
+    0: "#777777",
+    1: "#73BF69",
+    2: "#F2CC0C",
+    3: "#5794F2",
+    4: "#FF9830",
+    5: "#F2495C",
+}
 
 
 @dataclass
@@ -18,7 +41,20 @@ class DayData:
     csv_paths: list[Path]
     start_timestamps: list[datetime]
     end_timestamps: list[datetime]
-    frame_timestamps: list[pd.Series]
+    csv_data: list[pd.DataFrame]
+
+
+@dataclass
+class Detection:
+    csv_path: str
+    timestamp: datetime
+    image: np.ndarray
+    bbox_tlhw: tuple[int, int, int, int]
+    color: str
+    identity_id: int
+    identity_name: str
+    behaviour_id: int
+    behaviour_name: str
 
 
 def get_day_path(track_root_path: Path, camera: str, timestamp: datetime) -> Path:
@@ -41,21 +77,27 @@ def read_track_ranges(path: Path) -> DayData:
         # Read track details
         df_timestamps = pd.read_csv(
             f,
-            usecols=["timestamp"],
+            usecols=["timestamp", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"],
             parse_dates=["timestamp"],
         )
-        ds_timestamps = df_timestamps["timestamp"]
+        # All server data is stored in CET timezone
+        # FIXME: we should store timezone in the timestamp itself
+        df_timestamps["timestamp"] = df_timestamps["timestamp"].dt.tz_localize(
+            pytz.timezone("Europe/Zurich")
+        )
 
         data.csv_paths.append(f)
-        data.frame_timestamps.append(ds_timestamps)
-        data.start_timestamps.append(ds_timestamps.iloc[0])
-        data.end_timestamps.append(ds_timestamps.iloc[-1])
+        data.csv_data.append(df_timestamps)
+        data.start_timestamps.append(df_timestamps["timestamp"].iloc[0])
+        data.end_timestamps.append(df_timestamps["timestamp"].iloc[-1])
 
     return data
 
 
-def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray]:
-    images = []
+def find_track_images(
+    camera: str, day_data: DayData, timestamp: datetime
+) -> list[Detection]:
+    detections = []
     count = len(day_data.start_timestamps)
     for i in range(count):
         start = day_data.start_timestamps[i]
@@ -68,19 +110,40 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
             # Timestamp is not in the range, skip
             continue
 
-        frame_timestamps = day_data.frame_timestamps[i]
+        csv_data = day_data.csv_data[i]
+        frame_timestamps = csv_data["timestamp"]
         ind = bisect.bisect_right(frame_timestamps.to_list(), timestamp)
         if ind == 0:
             continue
-        video_timestamp = frame_timestamps[ind - 1]
+        csv_index = ind - 1
+        video_timestamp = frame_timestamps[csv_index]
         distance = abs((video_timestamp - timestamp).total_seconds())
         if distance > MAX_DISTANCE_SEC:
             continue
 
-        video_frameid = ind - 1
+        video_frameid = csv_index
+
+        # Read info from csv
+        # TODO: top and left dimensions normalized with the wrong values!!!
+        width = 1060 / 2688 * 1520
+        height = 600 / 1520 * 2688
+        # TODO: top and left dimensions are flipped in the csv!!!
+        bbox_tlbr = (
+            csv_data["bbox_left"].iloc[csv_index] / width,
+            csv_data["bbox_top"].iloc[csv_index] / height,
+            csv_data["bbox_right"].iloc[csv_index] / width,
+            csv_data["bbox_bottom"].iloc[csv_index] / height,
+        )
+        bbox_tlhw = (
+            bbox_tlbr[0],
+            bbox_tlbr[1],
+            bbox_tlbr[2] - bbox_tlbr[0],
+            bbox_tlbr[3] - bbox_tlbr[1],
+        )
 
         # Open the actual video and skip to desired frame
-        video_path = get_video_path(day_data.csv_paths[i])
+        csv_path = day_data.csv_paths[i]
+        video_path = get_video_path(csv_path)
         video = cv2.VideoCapture(str(video_path))
         video.set(cv2.CAP_PROP_POS_FRAMES, video_frameid)
         ok, image = video.read()
@@ -90,5 +153,41 @@ def find_track_images(day_data: DayData, timestamp: datetime) -> list[np.ndarray
             )
             continue
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        images.append(image)
-    return images
+        detections.append(
+            Detection(
+                csv_path=str(csv_path),
+                timestamp=video_timestamp,
+                image=image,
+                bbox_tlhw=bbox_tlhw,
+                color="",
+                identity_id=0,
+                identity_name="",
+                behaviour_id=0,
+                behaviour_name="",
+            )
+        )
+    # Query database for the identities
+    if len(detections) > 0:
+        all_tracknames = [Path(d.csv_path).stem for d in detections]
+        all_tracknames_filter = "(" + ",".join([f'"{x}"' for x in all_tracknames]) + ")"
+
+        with psycopg2.connect(
+            "dbname=zoo_vision user=grafanareader password=asdf"
+        ) as db_connection:
+            with db_connection.cursor() as db_cursor:
+                db_cursor.execute(
+                    "SELECT track_filename, identity_id "
+                    "FROM tracks "
+                    "WHERE camera_id=%s AND track_filename IN ("
+                    + ",".join(["%s" for _ in all_tracknames])
+                    + ")",
+                    (CAMERA_ID_FROM_NAME[camera.lower()], *all_tracknames),
+                )
+                results = db_cursor.fetchall()
+                identity_from_stem = {x[0]: x[1] for x in results}
+        for detection, csv_stem in zip(detections, all_tracknames):
+            detection.identity_id = identity_from_stem.get(csv_stem, 0)
+            detection.identity_name = INDIVIDUAL_FROM_ID[detection.identity_id]
+            detection.color = COLOR_FROM_INDIVIDUAL_ID[detection.identity_id]
+
+    return detections

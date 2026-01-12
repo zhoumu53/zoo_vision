@@ -50,6 +50,8 @@ void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const
   const auto bbox = track.boxHistory.back();
   const float32_t score = track.scoreHistory.back();
 
+  // TODO: top and left dimensions normalized with the wrong values !!!
+  // TODO: top and left dimensions are flipped in the csv!!!
   fd << frameId << "," << std::format("{0:%Y-%m-%d} {0:%T}", time) << "," << bbox.min()[0] << "," << bbox.min()[1]
      << "," << bbox.max()[0] << "," << bbox.max()[1] << "," << score << "," << worldPosition[0] << ","
      << worldPosition[1] << std::endl;

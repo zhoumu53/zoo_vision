@@ -14,17 +14,18 @@ INSERT INTO cameras(id, name)
 
 CREATE TABLE identities (
     id              int PRIMARY KEY,
-    name            text NOT NULL
+    name            text NOT NULL,
+	color           text NOT NULL
 );
 
-INSERT INTO identities(id, name)
+INSERT INTO identities(id, name, color)
 	VALUES 
-	(0, 'Invalid'),
-	(1, 'Chandra'),
-	(2, 'Indi'),
-	(3, 'Farha'),
-	(4, 'Panang'),
-	(5, 'Thai');
+	(0, 'Invalid', '#777777'),
+	(1, 'Chandra', '#73BF69'),
+	(2, 'Indi', '#F2CC0C'),
+	(3, 'Farha', '#5794F2'),
+	(4, 'Panang', '#FF9830'),
+	(5, 'Thai', '#F2495C');
 
 CREATE TABLE behaviours (
     id              int PRIMARY KEY,
@@ -47,7 +48,8 @@ CREATE TABLE tracks (
     start_time      timestamp NOT NULL,
     end_time        timestamp NULL,  	-- Only valid after track is closed
     frame_count     int NULL,			-- Only valid after track is closed
-    identity_id     int NULL REFERENCES identities  -- ...  track is closed
+    identity_id     int NULL REFERENCES identities, -- ...  track is closed
+	track_filename  text NULL
 );
 
 CREATE TABLE identity_probs (
@@ -64,6 +66,8 @@ CREATE TABLE observations (
     behaviour_id	int NOT NULL REFERENCES behaviours,
     PRIMARY KEY (track_id, time)
 );
+CREATE INDEX ON observations (time);
+
 
 --------------------------------------------------------------
 -- Processed
