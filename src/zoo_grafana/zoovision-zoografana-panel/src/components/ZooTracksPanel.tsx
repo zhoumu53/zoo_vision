@@ -139,7 +139,7 @@ async function fetchCameraImages(url: string, abortSignal: any, setState: (state
       throw new Error(response.statusText);
     }
     const dataJson = await response.json();
-    new_state = { isLoading: true, image: dataJson["image"] };
+    new_state = { isLoading: false, image: dataJson["image"] };
   } catch (err: any) {
     if (err.name === "AbortError") {
       return;
@@ -227,6 +227,14 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         {trackImages[cameraIndex].detections.map((detection, index) =>
           <div key={index} className={cx(styles.trackImageDiv)}>
             <img src={detection.image} className={cx(styles.trackImage)} />
+            <div style={{
+              position: "absolute",
+              backgroundColor: 'black',
+              color: detection.color,
+              bottom: '0%'
+            }}>
+              {detection.identity_name}
+            </div>
           </div>
         )}
       </div>
@@ -243,7 +251,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           }}>
             <div style={{
               position: "absolute",
-              backgroundColor: 'gray',
+              backgroundColor: 'black',
+              color: detection.color,
               top: '100%'
             }}>
               {detection.identity_name}

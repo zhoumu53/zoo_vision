@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import psycopg2
 import cv2
 import pytz
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def read_track_ranges(path: Path) -> DayData:
     return data
 
 
-def find_track_images(
+async def find_track_images(
     camera: str, day_data: DayData, timestamp: datetime
 ) -> list[Detection]:
     detections = []
@@ -169,7 +170,6 @@ def find_track_images(
     # Query database for the identities
     if len(detections) > 0:
         all_tracknames = [Path(d.csv_path).stem for d in detections]
-        all_tracknames_filter = "(" + ",".join([f'"{x}"' for x in all_tracknames]) + ")"
 
         with psycopg2.connect(
             "dbname=zoo_vision user=grafanareader password=asdf"
@@ -177,8 +177,8 @@ def find_track_images(
             with db_connection.cursor() as db_cursor:
                 db_cursor.execute(
                     "SELECT track_filename, identity_id "
-                    "FROM tracks "
-                    "WHERE camera_id=%s AND track_filename IN ("
+                    + "FROM tracks "
+                    + "WHERE camera_id=%s AND track_filename IN ("
                     + ",".join(["%s" for _ in all_tracknames])
                     + ")",
                     (CAMERA_ID_FROM_NAME[camera.lower()], *all_tracknames),
