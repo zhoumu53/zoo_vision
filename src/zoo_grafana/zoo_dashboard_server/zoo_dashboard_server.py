@@ -16,9 +16,9 @@ import io
 import json
 import base64
 from PIL import Image
-from flask import Flask, request, jsonify, send_file, Response, stream_with_context
-from flask_cors import CORS
-from flask_caching import Cache
+from quart import Quart, request, send_file, Response
+from quart_cors import cors
+from cachetools.func import ttl_cache
 from datetime import datetime, timedelta
 import dateutil
 import asyncio
@@ -32,13 +32,9 @@ config = {
     "CACHE_TYPE": "SimpleCache",  # Flask-Caching related configs
     "CACHE_DEFAULT_TIMEOUT": 300,
 }
-app = Flask(__name__)
+app = Quart(__name__)
 app.config.from_mapping(config)
-CORS(app)
-cache = Cache(app)
-
-# Global so we share a thread pool
-asyncio_loop = asyncio.get_event_loop()
+cors(app)
 
 ################################################
 # Image utils
@@ -60,12 +56,12 @@ def encode_base64(byte_arr: io.BytesIO) -> str:
 # Track images
 
 
-@cache.memoize(30 * 60)
+@ttl_cache(maxsize=128, ttl=30 * 60)
 def read_track_ranges_cached(path: Path) -> DayData:
     return read_track_ranges(path)
 
 
-@cache.memoize(30 * 60)
+@ttl_cache(maxsize=1, ttl=30 * 60)
 def get_config():
     config_path = PROJECT_ROOT / "data" / "config.json"
     with config_path.open() as f:
@@ -117,16 +113,14 @@ async def track_images(camera: str, timestamp: datetime) -> list[Detection]:
     return detections
 
 
-@stream_with_context
-def stream_or_cancel_json(task: asyncio.Task[str]):
-    loop = task.get_loop()
+async def stream_or_cancel_json(task: asyncio.Task[str]):
     try:
         while True:
             try:
-                done, _ = loop.run_until_complete(asyncio.wait([task], timeout=0.1))
+                done, _ = await asyncio.wait([task], timeout=0.1)
                 if task in done:
                     try:
-                        content = loop.run_until_complete(task)
+                        content = await task
                     except Exception as e:
                         # TODO: this should return a 505 Internal Error response but we cannot change it now
                         content = app.json.dumps({"error": str(e)})
@@ -146,7 +140,7 @@ def stream_or_cancel_json(task: asyncio.Task[str]):
 
 
 @app.route("/track_images", methods=["GET"])
-def track_images_get():
+async def track_images_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
 
@@ -168,17 +162,17 @@ def track_images_get():
             }
         )
 
-    task = asyncio_loop.create_task(impl())
+    task = asyncio.create_task(impl())
 
     # Return json with all images for this camera
     return Response(stream_or_cancel_json(task), mimetype="application/json")
 
 
 @app.route("/test_track_image", methods=["GET"])
-def test_track_image_get():
+async def test_track_image_get():
     camera = request.args.get("camera", "zag_elp_cam_016")
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
-    detections = asyncio_loop.run_until_complete(track_images(camera, timestamp))
+    detections = await track_images(camera, timestamp)
 
     if len(detections) == 0:
         return send_file("static/no_image.jpg")
@@ -192,7 +186,7 @@ def test_track_image_get():
 # Camera images
 
 
-@cache.memoize(30 * 60)
+@ttl_cache(ttl=30 * 60)
 def get_video_db():
     config = get_config()
     video_db_file = Path(config["video_db"])
@@ -225,21 +219,21 @@ async def camera_image(camera: str, timestamp: datetime):
 
 
 @app.route("/camera_image", methods=["GET"])
-def camera_image_get():
+async def camera_image_get():
     camera = request.args.get("camera", DEFAULT_CAMERA)
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
 
-    task = asyncio_loop.create_task(camera_image(camera, timestamp))
+    task = asyncio.create_task(camera_image(camera, timestamp))
 
     # Return json with all images for this camera
     return Response(stream_or_cancel_json(task), mimetype="application/json")
 
 
 @app.route("/test_camera_image", methods=["GET"])
-def test_camera_image_get():
+async def test_camera_image_get():
     camera = request.args.get("camera", DEFAULT_CAMERA)
     timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
-    json_str = asyncio_loop.run_until_complete(camera_image(camera, timestamp))
+    json_str = await camera_image(camera, timestamp)
 
     json_data = json.loads(json_str)
     image_base64 = json_data["image"][len(JPEG_PREFIX) :]
@@ -247,7 +241,7 @@ def test_camera_image_get():
     return send_file(io.BytesIO(image_jpg), mimetype="image/jpg")
 
 
-def create_app(*args) -> Flask:
+def create_app(*args) -> Quart:
     """
     Used to call from command line:
         waitress-serve --port 5000 --call zoo_dashboard_server:create_app

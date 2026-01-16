@@ -1,7 +1,4 @@
 cd ${CMAKE_SOURCE_DIR}
 source ${CMAKE_SOURCE_DIR}/activate_ros.sh
 cd src/zoo_grafana/zoo_dashboard_server
-# waitress uses threads, slow with GIL in python
-# waitress-serve --port 5000 --call zoo_dashboard_server:create_app
-# Launch 16 processes with gunicorn instead
-gunicorn -w 16 -b 0.0.0.0:5000 --reload  'zoo_dashboard_server:create_app()'
+hypercorn -b 0.0.0.0:5000 --reload  zoo_dashboard_server:app
