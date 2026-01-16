@@ -125,7 +125,11 @@ def stream_or_cancel_json(task: asyncio.Task[str]):
             try:
                 done, _ = loop.run_until_complete(asyncio.wait([task], timeout=0.1))
                 if task in done:
-                    content = loop.run_until_complete(task)
+                    try:
+                        content = loop.run_until_complete(task)
+                    except Exception as e:
+                        # TODO: this should return a 505 Internal Error response but we cannot change it now
+                        content = app.json.dumps({"error": str(e)})
                     yield content
                     break
                 else:

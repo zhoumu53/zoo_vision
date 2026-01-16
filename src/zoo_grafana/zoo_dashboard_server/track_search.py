@@ -81,6 +81,16 @@ def read_track_ranges(path: Path) -> DayData:
             usecols=["timestamp", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"],
             parse_dates=["timestamp"],
         )
+        if len(df_timestamps) == 0:
+            # Empty file, ignore silently
+            continue
+        if not pd.api.types.is_datetime64_dtype(df_timestamps["timestamp"]):
+            # Error in file, ignore
+            logger.error(
+                f"Ignoring csv {f}. Timestamp is of type {df_timestamps['timestamp'].dtype}"
+            )
+            continue
+
         # All server data is stored in CET timezone
         # FIXME: we should store timezone in the timestamp itself
         df_timestamps["timestamp"] = df_timestamps["timestamp"].dt.tz_localize(
