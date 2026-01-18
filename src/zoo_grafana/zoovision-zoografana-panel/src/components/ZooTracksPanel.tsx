@@ -7,7 +7,7 @@ import { useStyles2 } from '@grafana/ui';
 const NO_IMAGE_JPG = require('../img/no_image.jpg');
 
 const DEFAULT_TIMESTAMP = "2025-11-15 19:08:22.308000000";
-const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
+const CAMERAS = ["zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_016", "zag_elp_cam_019"];
 
 interface Props extends PanelProps<ZooTracksOptions> { }
 
@@ -101,6 +101,9 @@ const getStyles = () => {
       position: absolute;
       border: 1px solid;
       background-color: #00000000;
+    `,
+    verticalCell: css`
+      vertical-align: top;
     `
   };
 };
@@ -229,9 +232,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
     };
   });
 
-  const makeImages = (cameraIndex: number) => {
-    return <div className={cx(styles.cameraBlock)}>
-      <div>{CAMERAS[cameraIndex]}</div>
+  const makeTrackImages = (cameraIndex: number) => {
+    return <>
       <div>Tracks</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)} >Loading</div>
@@ -250,6 +252,10 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           </div>
         )}
       </div>
+    </>
+  };
+  const makeCameraImages = (cameraIndex: number) => {
+    return <>
       <div>Source</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)}>Loading</div>
@@ -273,7 +279,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         )}
         <img src={cameraImages[cameraIndex].image} className={cx(styles.fillImage)} />
       </div>
-    </div>
+    </>
   };
 
   return (
@@ -288,26 +294,21 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       )}
     >
       <div id="time-label">Time: {currentTimestamp}</div>
-      <div className={cx(styles.rowFlex)}>
-        <div className={cx(styles.areaName)}>
-          <h2>
-            Sand box mit
-          </h2>
-          <div className={cx(styles.rowFlex)}>
-            {makeImages(1)}
-            {makeImages(2)}
-          </div>
-        </div>
-        <div className={cx(styles.areaName)}>
-          <h2>
-            Sand box ohne
-          </h2>
-          <div className={cx(styles.rowFlex)}>
-            {makeImages(0)}
-            {makeImages(3)}
-          </div>
-        </div>
-      </div>
+      <table>
+        <tr>
+          <th colSpan={2}><h2>Sand box mit</h2></th>
+          <th colSpan={2}><h2>Sand box ohne</h2></th>
+        </tr>
+        <tr>
+          {CAMERAS.map((cameraName) => <td>{cameraName}</td>)}
+        </tr>
+        <tr>
+          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
+        </tr>
+        <tr>
+          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeCameraImages(index)}</td>)}
+        </tr>
+      </table>
     </div >
   );
 };
