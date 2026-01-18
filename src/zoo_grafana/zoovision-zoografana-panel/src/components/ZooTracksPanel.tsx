@@ -30,6 +30,17 @@ type CameraImageState = {
   image: string;
 }
 
+const INVALID_DETECTION = {
+  timestamp: "n/a",
+  image: NO_IMAGE_JPG,
+  bbox_tlhw: [0, 0, 0, 0],
+  color: "#777777",
+  identity_id: 0,
+  identity_name: "Invalid",
+  behaviour_id: 0,
+  behaviour_name: "Invalid"
+};
+
 const getStyles = () => {
   return {
     wrapper: css`
@@ -125,7 +136,8 @@ async function fetchTrackImages(url: string, abortSignal: any, setCurrentTimesta
     }
     console.log("Error fetching %s: %s", url, err);
     server_timestamp = "n/a"
-    new_state = { isLoading: false, detections: [{ image: NO_IMAGE_JPG }] };
+
+    new_state = { isLoading: false, detections: [INVALID_DETECTION] };
   }
   setCurrentTimestamp(server_timestamp)
   setState(new_state);
