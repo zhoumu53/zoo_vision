@@ -44,6 +44,7 @@ def _head_tail_proto(
 
 
 ### TODO: num_identities parameter -- how to set it? dynamic?
+### TODO: stitching - with cosine sim thresholding - assign new id if no good match
 
 def stitch_tracklets_bidirectional_gallery(
     tracklets: List[Tracklet],
@@ -89,15 +90,22 @@ def stitch_tracklets_bidirectional_gallery(
             continue
         
         if t.feature_path is None:
-            log.warning(f"[bidirectional] Tracklet {i} has no feature_path; mark invalid.")
+            log.warning(f"[bidirectional] Tracklet {t.track_id} has no feature_path; mark invalid.")
+            t.invalid_flag = True
+            continue
+        
+        if not t.feature_path.exists():
+            log.error(
+                f"[bidirectional] Feature path {t.feature_path} does not exist; mark invalid."
+            )
             t.invalid_flag = True
             continue
         
         try:
             feats, frame_ids, _, _ = load_embedding(t.feature_path)
         except Exception as e:
-            log.exception(
-                f"[bidirectional] Failed to load embedding from {t.feature_path} for tracklet {i}: {e}"
+            log.error(
+                f"[bidirectional] Failed to load embedding from {t.feature_path} for tracklet {i}, skipping."
             )
             t.invalid_flag = True
             continue

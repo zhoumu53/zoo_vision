@@ -26,6 +26,47 @@ from project.utils.tools import load_model
 from project.utils.metrics import eval_func_gpu, compute_cosine_distance
 
 
+def compute_similarity(
+    features_a: torch.Tensor,
+    features_b: torch.Tensor,
+) -> torch.Tensor:
+    """Compute cosine similarity matrix (N, M) between two feature sets."""
+    # check device compatibility
+    
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    if isinstance(features_a, np.ndarray):
+        features_a = torch.from_numpy(features_a).to(device)
+    if isinstance(features_b, np.ndarray):
+        features_b = torch.from_numpy(features_b).to(device)
+    features_a = torch.nn.functional.normalize(features_a, dim=1)
+    features_b = torch.nn.functional.normalize(features_b, dim=1)
+    return torch.mm(features_a, features_b.t())
+
+def match_to_gallery(
+    query_features: torch.Tensor,
+    gallery_features: torch.Tensor,
+    gallery_labels: Optional[List[str]] = None,
+    top_k: int = 5,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Match query features to gallery, return top-k (scores, indices)."""
+    similarity = compute_similarity(query_features, gallery_features)
+    effective_k = min(top_k, gallery_features.shape[0])
+    scores, indices = torch.topk(similarity, effective_k, dim=1)
+    
+    if gallery_labels is not None:
+        matched_labels = []
+        for i in range(indices.shape[0]):
+            matched = []
+            for j in range(effective_k):
+                idx = indices[i, j].item()
+                label = gallery_labels[idx]
+                matched.append(label)
+            matched_labels.append(matched)
+        return scores, indices, matched_labels
+    return scores, indices, None
+
+
 class ReIDInference:
     """ReID feature extraction and matching for elephant re-identification."""
     
@@ -110,44 +151,44 @@ class ReIDInference:
         feat = torch.nn.functional.normalize(feat, dim=1)
         return feat
     
-    def compute_similarity(
-        self,
-        features_a: torch.Tensor,
-        features_b: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute cosine similarity matrix (N, M) between two feature sets."""
-        # check device compatibility
-        if isinstance(features_a, np.ndarray):
-            features_a = torch.from_numpy(features_a).to(self.device)
-        if isinstance(features_b, np.ndarray):
-            features_b = torch.from_numpy(features_b).to(self.device)
-        features_a = torch.nn.functional.normalize(features_a, dim=1)
-        features_b = torch.nn.functional.normalize(features_b, dim=1)
-        return torch.mm(features_a, features_b.t())
+    # def compute_similarity(
+    #     self,
+    #     features_a: torch.Tensor,
+    #     features_b: torch.Tensor,
+    # ) -> torch.Tensor:
+    #     """Compute cosine similarity matrix (N, M) between two feature sets."""
+    #     # check device compatibility
+    #     if isinstance(features_a, np.ndarray):
+    #         features_a = torch.from_numpy(features_a).to(self.device)
+    #     if isinstance(features_b, np.ndarray):
+    #         features_b = torch.from_numpy(features_b).to(self.device)
+    #     features_a = torch.nn.functional.normalize(features_a, dim=1)
+    #     features_b = torch.nn.functional.normalize(features_b, dim=1)
+    #     return torch.mm(features_a, features_b.t())
     
-    def match_to_gallery(
-        self,
-        query_features: torch.Tensor,
-        gallery_features: torch.Tensor,
-        gallery_labels: Optional[List[str]] = None,
-        top_k: int = 5,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Match query features to gallery, return top-k (scores, indices)."""
-        similarity = self.compute_similarity(query_features, gallery_features)
-        effective_k = min(top_k, gallery_features.shape[0])
-        scores, indices = torch.topk(similarity, effective_k, dim=1)
+    # def match_to_gallery(
+    #     self,
+    #     query_features: torch.Tensor,
+    #     gallery_features: torch.Tensor,
+    #     gallery_labels: Optional[List[str]] = None,
+    #     top_k: int = 5,
+    # ) -> Tuple[torch.Tensor, torch.Tensor]:
+    #     """Match query features to gallery, return top-k (scores, indices)."""
+    #     similarity = self.compute_similarity(query_features, gallery_features)
+    #     effective_k = min(top_k, gallery_features.shape[0])
+    #     scores, indices = torch.topk(similarity, effective_k, dim=1)
 
-        if gallery_labels is not None:
-            matched_labels = []
-            for i in range(indices.shape[0]):
-                matched = []
-                for j in range(effective_k):
-                    idx = indices[i, j].item()
-                    matched.append(gallery_labels[idx])
-                matched_labels.append(matched)
-            # print("np.array(matched_labels).shape: ", np.array(matched_labels).shape, np.array(scores.cpu().numpy()).shape)
-            return scores, indices, matched_labels
-        return scores, indices, None
+    #     if gallery_labels is not None:
+    #         matched_labels = []
+    #         for i in range(indices.shape[0]):
+    #             matched = []
+    #             for j in range(effective_k):
+    #                 idx = indices[i, j].item()
+    #                 matched.append(gallery_labels[idx])
+    #             matched_labels.append(matched)
+    #         # print("np.array(matched_labels).shape: ", np.array(matched_labels).shape, np.array(scores.cpu().numpy()).shape)
+    #         return scores, indices, matched_labels
+    #     return scores, indices, None
     
     def save_features(
         self,

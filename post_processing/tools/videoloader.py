@@ -22,6 +22,9 @@ class VideoLoader:
             self.reader = decord.VideoReader(video_path, ctx=ctx)
             self.backend = "decord"
             self._len = len(self.reader)
+            # Get resolution from first frame
+            first_frame = self.reader[0].asnumpy()
+            self.height, self.width = first_frame.shape[:2]
             if verbose:
                 print(f"[VideoLoader] Decord backend for: {video_path}")
             return
@@ -39,11 +42,16 @@ class VideoLoader:
             else:
                 # metadata missing -> unknown length, track manually
                 self._len = None
+            # Get resolution
+            self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             if verbose:
                 print(f"[VideoLoader] OpenCV backend for: {video_path}")
         else:
             self.backend = None
             self._len = 0
+            self.width = 0
+            self.height = 0
             if verbose:
                 print(f"[VideoLoader] ERROR: cannot open video: {video_path}")
 
