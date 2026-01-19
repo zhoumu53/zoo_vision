@@ -1,4 +1,4 @@
 cd ${CMAKE_SOURCE_DIR}
 source ${CMAKE_SOURCE_DIR}/activate_ros.sh
 cd src/zoo_grafana/zoo_dashboard_server
-hypercorn -b 0.0.0.0:5000 --reload  zoo_dashboard_server:app
+hypercorn -w 16 -b 0.0.0.0:5000 --reload  zoo_dashboard_server:app
