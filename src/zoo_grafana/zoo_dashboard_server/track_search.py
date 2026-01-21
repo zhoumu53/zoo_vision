@@ -83,7 +83,18 @@ def read_track_ranges(path: Path) -> DayData:
         # Read track details
         df_timestamps = pd.read_csv(
             f,
-            usecols=["timestamp", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"],
+            usecols=lambda x: x
+            in [
+                "timestamp",
+                "bbox_top",
+                "bbox_left",
+                "bbox_bottom",
+                "bbox_right",
+                "bbox_top2",
+                "bbox_left2",
+                "bbox_bottom2",
+                "bbox_right2",
+            ],
             parse_dates=["timestamp"],
         )
         if len(df_timestamps) == 0:
@@ -140,16 +151,24 @@ async def find_track_images(
         video_frameid = csv_index
 
         # Read info from csv
-        # TODO: top and left dimensions normalized with the wrong values!!!
-        width = 1060 / 2688 * 1520
-        height = 600 / 1520 * 2688
-        # TODO: top and left dimensions are flipped in the csv!!!
-        bbox_tlbr = (
-            csv_data["bbox_left"].iloc[csv_index] / width,
-            csv_data["bbox_top"].iloc[csv_index] / height,
-            csv_data["bbox_right"].iloc[csv_index] / width,
-            csv_data["bbox_bottom"].iloc[csv_index] / height,
-        )
+        if "bbox_top2" in csv_data:
+            bbox_tlbr = (
+                csv_data["bbox_top2"].iloc[csv_index],
+                csv_data["bbox_left2"].iloc[csv_index],
+                csv_data["bbox_bottom2"].iloc[csv_index],
+                csv_data["bbox_right2"].iloc[csv_index],
+            )
+        else:
+            # TODO: top and left dimensions normalized with the wrong values!!!
+            width = 1060 / 2688 * 1520
+            height = 600 / 1520 * 2688
+            # TODO: top and left dimensions are flipped in the csv!!!
+            bbox_tlbr = (
+                csv_data["bbox_left"].iloc[csv_index] / width,
+                csv_data["bbox_top"].iloc[csv_index] / height,
+                csv_data["bbox_right"].iloc[csv_index] / width,
+                csv_data["bbox_bottom"].iloc[csv_index] / height,
+            )
         bbox_tlhw = (
             bbox_tlbr[0],
             bbox_tlbr[1],

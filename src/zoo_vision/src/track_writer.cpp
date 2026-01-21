@@ -38,10 +38,11 @@ std::filesystem::path getTrackPath(const std::filesystem::path &rootTracksPath, 
 }
 
 void writeHeader(std::ofstream &fd) {
-  fd << "frame_id,timestamp,bbox_top,bbox_left,bbox_bottom,bbox_right,score,world_x,world_y" << std::endl;
+  fd << "frame_id,timestamp,bbox_top2,bbox_left2,bbox_bottom2,bbox_right2,score,world_x,world_y" << std::endl;
 }
 
-void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const Vector3f &worldPosition) {
+void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const Vector3f &worldPosition,
+              const Vector2i imageSize) {
   CHECK_TRUE(!track.timestampHistory.empty());
   CHECK_EQ(track.timestampHistory.size(), track.boxHistory.size());
   CHECK_EQ(track.timestampHistory.size(), track.scoreHistory.size());
@@ -50,11 +51,14 @@ void writeRow(std::ofstream &fd, const TrackData &track, uint64_t frameId, const
   const auto bbox = track.boxHistory.back();
   const float32_t score = track.scoreHistory.back();
 
+  const float32_t top = bbox.min()[1] / imageSize[1];
+  const float32_t left = bbox.min()[0] / imageSize[0];
+  const float32_t bottom = bbox.max()[1] / imageSize[1];
+  const float32_t right = bbox.max()[0] / imageSize[0];
+
   // TODO: top and left dimensions normalized with the wrong values !!!
-  // TODO: top and left dimensions are flipped in the csv!!!
-  fd << frameId << "," << std::format("{0:%Y-%m-%d} {0:%T}", time) << "," << bbox.min()[0] << "," << bbox.min()[1]
-     << "," << bbox.max()[0] << "," << bbox.max()[1] << "," << score << "," << worldPosition[0] << ","
-     << worldPosition[1] << std::endl;
+  fd << frameId << "," << std::format("{0:%Y-%m-%d} {0:%T}", time) << "," << top << "," << left << "," << bottom << ","
+     << right << "," << score << "," << worldPosition[0] << "," << worldPosition[1] << std::endl;
 }
 
 } // namespace
@@ -99,12 +103,13 @@ TrackWriter::TrackWriter(const std::filesystem::path &rootTracksPath, TrackData 
   }
 }
 
-void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition) {
+void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition,
+                             const Vector2i imageSize) {
   CHECK_EQ(static_cast<int>(cropImage.size(1)), PatchCropper::CROP_SIZE);
   CHECK_EQ(static_cast<int>(cropImage.size(0)), PatchCropper::CROP_SIZE);
 
   CHECK_TRUE(infoFd_.is_open());
-  writeRow(infoFd_, track_, frameId, worldPosition);
+  writeRow(infoFd_, track_, frameId, worldPosition, imageSize);
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);

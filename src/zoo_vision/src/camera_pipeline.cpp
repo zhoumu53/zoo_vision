@@ -421,7 +421,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, cons
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx));
+    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx), config_.detectionImageSize);
   }
 }
 

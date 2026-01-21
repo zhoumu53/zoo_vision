@@ -38,7 +38,8 @@ class TrackWriter {
 public:
   TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track, float32_t fps);
 
-  void writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition);
+  void writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition,
+                  const Vector2i imageSize);
   void close(SysTime time);
 
 private:
