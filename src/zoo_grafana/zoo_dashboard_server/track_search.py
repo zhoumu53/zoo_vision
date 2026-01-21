@@ -9,6 +9,7 @@ import psycopg2
 import cv2
 import pytz
 import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ def get_video_path(csv_path: Path) -> Path:
 def read_track_ranges(path: Path) -> DayData:
     data = DayData([], [], [], [])
     for f in sorted(path.glob("*.csv")):
+        # Check that name exactly matches our format, e.g. T082241_ID007719.csv
+        if not re.match(r"T\d{6}_ID\d{6}.csv", f.name):
+            continue
+
         # Read track details
         df_timestamps = pd.read_csv(
             f,

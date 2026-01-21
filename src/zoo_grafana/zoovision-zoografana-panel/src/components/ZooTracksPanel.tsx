@@ -131,6 +131,9 @@ async function fetchTrackImages(url: string, abortSignal: any, setCurrentTimesta
       throw new Error(response.statusText);
     }
     const dataJson = await response.json();
+    if ("error" in dataJson) {
+      throw new Error(dataJson["error"])
+    }
     server_timestamp = dataJson["timestamp"];
     new_state = { isLoading: false, detections: dataJson["detections"] };
   } catch (err: any) {
@@ -154,6 +157,9 @@ async function fetchCameraImages(url: string, abortSignal: any, setState: (state
       throw new Error(response.statusText);
     }
     const dataJson = await response.json();
+    if ("error" in dataJson) {
+      throw new Error(dataJson["error"])
+    }
     new_state = { isLoading: false, image: dataJson["image"] };
   } catch (err: any) {
     if (err.name === "AbortError") {
