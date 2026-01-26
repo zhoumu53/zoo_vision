@@ -15,6 +15,9 @@ from post_processing.tools.run_reid_feature_extraction import vote_matched_label
 from post_processing.tools.reranking import assign_two_identities_from_trackid2label_counts
 
 
+seed = 42
+np.random.seed(seed)
+
 ## TODO: remove redundant items in Tracklet dataclass
 @dataclass
 class Tracklet:
@@ -25,8 +28,8 @@ class Tracklet:
     track_video_path: Optional[Path] = None  # optional raw video path for visualization
     
     camera_id: str = ""
-    identity_label: str = "unknown" # final identity label after voting
-    voted_track_label: str = "unknown" # identity label voted from ReID features (from current tracklet only)
+    identity_label: str = "invalid" # final identity label after voting
+    voted_track_label: str = "invalid" # identity label voted from ReID features (from current tracklet only)
     semi_gt_labels: List[str] = field(default_factory=list)  # list of semi GT IDs matched to this tracklet
     stitched_id: Optional[int] = None
     invalid_flag: bool = False    ## whether the tracklet is invalid (e.g. in invalid zone, else?)
@@ -62,19 +65,19 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
     track_filename = Path(track_csv).stem
 
     ## load identity label from npz if exists
-    voted_track_label = "unknown"
+    voted_track_label = "invalid"
     npz_path = Path(track_csv).with_suffix(".npz")
     if npz_path.exists():
         try:
             data = np.load(npz_path, allow_pickle=True)
-            voted_track_label = data.get('voted_track_labels', 'unknown')
+            voted_track_label = data.get('voted_track_labels', 'invalid')
             if isinstance(voted_track_label, np.ndarray):
                 voted_track_label = voted_track_label.item()
         except Exception as e:
             logger.warning(f"Failed to load identity label from {npz_path}: {e}")
     else:
-        # TODO - get voted label
-        voted_track_label = "unknown"
+        ### we didn't save npz file for invalid tracks
+        voted_track_label = "invalid"
          
         
     t = Tracklet(track_id=track_id, 
@@ -103,7 +106,7 @@ def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]]) -
         for t in tracklets:
             track_csv = t.get("track_csv_path", "")
             if track_csv:
-                csv2identity[track_csv] = t.get("identity_label", "unknown")
+                csv2identity[track_csv] = t.get("identity_label", "invalid")
     
     return csv2identity
 
@@ -308,7 +311,6 @@ class TrackletManager:
                  invalid_zones_dir: Path = Path('/media/mu/zoo_vision/data/invalid_zones'),
                  height: int = 1520,
                  width: int = 1920,
-                 frame: np.ndarray = None
                  ):
         
         """Initialize TrackletManager.
@@ -412,24 +414,29 @@ class TrackletManager:
     
     def vote_identity_label(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
         
+        # Sample 20% if too many queries
+        if len(features) > 10000:
+            sample_size = int(len(features) * 0.2)
+            sample_indices = np.random.choice(len(features), size=sample_size, replace=False)
+            features = features[sample_indices]
+        
         matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
         avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
         
         voted_track_labels = vote_matched_labels(matched_labels)
-        # voted_track_label = max(set(voted_track_labels), key=voted_track_labels.count)
 
         count_dict = {}
         for label in voted_track_labels:
             count_dict[label] = count_dict.get(label, 0) + 1
         # sort by count
         count_dict = dict(sorted(count_dict.items(), key=lambda item: item[1], reverse=True))
-        # get final voted label if in known_labels, else 'unknown'
+        # get final voted label if in known_labels, else 'invalid'
         for label in count_dict.keys():
             if known_labels and label in known_labels:
                 voted_track_label = label
                 break
             else:
-                voted_track_label = "unknown"
+                voted_track_label = "invalid"
 
         return voted_track_label
 
@@ -440,6 +447,7 @@ class TrackletManager:
         track_files = []
         for track_dir in track_dirs:
             files = sorted(track_dir.glob("*.csv"))
+            files = [file for file in files if f"_id_behavior" not in file.stem]
             track_files.extend(files)
                     
         n_invalid = 0
@@ -453,8 +461,7 @@ class TrackletManager:
                 s_time, raw_track_id = track_filename.split("T")[1].split("_ID")
             except Exception as e:
                 self.logger.warning(f"Unexpected track file name format: {track_filename}, skipping.")
-                continue
-                
+                continue                
 
             if str(raw_track_id) == '-00001':
                 # skip invalid tracks
@@ -490,7 +497,7 @@ class TrackletManager:
                 # Check bbox locations - if in invalid zone, mark invalid_flag=True
                 df = pd.read_csv(track_file)
                 invalid_flag = False
-                ### compute the mean bbox of whole tracklet
+                ### compute the mean bbox of whole tracklet  TODO: update this when we only have yolo-xywh format box
                 box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
                 if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
                     invalid_flag = True
@@ -498,10 +505,9 @@ class TrackletManager:
                     print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
                 ### set invalid_flag
                 tracklet[0].invalid_flag = invalid_flag
+
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
-
-            # print("track_file", track_filename)
 
             self.tracklets.extend(tracklet)
         print(f"Loaded {len(self.tracklets)} tracklets for camera {camera_id}, "
@@ -562,12 +568,8 @@ class TrackletManager:
         self.stitched_map: Dict[str, List[Dict[str, object]]] = {}
         for t in self.tracklets:
             
-            # avg_tracklet_label = t.identity_label if t.identity_label != "unknown" else (
-            #     trackid2identity_label.get(t.stitched_id, "unknown") if trackid2identity_label else "unknown"
-            # )
-            
-            voted_track_label = 'unknown'
-            # if voted_track_label is None or voted_track_label == "unknown":
+            voted_track_label = 'invalid'
+            # if voted_track_label is None or voted_track_label == "invalid":
             if t.feature_path and t.feature_path.exists():
                 feats, frame_ids, _, avg_feat = load_embedding(t.feature_path)
                 voted_track_label = self.vote_identity_label(
@@ -713,22 +715,25 @@ class TrackletManager:
                         continue
                 
                 filtered_tracklets.append(t)
+
+            # Skip invalid tracklets
+            filtered_tracklets = [t for t in filtered_tracklets if not t.get("voted_track_label") == 'invalid']
             
             # Skip if no tracklets in time window
             if not filtered_tracklets:
-                trackid2idlabel[stitched_id] = "unknown"
+                trackid2idlabel[stitched_id] = "invalid"
                 print("=================== No tracklets for stitched_id", stitched_id, "in time window ===================")
                 continue
             
             # Count voted labels
             label_counts = Counter()
             for t in filtered_tracklets:
-                label = t.get("voted_track_label", "unknown") or "unknown"
-                if label != "unknown":
+                label = t.get("voted_track_label", "invalid") or "invalid"
+                if label != "invalid":
                     label_counts[label] += 1
             
-            # Get unique labels (excluding "unknown")
-            unique_labels = [label for label in label_counts.keys() if label != "unknown"]
+            # Get unique labels (excluding "invalid")
+            unique_labels = [label for label in label_counts.keys() if label != "invalid"]
             
             # Apply filtering logic -- filter out the wrong labels from group if not Thai in the room
             if len(unique_labels) >= 2 and ("Thai" not in known_labels if known_labels else True):
@@ -742,7 +747,7 @@ class TrackletManager:
                 for label in list(label_counts.keys()):
                     if label not in known_labels:
                         del label_counts[label]
-                        self.logger.debug(f"Filtered out unknown label '{label}' from stitched_id {stitched_id} based on known_labels")
+                        self.logger.debug(f"Filtered out invalid label '{label}' from stitched_id {stitched_id} based on known_labels")
             
             trackid2label_counts[stitched_id] = dict(label_counts)
             
@@ -751,7 +756,7 @@ class TrackletManager:
             #     final_label = label_counts.most_common(1)[0][0]
             #     self.logger.info(f"Stitched ID {stitched_id}: voted label = {final_label} (from {dict(label_counts)})")
             # else:
-            #     final_label = "unknown"
+            #     final_label = "invalid"
             #     self.logger.warning(f"Stitched ID {stitched_id}: no valid labels after filtering")
             
             # trackid2idlabel[stitched_id] = final_label
@@ -888,7 +893,7 @@ class TrackletManager:
             # Count voted labels for display
             label_counts = Counter()
             for t in filtered_tracklets:
-                label = t.get("voted_track_label", "unknown") or "unknown"
+                label = t.get("voted_track_label", "invalid") or "invalid"
                 label_counts[label] += 1
             
             # Calculate time span
@@ -904,7 +909,7 @@ class TrackletManager:
                 duration_str = "N/A"
             
             # Get final voted identity from vote_tracklet_identity_labels
-            final_identity = trackid2idlabel.get(stitched_id, "unknown")
+            final_identity = trackid2idlabel.get(stitched_id, "invalid")
             
             print(f"\nStitched ID: {stitched_id}")
             print(f"  Final Identity: {final_identity}")

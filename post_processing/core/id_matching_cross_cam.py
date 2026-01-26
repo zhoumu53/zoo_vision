@@ -310,6 +310,8 @@ def cross_camera_id_matching(
     dict
         Updated cam2 final_stitched_map with identity labels reassigned
     """
+    
+    ### TODO - improve the matching -- do it with dataframes
 
     from tqdm import tqdm
     
@@ -427,12 +429,3 @@ if __name__ == "__main__":
     cam2_dir = "/Users/zhoumu/Downloads/vis/zag_elp_cam_019/2025-11-15"
     output_dir = "/Users/zhoumu/Downloads/vis/zag_elp_cam_019_matched/2025-11-15"
     
-    process_with_sliding_window(
-        cam1_dir,
-        cam2_dir,
-        output_dir=output_dir,
-        window_hours=1,
-        time_window_seconds=0.5,
-        distance_threshold=2.0
-    )
- 

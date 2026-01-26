@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
+import os
 
 # Add project paths
 THIS_DIR = Path(__file__).resolve().parent
@@ -18,7 +19,7 @@ for path in (PROJECT_ROOT, POSE_REID_ROOT):
     if path.exists() and str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from post_processing.core.reid_inference import ReIDInference
+from post_processing.core.reid_inference import ReIDInference, match_to_gallery
 from post_processing.tools.videoloader import VideoLoader
 
 logger = logging.getLogger(__name__)
@@ -58,19 +59,19 @@ def extract_reid_features_from_video(
     batch_size: int = 32,
     skip_frames: bool = True,
     fps : int = 25,
-) -> Tuple[np.ndarray, List[int], np.ndarray:]:
+    frame_ids: Optional[List[int]] = None,
+) -> Tuple[np.ndarray, List[int], np.ndarray]:
     """
     Extract ReID features for every frame in a video.
 
     Returns:
         features: (N, D) numpy array
-        frame_ids: list of frame indices corresponding to each feature
+        indices: list of frame indices corresponding to each feature
     """
     loader = VideoLoader(str(video_path), verbose=True)
     if not loader.ok():
         raise RuntimeError(f"Could not open video: {video_path}")
 
-    frame_ids: List[int] = []
     feats: List[torch.Tensor] = []
     device = reid_model.device
     transform = reid_model.transform
@@ -83,47 +84,49 @@ def extract_reid_features_from_video(
     ### len(loader) gives total number of frames
     total_frames = len(loader)
     indices = list(range(total_frames))
+    
+    
+    #### sample frames if frame_ids is None
+    if frame_ids is None:
+        # Keep ~1 frame every 4 second (fps=25), and still force-include head/tail frames.
+        if total_frames > fps and skip_frames:
+            step = max(1, int(fps) * 4)
 
-    # Keep ~1 frame every 4 second (fps=25), and still force-include head/tail frames.
-    if total_frames > fps and skip_frames:
-        step = max(1, int(fps) * 4)
+            logger.info(
+                f"Video has {total_frames} frames. Sampling 0.25 fps with step={step} frames "
+                f"(~{total_frames/step:.1f} samples) + head/tail anchors."
+            )
 
-        logger.info(
-            f"Video has {total_frames} frames. Sampling 0.25 fps with step={step} frames "
-            f"(~{total_frames/step:.1f} samples) + head/tail anchors."
-        )
+            indices = list(range(0, total_frames, step))
 
-        indices = list(range(0, total_frames, step))
+            # Always include K head/tail frames (guard for short videos)
+            K = 10
+            head = list(range(0, min(K, total_frames)))
+            tail_start = max(0, total_frames - K)
+            tail = list(range(tail_start, total_frames))
 
-        # Always include K head/tail frames (guard for short videos)
-        K = 10
-        head = list(range(0, min(K, total_frames)))
-        tail_start = max(0, total_frames - K)
-        tail = list(range(tail_start, total_frames))
-
-        indices = sorted(set(indices + head + tail))
+            indices = sorted(set(indices + head + tail))
+        else:
+            indices = list(range(total_frames))
+            
     else:
-        indices = list(range(total_frames))
+        indices = frame_ids
 
     for idx, frame in enumerate(loader):
         if idx not in indices:
             continue
         batch_frames.append(frame)
-        batch_indices.append(idx)
 
         if len(batch_frames) == batch_size:
             batch = _prep_batch(batch_frames, transform, device)
             feat = reid_model.extract_features(batch)
             feats.append(feat.cpu())
-            frame_ids.extend(batch_indices)
             batch_frames.clear()
-            batch_indices.clear()
 
     if batch_frames:
         batch = _prep_batch(batch_frames, transform, device)
         feat = reid_model.extract_features(batch)
         feats.append(feat.cpu())
-        frame_ids.extend(batch_indices)
 
     if not feats:
         return np.empty((0, reid_model.feature_dim), dtype=np.float32), []
@@ -133,7 +136,7 @@ def extract_reid_features_from_video(
     # average embedding
     avg_embedding = torch.mean(features, dim=0, keepdim=True)
 
-    return features.numpy(), frame_ids, avg_embedding.numpy()
+    return features.numpy(), indices, avg_embedding.numpy()
 
 
 def save_features_npz(
@@ -187,7 +190,7 @@ def vote_matched_labels(matched_labels: List[List[str]]) -> List[str]:
     return voted_labels
 
 
-# def run_feature_extraction(
+# def id_feature_extraction(
 #     video_path: Path,
 #     reid_model: ReIDInference,
 #     device: str = "cpu",
@@ -234,44 +237,45 @@ def vote_matched_labels(matched_labels: List[List[str]]) -> List[str]:
 
 
 
-def run_feature_extraction(
+def id_feature_extraction(
     video_path: Path,
     reid_model: ReIDInference,
     gallery_features: np.ndarray,
     gallery_labels: List[str],
     device: str = "cpu",
     batch_size: int = 32,
-    known_labels: Optional[List[str]] = None,
+    frame_ids: Optional[List[int]] = None,
 ) -> str:
     """High-level helper: load model, extract features, and save alongside the video."""
-    features, frame_ids, avg_embedding = extract_reid_features_from_video(
-        video_path=video_path,
-        reid_model=reid_model,
-        batch_size=batch_size
-    )
-
+    
     matched_labels=[]
     avg_matched_labels=[]
     voted_label = ''
 
-    # ### filter gallery to only known labels
-    # if known_labels is not None:
-    #     valid_indices = [i for i, label in enumerate(gallery_labels) if label in known_labels]
-    #     gallery_features = gallery_features[valid_indices]
-    #     gallery_labels = [gallery_labels[i] for i in valid_indices]
+    save_path = video_path.with_suffix(".npz")
 
-    # DO REID MATCHING ON STITCHED TRACKS -- NOT NOW
-    matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
-    # print(f"Matched labels for video {video_path.name}: {matched_labels}")
-    avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
-    # print(f"Avg matched labels for video {video_path.name}: {avg_matched_labels}")
+    if len(frame_ids) == 0:
+        logger.warning(f"No frames processed for video {video_path.name}. Skipping saving features.")
+        # if npz exist, remove it
+        if save_path.exists():
+            os.remove(save_path)
+        return 'invalid'
+    
+    features, frame_ids, avg_embedding = extract_reid_features_from_video(
+            video_path=video_path,
+            reid_model=reid_model,
+            batch_size=batch_size,
+            frame_ids=frame_ids,
+        )
+
+    matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+    avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
     
     voted_labels = vote_matched_labels(matched_labels)
-    # most common label
     voted_label = max(set(voted_labels), key=voted_labels.count)
-    # print(f"Voted labels for video {video_path.name}: {voted_label}")
+
+
     
-    save_path = video_path.with_suffix(".npz")
     save_features_npz(
         features=features,
         frame_ids=frame_ids,
@@ -285,7 +289,6 @@ def run_feature_extraction(
             "device": device,
         },
     )
-    print()
     return voted_label
 
 def parse_args() -> argparse.Namespace:
@@ -318,7 +321,7 @@ def main() -> None:
         if not video_files:
             raise FileNotFoundError(f"No .mkv files found in directory: {args.video}")
         for video_file in tqdm(video_files, desc="Processing videos"):
-            voted_identity_label = run_feature_extraction(
+            voted_identity_label = id_feature_extraction(
                 video_path=video_file,
                 reid_model=reid,
                 device=args.device,
@@ -328,7 +331,7 @@ def main() -> None:
             print(f"Saved features to {video_file.with_suffix('.npz')}, voted label: {voted_identity_label}")
     else:
         
-        voted_identity_label = run_feature_extraction(
+        voted_identity_label = id_feature_extraction(
             video_path=args.video,
             reid_model=reid,
             device=args.device,

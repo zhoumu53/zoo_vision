@@ -29,19 +29,39 @@ from project.utils.metrics import eval_func_gpu, compute_cosine_distance
 def compute_similarity(
     features_a: torch.Tensor,
     features_b: torch.Tensor,
+    batch_size: int = 100,
 ) -> torch.Tensor:
-    """Compute cosine similarity matrix (N, M) between two feature sets."""
-    # check device compatibility
+    """Compute cosine similarity matrix (N, M) between two feature sets.
     
+    Args:
+        features_a: Query features (N, D)
+        features_b: Gallery features (M, D)
+        batch_size: Number of queries to process at once to reduce memory usage
+    
+    Returns:
+        Similarity matrix (N, M)
+    """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
     if isinstance(features_a, np.ndarray):
         features_a = torch.from_numpy(features_a).to(device)
     if isinstance(features_b, np.ndarray):
         features_b = torch.from_numpy(features_b).to(device)
     features_a = torch.nn.functional.normalize(features_a, dim=1)
     features_b = torch.nn.functional.normalize(features_b, dim=1)
-    return torch.mm(features_a, features_b.t())
+    
+    # reduce memory usage
+    n_queries = features_a.size(0)
+    similarity_batches = []
+    
+    for i in range(0, n_queries, batch_size):
+        batch_end = min(i + batch_size, n_queries)
+        batch_features = features_a[i:batch_end]
+        batch_similarity = torch.mm(batch_features, features_b.t())
+        similarity_batches.append(batch_similarity)
+        torch.cuda.empty_cache()
+    
+    return torch.cat(similarity_batches, dim=0)
+
 
 def match_to_gallery(
     query_features: torch.Tensor,

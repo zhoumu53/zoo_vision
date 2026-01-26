@@ -113,17 +113,16 @@ def offline_track_dir(record_root: Path, cam_id: str, date: str) -> Path:
     return Path(record_root) / "tracks" / cam_id2name(cam_id) / date_norm
 
 
-def list_track_files(track_dir: Path, logger: Optional[logging.Logger] = None) -> Tuple[List[Path], List[Path]]:
-    """List CSV/MKV files in a track directory."""
+def list_track_files(track_dir: Path, logger: Optional[logging.Logger] = None) -> List[Path]:
+    """List CSV files in a track directory."""
     if not track_dir.exists():
         if logger:
             logger.warning("Track directory does not exist: %s", track_dir)
-        return [], []
+        return []
     track_files = sorted(track_dir.glob("*.csv"))
-    track_videos = sorted(track_dir.glob("*.mkv"))
     if logger:
         logger.info("Found %d track files in %s", len(track_files), track_dir)
-    return track_files, track_videos
+    return track_files
 
 
 def list_npz_files(track_dir: Path) -> List[Path]:
