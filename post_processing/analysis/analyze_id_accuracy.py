@@ -92,6 +92,20 @@ def compute_id_performance(date : str = '2025-11-15',
     acc_smoothed = accuracy_score(df_eval['gt'], df_eval['smoothed_id'])
     # acc_2stage_smoothed = accuracy_score(df_eval['gt'], df_eval['2stage_smoothed_id'])
     
+    columns = [
+        'track_filename',
+        'gt',
+        'voted_track_label',
+        'stitched_id',
+        'smoothed_id',
+    ]
+    df_eval = df_eval[columns]
+    output_csv_dir = Path('/media/mu/zoo_vision/post_processing/analysis/csvs') / f'{cam_id}_{date}_id_evaluation_{start_time.replace(":", "")}_{end_time.replace(":", "")}.csv'
+    df_eval.to_csv(
+        output_csv_dir,
+        index=False
+    )
+    print(f"Saved evaluation results to CSV for date {date}, cam_id {cam_id}, time {start_time}-{end_time}")
     
     # print(f"Accuracy (step1: reid + voting): {acc_voted}")
     # print(f"Accuracy (step2: stitched     ): {acc_stitched}")
@@ -116,6 +130,9 @@ if __name__ == "__main__":
     new_time_split = ['15:30:00', '08:00:00']
     old_time_split = ['16:30:00', '07:30:00']   
     
+    splits = [old_time_split, new_time_split]
+    
+    
     
     results_dict = { date : { cam_id: {} for cam_id in cam_ids} for date, cam_ids in data_with_gts.items()}
         
@@ -129,7 +146,7 @@ if __name__ == "__main__":
             print(f"Computing ID performance for date: {date}, cam_id: {cam_id}")
             # print("Evaluating with time splits:")
                         
-            for time_split in [old_time_split, new_time_split]:
+            for time_split in splits:
                 dtype = "Old" if time_split == old_time_split else "New"
                 # print(f"Starting [{dtype}] model")
                 
@@ -139,8 +156,6 @@ if __name__ == "__main__":
 
 
     print("\n" + "=" * 80 + "\n")
-    print("results_dict", results_dict['2025-11-15'].keys())
-
 
     # print final results
     print("\n\nFinal Results Summary:")
@@ -166,7 +181,6 @@ if __name__ == "__main__":
             acc_stitched_list = []
             acc_smoothed_list = []
             for cam_id in cam_ids:
-                
                 res = results_dict[date][cam_id][dtype]
                 acc_voted_list.append(res['acc_voted'])
                 acc_stitched_list.append(res['acc_stitched'])

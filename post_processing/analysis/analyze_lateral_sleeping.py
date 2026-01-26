@@ -156,6 +156,10 @@ def load_valid_tracks(record_root,
                       logger: Optional[logging.Logger] = None,) -> pd.DataFrame:
     
     # check if date comes from 2 days
+    if isinstance(start_datetime, str):
+        start_datetime = pd.to_datetime(start_datetime)
+    if isinstance(end_datetime, str):
+        end_datetime = pd.to_datetime(end_datetime)
     start_date = start_datetime.date()
     end_date = end_datetime.date()
     date_list = pd.date_range(start=start_date, end=end_date).strftime("%Y-%m-%d").tolist()
@@ -199,6 +203,7 @@ def load_valid_tracks(record_root,
             valid_count += 1
             
             track_data['track_filename'] = track_file.name
+            track_data['track_csv_path'] = str(_track_file)
             track_data['camera_id'] = cam_id
             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
     
@@ -317,7 +322,7 @@ def main():
     end_datetime=pd.Timestamp(f"{next_day} 07:59:59")
     
     
-    for new_beh_model in [False, True]:
+    for new_beh_model in [False]:
 
         df_results = load_valid_tracks(
             record_root=record_root,
@@ -335,7 +340,7 @@ def main():
         # df_results = behavior_label_smooth(df_results, window_size=21, min_conf_threshold=0.7)
         
         ### do cross-camera standing - matching
-        df_results = smooth_behavior_cross_cameras(df_results)
+        # df_results = smooth_behavior_cross_cameras(df_results)
         
         # df_results = update_csv_from_df(df_results, record_root=record_root)
         
