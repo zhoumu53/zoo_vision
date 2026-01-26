@@ -162,6 +162,20 @@ def match_identities_for_dataframe(
         if len(temporal_candidates) == 0:
             continue
         
+        # ### DEBUG -- PRINT OUT THE TEMPORAL CANDIDATES, WITH 1 UNIQUE ID and which is different from cam2_frame
+        # ### double check those tracks with GTs -- we might label them wrong or stitch them wrong
+        # unique_ids_cam2 = cam2_frame['identity_label'].unique()
+        # unique_ids_candidates = temporal_candidates['identity_label'].unique()
+        # if len(unique_ids_candidates) == 1 and unique_ids_candidates[0] not in unique_ids_cam2:
+        #     print(f"DEBUG: Cam2 {unique_ids_cam2} has {len(cam2_frame)} detections.")
+        #     print(f"DEBUG: Temporal candidates from Cam1 have unique ID: {unique_ids_candidates[0]}")
+        #     # print(temporal_candidates)
+        #     ## TODO - we need fix it with 'voted labels' from reid features??
+        #     temporal_candidates['filename'] = temporal_candidates['filename'].astype(str)
+        #     print ("DEBUG: Temporal candidates filenames:", temporal_candidates['filename'].unique())
+        #     print("cam1 tracklets:", cam1_tracklets.keys())
+        #     import sys; sys.exit(1)
+        
         cam2_positions = cam2_frame[['world_x', 'world_y']].values
         cam1_positions = temporal_candidates[['world_x', 'world_y']].values
         
@@ -210,6 +224,7 @@ def _flatten_tracklets(camera_data):
             t_copy = dict(t)
             if not t_copy.get("identity_label"):
                 t_copy["identity_label"] = idlabel
+                t_copy["voted_track_label"] = idlabel
             tracklets.append(t_copy)
     return tracklets
 
@@ -280,6 +295,81 @@ def _select_cam1_paths(entries, starts, window_start, window_end):
     return [p for p in paths if p]
 
 
+def _resolve_id_conflicts(cam2_tracklets):
+    """
+    Resolve conflicts where the same ID is assigned to multiple tracks at the same time.
+    
+    Strategy:
+    1. Find temporal overlaps for each identity_label
+    2. For conflicting tracks, keep the one with best match quality
+    3. Revert others to their original identity_label
+    
+    Parameters
+    ----------
+    cam2_tracklets : list
+        List of tracklet dictionaries with identity_label and match metadata
+    
+    Returns
+    -------
+    list
+        Updated tracklets with conflicts resolved
+    """
+    from collections import defaultdict
+    
+    # Group tracklets by identity_label
+    identity_groups = defaultdict(list)
+    for t in cam2_tracklets:
+        idlabel = t.get("identity_label")
+        if idlabel:
+            identity_groups[idlabel].append(t)
+    
+    conflicts_resolved = 0
+    
+    for idlabel, tracklets in identity_groups.items():
+        if len(tracklets) <= 1:
+            continue
+        
+        # Parse timestamps for each tracklet
+        tracklet_times = []
+        for t in tracklets:
+            start = _parse_timestamp(t.get("start_timestamp"))
+            end = _parse_timestamp(t.get("end_timestamp"))
+            if start and end:
+                tracklet_times.append((t, start, end))
+        
+        if len(tracklet_times) <= 1:
+            continue
+        
+        # Check for temporal overlaps
+        for i in range(len(tracklet_times)):
+            for j in range(i + 1, len(tracklet_times)):
+                t1, start1, end1 = tracklet_times[i]
+                t2, start2, end2 = tracklet_times[j]
+                
+                # Check if they overlap
+                if start1 <= end2 and start2 <= end1:
+                    # Conflict detected - resolve based on match quality
+                    quality1 = t1.get("match_quality", 0)
+                    quality2 = t2.get("match_quality", 0)
+                    
+                    # Keep the one with higher quality, revert the other
+                    if quality1 >= quality2:
+                        # Revert t2 to original ID
+                        original_id = t2.get("original_identity_label", t2.get("identity_label"))
+                        t2["identity_label"] = original_id
+                        conflicts_resolved += 1
+                    else:
+                        # Revert t1 to original ID
+                        original_id = t1.get("original_identity_label", t1.get("identity_label"))
+                        t1["identity_label"] = original_id
+                        conflicts_resolved += 1
+    
+    if conflicts_resolved > 0:
+        print(f"Resolved {conflicts_resolved} ID conflicts due to temporal overlaps")
+    
+    return cam2_tracklets
+
+
 def cross_camera_id_matching(
     cam1_data,
     cam2_data,
@@ -311,12 +401,13 @@ def cross_camera_id_matching(
         Updated cam2 final_stitched_map with identity labels reassigned
     """
     
-    ### TODO - improve the matching -- do it with dataframes
 
     from tqdm import tqdm
     
     cam1_tracklets = _flatten_tracklets(cam1_data)
     cam2_tracklets = _flatten_tracklets(cam2_data)
+    
+    ### filename2voted_id
 
     if not cam1_tracklets or not cam2_tracklets:
         return cam2_data
@@ -332,6 +423,11 @@ def cross_camera_id_matching(
         cam2_df = _load_csv_cached(cam2_csv, csv_cache)
         if cam2_df is None or cam2_df.empty:
             continue
+
+        # Store original identity for conflict resolution
+        original_identity = t.get("identity_label", "unknown")
+        t["original_identity_label"] = original_identity
+        t["voted_track_label"] = t.get("voted_track_label", "unknown")
 
         cam2_start = _parse_timestamp(t.get("start_timestamp"))
         cam2_end = _parse_timestamp(t.get("end_timestamp"))
@@ -376,26 +472,45 @@ def cross_camera_id_matching(
         if len(matched_identities) > 0:
             identity_counts = matched_identities.value_counts()
             final_identity = identity_counts.idxmax()
-            original_identity = t.get("identity_label", "unknown")
+            match_count = identity_counts.max()
+            avg_distance = cam2_matched[cam2_matched["matched_identity"] == final_identity]["match_distance"].mean()
+            
+            # Calculate match quality score (higher is better)
+            # Based on: frequency of matches and inverse of average distance
+            match_quality = match_count / (1 + avg_distance)
+            
             t["identity_label"] = final_identity
+            t["match_quality"] = match_quality
+            t["match_count"] = int(match_count)
+            t["avg_match_distance"] = float(avg_distance)
+            
             stats[f"{original_identity}->{final_identity}"] += 1
             summary_rows.append(
                 {
                     "filename": os.path.basename(cam2_csv) if cam2_csv else "",
                     "original_identity": original_identity,
                     "matched_identity": final_identity,
+                    "match_quality": match_quality,
+                    "match_count": match_count,
+                    "avg_distance": avg_distance,
                 }
             )
         else:
-            original_identity = t.get("identity_label", "unknown")
+            t["match_quality"] = 0
             stats[f"{original_identity}"] += 1
             summary_rows.append(
                 {
                     "filename": os.path.basename(cam2_csv) if cam2_csv else "",
                     "original_identity": original_identity,
                     "matched_identity": None,
+                    "match_quality": 0,
+                    "match_count": 0,
+                    "avg_distance": np.nan,
                 }
             )
+    
+    # Resolve ID conflicts (same ID assigned to multiple tracks at same time)
+    cam2_tracklets = _resolve_id_conflicts(cam2_tracklets)
     
     # save summary_rows to DataFrame
     summary_df = pd.DataFrame(summary_rows)
@@ -422,10 +537,9 @@ def cross_camera_id_matching(
             print("No matches found")
 
     return updated_cam2_map
-    
+
 
 if __name__ == "__main__":
     cam1_dir = "/Users/zhoumu/Downloads/vis/zag_elp_cam_016/2025-11-15"
     cam2_dir = "/Users/zhoumu/Downloads/vis/zag_elp_cam_019/2025-11-15"
     output_dir = "/Users/zhoumu/Downloads/vis/zag_elp_cam_019_matched/2025-11-15"
-    

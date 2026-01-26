@@ -43,13 +43,14 @@ from post_processing.analysis.analyze_lateral_sleeping import (
 from post_processing.core.tracklet_manager import TrackletManager, track_csv2identity
 from post_processing.tools.utils import setup_logger, load_gallery_features
 from datetime import datetime, timedelta
+from post_processing.core.temporal_smooth import smooth_behavior_cross_cameras
 
 def update_csv_from_df(df: pd.DataFrame) -> None:
     
-    track_files = df['track_filename'].unique().tolist()
+    track_files = df['track_csv_path'].unique().tolist()
     
     for track_file in track_files:
-        _df = df[ df['track_filename'] == track_file ]
+        _df = df[ df['track_csv_path'] == track_file ]
         df_original = pd.read_csv(track_file)
         original_columns = df_original.columns.tolist()
         _df = _df[original_columns]
@@ -67,7 +68,9 @@ def run_stitching(
     height: int = 1080,
     width: int = 1920,
     num_identities: int = 2,
-    output_dir: Path = Path("/media/ElephantsWD/elephants/xmas/demo")
+    output_dir: Path = Path("/media/ElephantsWD/elephants/xmas/demo"),
+    save_track_results: bool = True,
+    run_stitching:  bool = True,
 ):
     """Stitch tracklets for a single camera/time window and assign IDs."""
     logger.info(
@@ -102,39 +105,46 @@ def run_stitching(
     tracklet_manager.load_tracklets_for_camera(track_dirs=track_dirs, camera_id=camera_id)
         
     print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
+    
+    if not run_stitching:
+        final_stitched_map = tracklet_manager.load_stitched_tracklets_from_dir(
+            dir= output_dir
+        )
+        return tracklet_manager, final_stitched_map
 
     print("\n" + "=" * 80)
     print("Testing BIDIRECTIONAL GALLERY-based stitching")
     print("=" * 80)
     tracklet_manager.stitch_tracklets_bidirectional(
-        max_gap_frames=600,
+        max_gap_frames=1600,
+        max_long_gap_frames=30000,
         local_sim_th=0.5,
         gallery_sim_th=0.45,
-        head_k=5,
-        tail_k=5,
+        long_gap_gallery_th=0.60,
+        head_k=45,
+        tail_k=45,
         gallery_k=10,
-        w_local=0.6,
-        w_gallery=0.4,
+        w_local=0.2,
+        w_gallery=0.8,
     )
     
-    tracklet_manager.get_stitched_tracklets(
-                                             gallery_features=gallery_features,
-                                             gallery_labels=gallery_labels
-                                             )
+    tracklet_manager.get_stitched_tracklets(gallery_features=gallery_features,
+                                             gallery_labels=gallery_labels)
     
-    tracklet_manager.save_stitched_tracklets(
-        tracklet_manager.final_stitched_map,
-        output_dir= output_dir
-    )
+    if save_track_results:
+        tracklet_manager.save_stitched_tracklets(
+            tracklet_manager.final_stitched_map,
+            output_dir= output_dir
+        )
 
-    csv2identity = track_csv2identity(tracklet_manager.final_stitched_map)
+        csv2identity = track_csv2identity(tracklet_manager.final_stitched_map)
 
-    ## save identity label to csv
-    for track_csv, identity_label in csv2identity.items():
-        df = pd.read_csv(track_csv)
-        df['identity_label'] = identity_label
-        df.to_csv(track_csv, index=False)
-        logger.info("Saved identity label %s to %s", identity_label, track_csv)
+        ## save identity label to csv
+        for track_csv, identity_label in csv2identity.items():
+            df = pd.read_csv(track_csv)
+            df['identity_label'] = identity_label
+            df.to_csv(track_csv, index=False)
+            logger.info("Saved identity label %s to %s", identity_label, track_csv)
 
     return tracklet_manager, tracklet_manager.final_stitched_map
 
@@ -163,6 +173,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1920, help="Width of the video frames.")
     parser.add_argument("--output_dir", type=str, default='/media/ElephantsWD/elephants/xmas/demo', 
                         help="Output directory for post-processed results.")
+    parser.add_argument("--run-stitching", action="store_true", help="Whether to run tracklet stitching.")
+    parser.set_defaults(run_stitching=True)
+    
+    parser.add_argument("--cross-camera-matching", action="store_true", help="Whether to run cross-camera ID matching.")
+    parser.set_defaults(cross_camera_matching=True)
 
     return parser.parse_args()
 
@@ -177,8 +192,7 @@ def main():
     
     # Load file manager and get input file path
     camera_ids = ["016", "017", "018", "019"]
-    # camera_ids = [ "017", "018"] # TESTING
-    camera_ids = [ "016", "019"] # TESTING
+    # camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"]. ## DEBUG
     output_dir= Path(args.output_dir)
 
     reid_model = load_reid(
@@ -234,7 +248,7 @@ def main():
             continue
         
         # print(f"Processing camera {camera_id} from {start_datetime} to {end_datetime}")
-    
+        
         tracklet_manager, final_stitched_tracklets = run_stitching(
             track_dirs=track_dirs,
             camera_id=camera_id,
@@ -246,17 +260,19 @@ def main():
             width=args.width,
             num_identities=num_identities,
             logger=logger,
-            output_dir= Path(output_dir)
+            output_dir= Path(output_dir),
+            save_track_results=True,
+            run_stitching=args.run_stitching,
         )
 
         final_camera_stitched_maps[camera_id] = (tracklet_manager, final_stitched_tracklets)
 
 
-    ### TODO - cross-camera calibration and stitching - OPTIMIZE THE CODE
+    ### cross-camera calibration and stitching - OPTIMIZE THE CODE
 
     cam_pairs = [
         ("016", "019"),
-        # ("018", "017"),
+        ("018", "017"),
     ]
 
     print("\n" + "=" * 80 + "\n")
@@ -264,6 +280,14 @@ def main():
     print("\n" + "=" * 80 + "\n")
 
     for cam1_id, cam2_id in cam_pairs:
+        if args.cross_camera_matching is False:
+            logger.info("Skipping cross-camera ID matching as per user request.")
+            break
+        
+        if cam1_id not in final_camera_stitched_maps or cam2_id not in final_camera_stitched_maps:
+            logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
+            continue
+        
         updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
                                                      final_camera_stitched_maps[cam2_id][1],
                                                      window_hours=1,
@@ -271,8 +295,9 @@ def main():
                                                      distance_threshold=2.0,
                                                      downsample_seconds=1.0)
         
-        ### TODO -- clear the code
+        ###  clear the code
         tracklet_manager, _ = final_camera_stitched_maps[cam2_id]
+        ### Now - don't update the jsons -- we need compare the algorithm performance, TODO - remove it
         # tracklet_manager.save_stitched_tracklets(
         #     updated_cam2_data,
         #     output_dir= output_dir
@@ -288,28 +313,26 @@ def main():
         
         ### print out the original 
         # print("updated_cam2_data", updated_cam2_data)
-    
-    ### TODO
-    # print("\n" + "=" * 80 + "\n")
-    # print("Running CROSS-CAMERA BEHAVIOR MATCHING")
-    # print("\n" + "=" * 80 + "\n")
-    
-    # for cam1_id, cam2_id in cam_pairs:
-    #     # cross-camera behavior matching. -- update behavior labels based on two cameras
-        
-    #     df_results = load_valid_tracks(
-    #         record_root=args.record_root,
-    #         start_datetime=start_datetime,
-    #         end_datetime=end_datetime,
-    #         camera_ids=(cam1_id, cam2_id),
-    #     )
-    #     # TODO - smooth IDs
 
-    #     df_results = smooth_behavior_cross_cameras(
-    #         df_results)
+
+    ## TODO
+    print("\n" + "=" * 80 + "\n")
+    print("Running CROSS-CAMERA BEHAVIOR MATCHING")
+    print("\n" + "=" * 80 + "\n")
+    
+    for cam1_id, cam2_id in cam_pairs:
+        # cross-camera behavior matching. -- update behavior labels based on two cameras
         
-    #     # update csv
-    #     update_csv_from_df(df_results)
+        df_results = load_valid_tracks(
+            record_root=args.record_root,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            camera_ids=(cam1_id, cam2_id),
+        )
+        df_results = smooth_behavior_cross_cameras(df_results)
+        
+        # update csv
+        update_csv_from_df(df_results)
 
 
 

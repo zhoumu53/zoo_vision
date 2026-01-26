@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 from post_processing.utils import load_embedding, load_semi_gt_ids
 from post_processing.core.reid_inference import match_to_gallery
 from post_processing.tools.run_reid_feature_extraction import vote_matched_labels
-from post_processing.tools.reranking import assign_two_identities_from_trackid2label_counts
-
+from post_processing.tools.reranking import assign_identities_from_trackid2label_counts
+import json
 
 seed = 42
 np.random.seed(seed)
@@ -139,7 +139,7 @@ class InvalidZoneHandler:
             return None
 
         try:
-            import json
+            
             with open(json_path, "r") as f:
                 data = json.load(f)
 
@@ -635,13 +635,11 @@ class TrackletManager:
                                 stitched_tracklets: Dict[str, List[Dict[str, object]]],
                                 output_dir : Path):
 
-        import json
-
         if self.start_time and self.end_time:
             date_str = '%Y%m%d_%H%M%S'
             time_range_str = f"{self.start_time.strftime(date_str)}_{self.end_time.strftime(date_str)}"
         else:
-            time_range_str = "fullday"
+            raise ValueError("Both start_time and end_time must be specified to save stitched tracklets.")
             
         if output_dir is None:
             raise ValueError("output_dir must be specified to save stitched tracklets.")
@@ -657,6 +655,26 @@ class TrackletManager:
         if self.logger:
             self.logger.info("Saved stitched tracklets JSON to %s", save_path)
 
+    def load_stitched_tracklets_from_dir(self, dir: Path = None) -> Dict[str, List[Dict[str, object]]]:
+        """Load stitched tracklets from a JSON file."""        
+        
+        if dir is None:
+            raise ValueError("output_dir must be specified to save stitched tracklets.")
+        
+        time_range_str = self.start_time.strftime("%Y%m%d_%H%M%S") + "_" + self.end_time.strftime("%Y%m%d_%H%M%S") if self.start_time and self.end_time else "fullday"
+        camera_str = f"zag_elp_cam_{self.camera_id}"
+        date_str = self.start_time.strftime("%Y-%m-%d") if self.start_time else "unknown_date"
+        json_path = dir / camera_str / date_str / f"stitched_tracklets_cam{self.camera_id}_{time_range_str}.json"
+
+        if not json_path.exists():
+            self.logger.error(f"Stitched tracklets JSON file not found: {json_path}")
+            return {}
+
+        with json_path.open("r") as f:
+            stitched_tracklets = json.load(f)
+
+        self.logger.info(f"Loaded stitched tracklets from {json_path}")
+        return stitched_tracklets
 
 
     def vote_tracklet_identity_labels(self, start_time: Optional[datetime | str] = None, 
@@ -767,7 +785,7 @@ class TrackletManager:
                 for sid in trackid2label_counts.keys():
                     trackid2idlabel[sid] = 'Thai'
             else:
-                ranks = assign_two_identities_from_trackid2label_counts(trackid2label_counts, known_labels, score_mode="ratio")
+                ranks = assign_identities_from_trackid2label_counts(trackid2label_counts, known_labels, score_mode="ratio")
                 for sid, info in ranks.items():
                     trackid2idlabel[sid] = info["assigned_label"]
         
@@ -779,8 +797,10 @@ class TrackletManager:
     def stitch_tracklets_bidirectional(
         self,
         max_gap_frames: int = 600,
+        max_long_gap_frames : int = 30000,
         local_sim_th: float = 0.5,
         gallery_sim_th: float = 0.45,
+        long_gap_gallery_th: float = 0.6,
         head_k: int = 5,
         tail_k: int = 5,
         gallery_k: int = 10,
@@ -798,13 +818,13 @@ class TrackletManager:
             )
             return
         print("Total tracklets for camera", self.camera_id, ":", len(cam_tracklets))
-
         stitch_tracklets_bidirectional_gallery(
             cam_tracklets,
-            num_identities=self.num_identities,
-            max_gap_frames=max_gap_frames,
+            max_gap_frames=max_gap_frames, 
+            max_long_gap_frames=max_long_gap_frames,
             local_sim_th=local_sim_th,
             gallery_sim_th=gallery_sim_th,
+            long_gap_gallery_th=long_gap_gallery_th,
             head_k=head_k,
             tail_k=tail_k,
             gallery_k=gallery_k,
@@ -821,6 +841,15 @@ class TrackletManager:
             f"(max_gap_frames={max_gap_frames}, local_th={local_sim_th}, "
             f"gallery_th={gallery_sim_th})"
         )
+
+        num_ids = len(set(t.stitched_id for t in cam_tracklets))
+        print(
+            f"[bidirectional] camera {self.camera_id}: "
+            f"{len(cam_tracklets)} tracklets -> {num_ids} stitched_ids "
+            f"(max_gap_frames={max_gap_frames}, local_th={local_sim_th}, "
+            f"gallery_th={gallery_sim_th})"
+        )
+        
         
     def analyze_stitching_results(self, trackid2idlabel: Dict[str, str], 
                                   start_time: Optional[datetime | str] = None, 
