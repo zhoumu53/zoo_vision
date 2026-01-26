@@ -57,79 +57,57 @@ def update_csv_from_df(df: pd.DataFrame) -> None:
         _df.to_csv(track_file, index=False)
 
 
-def run_stitching(
+def get_stitched_data(
     track_dirs: list[Path],
+    tracklet_manager: TrackletManager,
     camera_id: str,
-    start_time: str,
-    end_time: str,
     gallery_features,
     gallery_labels,
     logger: logging.Logger,
-    height: int = 1080,
-    width: int = 1920,
     num_identities: int = 2,
     output_dir: Path = Path("/media/ElephantsWD/elephants/xmas/demo"),
     save_track_results: bool = True,
     run_stitching:  bool = True,
 ):
     """Stitch tracklets for a single camera/time window and assign IDs."""
-    logger.info(
-        "Stitching tracklets for camera %s between %s and %s",
-        camera_id,
-        start_time,
-        end_time,
-    )
-    
-    # TODO - check this
-    # if known_labels is not None:
-    #     logger.info("Using known labels for gallery filtering: %s", known_labels)
-    #     valid_indices = (
-    #         [i for i, label in enumerate(gallery_labels) if label in known_labels]
-    #         if known_labels is not None
-    #         else list(range(len(gallery_labels)))
-    #     )
-    #     g_feats = gallery_features[valid_indices]
-    #     g_labels = [gallery_labels[i] for i in valid_indices]
 
-    tracklet_manager = TrackletManager(
-        track_dirs=track_dirs,
-        camera_id=camera_id,
-        num_identities=num_identities,  # TODO: set dynamically? with human prior?
-        logger=logger,
-        start_time=start_time,
-        end_time=end_time,
-        height=height,
-        width=width,
-    )
-    
-    tracklet_manager.load_tracklets_for_camera(track_dirs=track_dirs, camera_id=camera_id)
+    tracklet_manager.load_tracklets_for_camera(track_dirs=track_dirs, 
+                                               camera_id=camera_id)
         
     print(f"Loaded {len(tracklet_manager.tracklets)} tracklets for camera {tracklet_manager.camera_id}")
     
     if not run_stitching:
+        ### TODO -- if not exists -- load initial tracklets, convert to final_stitched_map format
         final_stitched_map = tracklet_manager.load_stitched_tracklets_from_dir(
             dir= output_dir
         )
-        return tracklet_manager, final_stitched_map
+        if final_stitched_map is None:
+            # convert tracklet_manager.tracklets to final_stitched_map format
+            final_stitched_map = {}
+            for t in tracklet_manager.tracklets:
+                track_filename = t['track_filename']
+                identity_label = t.get('identity_label', 'unknown')
+                final_stitched_map.setdefault(identity_label, []).append(t)
+        
+        return final_stitched_map
 
     print("\n" + "=" * 80)
     print("Testing BIDIRECTIONAL GALLERY-based stitching")
     print("=" * 80)
     tracklet_manager.stitch_tracklets_bidirectional(
-        max_gap_frames=1600,
-        max_long_gap_frames=30000,
-        local_sim_th=0.5,
-        gallery_sim_th=0.45,
-        long_gap_gallery_th=0.60,
-        head_k=45,
-        tail_k=45,
+        max_gap_frames=900,
+        max_long_gap_frames=12000, 
+        local_sim_th=0.6,
+        gallery_sim_th=0.55,
+        long_gap_gallery_th=0.65,
+        head_k=25,
+        tail_k=25,
         gallery_k=10,
         w_local=0.2,
         w_gallery=0.8,
     )
     
-    tracklet_manager.get_stitched_tracklets(gallery_features=gallery_features,
-                                             gallery_labels=gallery_labels)
+    tracklet_manager.get_stitched_tracklets()
     
     if save_track_results:
         tracklet_manager.save_stitched_tracklets(
@@ -146,7 +124,7 @@ def run_stitching(
             df.to_csv(track_csv, index=False)
             logger.info("Saved identity label %s to %s", identity_label, track_csv)
 
-    return tracklet_manager, tracklet_manager.final_stitched_map
+    return tracklet_manager.final_stitched_map
 
 def id_matching():
     """Placeholder for id matching."""
@@ -174,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default='/media/ElephantsWD/elephants/xmas/demo', 
                         help="Output directory for post-processed results.")
     parser.add_argument("--run-stitching", action="store_true", help="Whether to run tracklet stitching.")
-    parser.set_defaults(run_stitching=True)
+    parser.set_defaults(run_stitching=False)
     
     parser.add_argument("--cross-camera-matching", action="store_true", help="Whether to run cross-camera ID matching.")
     parser.set_defaults(cross_camera_matching=True)
@@ -192,7 +170,7 @@ def main():
     
     # Load file manager and get input file path
     camera_ids = ["016", "017", "018", "019"]
-    # camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"]. ## DEBUG
+    camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"] ## DEBUG
     output_dir= Path(args.output_dir)
 
     reid_model = load_reid(
@@ -228,6 +206,7 @@ def main():
     start_datetime = f"{dates[0]} {start_time}"
     end_datetime = f"{dates[-1]} {end_time}"
     
+    
     # stitching per camera
 
     final_camera_stitched_maps = {}
@@ -247,25 +226,32 @@ def main():
             logger.warning("Track directories for camera %s on dates %s do not all exist. Skipping.", camera_id, dates)
             continue
         
-        # print(f"Processing camera {camera_id} from {start_datetime} to {end_datetime}")
-        
-        tracklet_manager, final_stitched_tracklets = run_stitching(
+        tracklet_manager = TrackletManager(
             track_dirs=track_dirs,
             camera_id=camera_id,
+            num_identities=num_identities,  # TODO: set dynamically? with human prior?
+            logger=logger,
             start_time=start_datetime,
             end_time=end_datetime,
-            gallery_features=gallery_features,
-            gallery_labels=gallery_labels,
             height=args.height,
             width=args.width,
-            num_identities=num_identities,
-            logger=logger,
-            output_dir= Path(output_dir),
-            save_track_results=True,
-            run_stitching=args.run_stitching,
+            gallery_features=gallery_features,
+            gallery_labels=gallery_labels,
         )
+        
+        tracklet_results = get_stitched_data(
+                track_dirs=track_dirs,
+                tracklet_manager=tracklet_manager,
+                camera_id=camera_id,
+                gallery_features=gallery_features,
+                gallery_labels=gallery_labels,
+                logger=logger,
+                output_dir= Path(output_dir),
+                save_track_results=True,
+                run_stitching=args.run_stitching,
+            )
 
-        final_camera_stitched_maps[camera_id] = (tracklet_manager, final_stitched_tracklets)
+        final_camera_stitched_maps[camera_id] = (tracklet_manager, tracklet_results)
 
 
     ### cross-camera calibration and stitching - OPTIMIZE THE CODE
@@ -288,12 +274,14 @@ def main():
             logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
             continue
         
+        ## TODO - avoid same ID to different track issues
         updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
                                                      final_camera_stitched_maps[cam2_id][1],
                                                      window_hours=1,
                                                      time_window_seconds=0.5,
                                                      distance_threshold=2.0,
-                                                     downsample_seconds=1.0)
+                                                     downsample_seconds=1.0,
+                                                     use_voted_labels=True)
         
         ###  clear the code
         tracklet_manager, _ = final_camera_stitched_maps[cam2_id]

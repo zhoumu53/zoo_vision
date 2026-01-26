@@ -217,14 +217,15 @@ def match_identities_for_dataframe(
     
     return cam2_updated
 
-def _flatten_tracklets(camera_data):
+def _flatten_tracklets(camera_data, use_voted_labels=False):
     tracklets = []
     for idlabel, items in (camera_data or {}).items():
         for t in items:
             t_copy = dict(t)
             if not t_copy.get("identity_label"):
                 t_copy["identity_label"] = idlabel
-                t_copy["voted_track_label"] = idlabel
+            if use_voted_labels:
+                t_copy["identity_label"] = t_copy["voted_track_label"]
             tracklets.append(t_copy)
     return tracklets
 
@@ -377,7 +378,8 @@ def cross_camera_id_matching(
     time_window_seconds=0.5,
     distance_threshold=2.0,
     print_summary=True,
-    downsample_seconds=None
+    downsample_seconds=None,
+    use_voted_labels=False
 ):
     """
     Cross-camera ID matching using stitched tracklet maps.
@@ -404,8 +406,8 @@ def cross_camera_id_matching(
 
     from tqdm import tqdm
     
-    cam1_tracklets = _flatten_tracklets(cam1_data)
-    cam2_tracklets = _flatten_tracklets(cam2_data)
+    cam1_tracklets = _flatten_tracklets(cam1_data, use_voted_labels=use_voted_labels)
+    cam2_tracklets = _flatten_tracklets(cam2_data, use_voted_labels=use_voted_labels)
     
     ### filename2voted_id
 

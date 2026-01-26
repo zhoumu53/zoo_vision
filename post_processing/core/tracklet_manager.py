@@ -66,20 +66,7 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
 
     ## load identity label from npz if exists
     voted_track_label = "invalid"
-    npz_path = Path(track_csv).with_suffix(".npz")
-    if npz_path.exists():
-        try:
-            data = np.load(npz_path, allow_pickle=True)
-            voted_track_label = data.get('voted_track_labels', 'invalid')
-            if isinstance(voted_track_label, np.ndarray):
-                voted_track_label = voted_track_label.item()
-        except Exception as e:
-            logger.warning(f"Failed to load identity label from {npz_path}: {e}")
-    else:
-        ### we didn't save npz file for invalid tracks
-        voted_track_label = "invalid"
-         
-        
+  
     t = Tracklet(track_id=track_id, 
                  raw_track_id=track_id, 
                  camera_id=camera_id or "",
@@ -93,8 +80,6 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
                  voted_track_label=voted_track_label
                  )
     
-    # print(f"Initialized tracklet {track_id} from {track_csv} with {len(df)} frames.", start_timestamp, end_timestamp)
-
     return [t]
 
 
@@ -111,8 +96,6 @@ def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]]) -
     return csv2identity
 
 
-
-################# TODO: segmentation model for the invalid zone detection if camera view is changed (now the polygon points are fixed) ##################
 class InvalidZoneHandler:
     """Handle invalid zone detection and filtering."""
 
@@ -148,11 +131,11 @@ class InvalidZoneHandler:
                 points = zone.get("points", [])
                 if points:
                     poly_array = np.array(points, dtype=np.int32)
-                    print(f"Loaded invalid zone '{zone.get('name', 'unnamed')}' for camera {camera_id}: {len(points)} points")
+                    # print(f"Loaded invalid zone '{zone.get('name', 'unnamed')}' for camera {camera_id}: {len(points)} points")
                     polygons.append(poly_array)
 
             self.zone_cache[camera_id] = polygons if polygons else None
-            print(f"Loaded {len(polygons)} invalid zone(s) for camera {camera_id}")
+            # print(f"Loaded {len(polygons)} invalid zone(s) for camera {camera_id}")
             return polygons if polygons else None
 
         except Exception as e:
@@ -311,6 +294,8 @@ class TrackletManager:
                  invalid_zones_dir: Path = Path('/media/mu/zoo_vision/data/invalid_zones'),
                  height: int = 1520,
                  width: int = 1920,
+                 gallery_features = None,
+                 gallery_labels = None,
                  ):
         
         """Initialize TrackletManager.
@@ -340,10 +325,12 @@ class TrackletManager:
         self.tracklets: List[Tracklet] = []
         self.height = height
         self.width = width
+        self.gallery_features = gallery_features
+        self.gallery_labels = gallery_labels
 
         self.invalid_zone_handler = InvalidZoneHandler(invalid_zones_dir, 
                                                        self.logger)
-        # self.invalid_zone_handler.plot_invalid_zones(frame, self.camera_id)
+        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id)
 
     def _format_time(self, timestamp) -> datetime:
         """Convert time string to datetime object.
@@ -440,7 +427,10 @@ class TrackletManager:
 
         return voted_track_label
 
-    def load_tracklets_for_camera(self, track_dirs: list[Path], camera_id: str | None = None, filter_invalids: bool = True) -> None:
+    def load_tracklets_for_camera(self, 
+                                  track_dirs: list[Path], 
+                                  camera_id: str | None = None, 
+                                  filter_invalids: bool = True) -> None:
 
         camera_id = camera_id or self.camera_id            
         # track_files = sorted(track_dir.glob("*.csv"))
@@ -508,11 +498,23 @@ class TrackletManager:
 
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
+            
+            voted_track_label = "invalid"
+            if tracklet[0].feature_path and tracklet[0].feature_path.exists():
+                feats, frame_ids, _, avg_feat = load_embedding(tracklet[0].feature_path)
+                voted_track_label = self.vote_identity_label(
+                    features=feats,
+                    avg_embedding=avg_feat,
+                    gallery_features=self.gallery_features,
+                    gallery_labels=self.gallery_labels,
+                    known_labels=self.known_labels
+                )
+            tracklet[0].voted_track_label = voted_track_label
 
             self.tracklets.extend(tracklet)
-        print(f"Loaded {len(self.tracklets)} tracklets for camera {camera_id}, "
-              f"marked {n_invalid} as invalid due to invalid zones."
-              f"valid tracklets: {len(self.tracklets)-n_invalid}")
+        # print(f"Loaded {len(self.tracklets)} tracklets for camera {camera_id}, "
+        #       f"marked {n_invalid} as invalid due to invalid zones."
+        #       f"valid tracklets: {len(self.tracklets)-n_invalid}")
 
 
     def aggregate_tracklet_features(self) -> None:
@@ -545,10 +547,7 @@ class TrackletManager:
 
                 
 
-    def get_stitched_tracklets(self, 
-                                gallery_features: np.ndarray = None,
-                                gallery_labels: List[str] = None,
-                                 ) -> None:
+    def get_stitched_tracklets(self) -> None:
         """
         Save stitched tracklets metadata to json file.
         This does NOT save per-frame data or features,
@@ -564,21 +563,21 @@ class TrackletManager:
         }
         """
 
-        known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id)
+        known_labels = self.known_labels
         self.stitched_map: Dict[str, List[Dict[str, object]]] = {}
         for t in self.tracklets:
             
-            voted_track_label = 'invalid'
-            # if voted_track_label is None or voted_track_label == "invalid":
-            if t.feature_path and t.feature_path.exists():
-                feats, frame_ids, _, avg_feat = load_embedding(t.feature_path)
-                voted_track_label = self.vote_identity_label(
-                    features=feats,
-                    avg_embedding=avg_feat,
-                    gallery_features=gallery_features,
-                    gallery_labels=gallery_labels,
-                    known_labels=known_labels
-                )
+            # voted_track_label = 'invalid'
+            # # if voted_track_label is None or voted_track_label == "invalid":
+            # if t.feature_path and t.feature_path.exists():
+            #     feats, frame_ids, _, avg_feat = load_embedding(t.feature_path)
+            #     voted_track_label = self.vote_identity_label(
+            #         features=feats,
+            #         avg_embedding=avg_feat,
+            #         gallery_features=gallery_features,
+            #         gallery_labels=gallery_labels,
+            #         known_labels=known_labels
+            #     )
                                         
             sid = "unassigned" if t.invalid_flag else str(t.stitched_id)
             
@@ -592,7 +591,7 @@ class TrackletManager:
                     "stitched_id": t.stitched_id,
                     "camera_id": t.camera_id,
                     # "avg_tracklet_label": avg_tracklet_label,  ### avg embedding from all tracklets
-                    "voted_track_label": voted_track_label,   ### voted label from this track
+                    "voted_track_label": t.voted_track_label,   ### voted label from this track
                     "semi_gt_labels": known_labels,
                     # "identity_label": identity_label,   ### final label
                     "invalid_flag": t.invalid_flag,
@@ -605,7 +604,7 @@ class TrackletManager:
             )
             
         ### update stitched_map - get final voted label for each stitched_id 
-        start_time =None
+        start_time = None
         end_time = None
         trackid2idlabel = self.vote_tracklet_identity_labels(start_time = start_time, end_time = end_time, known_labels=known_labels)
         ### update self.stitched_map: voted_track_label -> tracklets, not track_id -> tracklets
@@ -622,17 +621,29 @@ class TrackletManager:
             
             for t in tracklets:
                 t["identity_label"] = idlabel
-                # remove 'voted_track_label' field
-                # if 'voted_track_label' in t:
-                #     del t['voted_track_label']
-            
+                
             self.final_stitched_map.setdefault(idlabel, []).extend(tracklets)
-
+        
+        
+        ### flatten track results -- TODO - update 
+        self.final_tracklet_results: Dict[str, Dict[str, object]] = {}
+        for idlabel, tracklets in self.stitched_map.items():
+            if sid in trackid2idlabel:
+                idlabel = trackid2idlabel[sid]
+            else:
+                continue
+            
+            tracklets = self.stitched_map[sid]
+            
+            for t in tracklets:
+                t["identity_label"] = idlabel
+                self.final_tracklet_results[t["track_filename"]] = t
+                
 
         return self.final_stitched_map
     
     def save_stitched_tracklets(self, 
-                                stitched_tracklets: Dict[str, List[Dict[str, object]]],
+                                final_tracklet_results,
                                 output_dir : Path):
 
         if self.start_time and self.end_time:
@@ -650,7 +661,7 @@ class TrackletManager:
             save_path.parent.mkdir(parents=True, exist_ok=True)
 
         with save_path.open("w") as f:
-            json.dump(stitched_tracklets, f, indent=2)
+            json.dump(final_tracklet_results, f, indent=2)
 
         if self.logger:
             self.logger.info("Saved stitched tracklets JSON to %s", save_path)
@@ -668,7 +679,7 @@ class TrackletManager:
 
         if not json_path.exists():
             self.logger.error(f"Stitched tracklets JSON file not found: {json_path}")
-            return {}
+            return None
 
         with json_path.open("r") as f:
             stitched_tracklets = json.load(f)
@@ -760,7 +771,7 @@ class TrackletManager:
                         del label_counts[filter_label]
                         self.logger.debug(f"Filtered out '{filter_label}' from stitched_id {stitched_id}")
                         
-            ### TODO: if known_labels provided, further filter the labels not in known_labels
+            ### if known_labels provided, further filter the labels not in known_labels
             if known_labels:
                 for label in list(label_counts.keys()):
                     if label not in known_labels:
@@ -804,8 +815,8 @@ class TrackletManager:
         head_k: int = 5,
         tail_k: int = 5,
         gallery_k: int = 10,
-        w_local: float = 0.6,
-        w_gallery: float = 0.4,
+        w_local: float = 0.2,
+        w_gallery: float = 0.8,
     ):
         """
         """
