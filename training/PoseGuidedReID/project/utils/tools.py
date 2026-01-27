@@ -178,7 +178,7 @@ def load_model(model, checkpoint_path, logger, remove_fc=False, local_rank=0, is
     if os.path.isfile(checkpoint_path):
         if local_rank == 0:
             logger.info("=> loading checkpoint '{}'".format(checkpoint_path))
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
         if 'module.' in list(checkpoint.keys())[0]: # Check if saved from DDP model
             checkpoint = {k.replace('module.', ''): v for k, v in checkpoint.items()}
         if remove_fc:

@@ -152,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default='/media/ElephantsWD/elephants/xmas/demo', 
                         help="Output directory for post-processed results.")
     parser.add_argument("--run-stitching", action="store_true", help="Whether to run tracklet stitching.")
-    parser.set_defaults(run_stitching=False)
+    parser.set_defaults(run_stitching=True)
     
     parser.add_argument("--cross-camera-matching", action="store_true", help="Whether to run cross-camera ID matching.")
     parser.set_defaults(cross_camera_matching=True)

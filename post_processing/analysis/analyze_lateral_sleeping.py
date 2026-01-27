@@ -313,8 +313,8 @@ def main():
     camera_ids=["016", "019"]
     date = "2025-11-15"
     
-    # camera_ids = ["017", "018"]
-    # date = "2025-11-30"
+    camera_ids = ["017", "018"]
+    date = "2025-11-30"
 
     next_day = (pd.to_datetime(date) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     
@@ -322,7 +322,7 @@ def main():
     end_datetime=pd.Timestamp(f"{next_day} 07:59:59")
     
     
-    for new_beh_model in [False]:
+    for new_beh_model in [False, True]:
 
         df_results = load_valid_tracks(
             record_root=record_root,

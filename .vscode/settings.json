@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "${env:HOME}/git/zoo_vision/",
+    "cmake.sourceDirectory": "/media/mu/zoo_vision",
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
     "cmake.generator": "Ninja",
     "python.venvFolders": [".venv", "venv", ".env", "env"],
