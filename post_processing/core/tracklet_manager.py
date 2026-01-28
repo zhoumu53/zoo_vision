@@ -29,6 +29,8 @@ class Tracklet:
     
     camera_id: str = ""
     identity_label: str = "invalid" # final identity label after voting
+    stitched_label: str = "invalid"  # identity label during stitching
+    smoothed_label: str = "invalid"  # identity label after temporal smoothing
     voted_track_label: str = "invalid" # identity label voted from ReID features (from current tracklet only)
     semi_gt_labels: List[str] = field(default_factory=list)  # list of semi GT IDs matched to this tracklet
     stitched_id: Optional[int] = None
@@ -83,7 +85,8 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
     return [t]
 
 
-def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]]) -> Dict[str, str]:
+def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]],
+                       is_voted: bool = True) -> Dict[str, str]:
     
     csv2identity = {}
     
@@ -91,7 +94,7 @@ def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]]) -
         for t in tracklets:
             track_csv = t.get("track_csv_path", "")
             if track_csv:
-                csv2identity[track_csv] = t.get("identity_label", "invalid")
+                csv2identity[track_csv] = t.get("identity_label", "invalid") if not is_voted else t.get("voted_track_label", "invalid")
     
     return csv2identity
 

@@ -114,12 +114,16 @@ def get_stitched_data(
             output_dir= output_dir
         )
 
-        csv2identity = track_csv2identity(tracklet_manager.final_stitched_map)
+        csv2identity = track_csv2identity(tracklet_manager.final_stitched_map, 
+                                          is_voted=False)
 
         ## save identity label to csv
         for track_csv, identity_label in csv2identity.items():
             df = pd.read_csv(track_csv)
-            df['identity_label'] = identity_label
+            # df['identity_label'] = identity_label
+            # if 'identity_label' in df.columns - remove it first
+            if 'identity_label' in df.columns:
+                df = df.drop(columns=['identity_label'])
             df.to_csv(track_csv, index=False)
             logger.info("Saved identity label %s to %s", identity_label, track_csv)
 
@@ -169,8 +173,8 @@ def main():
     
     # Load file manager and get input file path
     camera_ids = ["016", "017", "018", "019"]
-    camera_ids = [ "017", "018"] 
-    camera_ids = ["016", "019"]
+    # camera_ids = [ "017", "018"] 
+    # camera_ids = ["016", "019"]
     # camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"] ## DEBUG
     output_dir= Path(args.output_dir)
 
@@ -262,66 +266,68 @@ def main():
         ("018", "017"),
     ]
 
-    # print("\n" + "=" * 80 + "\n")
-    # print("Running CROSS-CAMERA ID MATCHING")
-    # print("\n" + "=" * 80 + "\n")
-
-    # for cam1_id, cam2_id in cam_pairs:
-    #     if args.cross_camera_matching is False:
-    #         logger.info("Skipping cross-camera ID matching as per user request.")
-    #         break
-        
-    #     if cam1_id not in final_camera_stitched_maps or cam2_id not in final_camera_stitched_maps:
-    #         logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
-    #         continue
-        
-    #     ## TODO - avoid same ID to different track issues
-    #     updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
-    #                                                  final_camera_stitched_maps[cam2_id][1],
-    #                                                  window_hours=1,
-    #                                                  time_window_seconds=0.5,
-    #                                                  distance_threshold=2.0,
-    #                                                  downsample_seconds=1.0,
-    #                                                  use_voted_labels=True)
-        
-    #     ###  clear the code
-    #     tracklet_manager, _ = final_camera_stitched_maps[cam2_id]
-    #     ### Now - don't update the jsons -- we need compare the algorithm performance, TODO - remove it
-    #     # tracklet_manager.save_stitched_tracklets(
-    #     #     updated_cam2_data,
-    #     #     output_dir= output_dir
-    #     # )
-        
-    #     csv2identity = track_csv2identity(updated_cam2_data)
-    #     ## save identity label to csv
-    #     for track_csv, identity_label in csv2identity.items():
-    #         df = pd.read_csv(track_csv)
-    #         df['identity_label'] = identity_label
-    #         df.to_csv(track_csv, index=False)
-    #         logger.info("Saved identity label %s to %s", identity_label, track_csv)
-        
-    #     ### print out the original 
-    #     # print("updated_cam2_data", updated_cam2_data)
-
-    
-    ## TODO
     print("\n" + "=" * 80 + "\n")
-    print("Running CROSS-CAMERA BEHAVIOR MATCHING")
+    print("Running CROSS-CAMERA ID MATCHING")
     print("\n" + "=" * 80 + "\n")
-    
+
     for cam1_id, cam2_id in cam_pairs:
-        # cross-camera behavior matching. -- update behavior labels based on two cameras
+        if args.cross_camera_matching is False:
+            logger.info("Skipping cross-camera ID matching as per user request.")
+            break
         
-        df_results = load_valid_tracks(
-            record_root=args.record_root,
-            start_datetime=start_datetime,
-            end_datetime=end_datetime,
-            camera_ids=(cam1_id, cam2_id),
+        if cam1_id not in final_camera_stitched_maps or cam2_id not in final_camera_stitched_maps:
+            logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
+            continue
+        
+        ## TODO - avoid same ID to different track issues
+        updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
+                                                     final_camera_stitched_maps[cam2_id][1],
+                                                     window_hours=1,
+                                                     time_window_seconds=0.5,
+                                                     distance_threshold=2.0,
+                                                     downsample_seconds=1.0,
+                                                     use_voted_labels=True)
+        
+        ###  clear the code
+        tracklet_manager, _ = final_camera_stitched_maps[cam2_id]
+        ### Now - don't update the jsons -- we need compare the algorithm performance, TODO - remove it
+        tracklet_manager.save_stitched_tracklets(
+            updated_cam2_data,
+            output_dir= output_dir
         )
-        df_results = smooth_behavior_cross_cameras(df_results)
         
-        # update csv
-        update_csv_from_df(df_results)
+        ### update identity labels in json
+        
+        # csv2identity = track_csv2identity(updated_cam2_data)
+        # ## save identity label to csv
+        # for track_csv, identity_label in csv2identity.items():
+        #     df = pd.read_csv(track_csv)
+        #     df['identity_label'] = identity_label
+        #     df.to_csv(track_csv, index=False)
+        #     logger.info("Saved identity label %s to %s", identity_label, track_csv)
+        
+        ### print out the original 
+        # print("updated_cam2_data", updated_cam2_data)
+
+    
+    # ## TODO
+    # print("\n" + "=" * 80 + "\n")
+    # print("Running CROSS-CAMERA BEHAVIOR MATCHING")
+    # print("\n" + "=" * 80 + "\n")
+    
+    # for cam1_id, cam2_id in cam_pairs:
+    #     # cross-camera behavior matching. -- update behavior labels based on two cameras
+        
+    #     df_results = load_valid_tracks(
+    #         record_root=args.record_root,
+    #         start_datetime=start_datetime,
+    #         end_datetime=end_datetime,
+    #         camera_ids=(cam1_id, cam2_id),
+    #     )
+    #     df_results = smooth_behavior_cross_cameras(df_results)
+        
+    #     # update csv
+    #     update_csv_from_df(df_results)
 
 
 
