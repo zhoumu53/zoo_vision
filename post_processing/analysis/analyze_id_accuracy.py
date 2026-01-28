@@ -43,7 +43,12 @@ def compute_id_performance(date : str = '2025-11-15',
     
     ### load stitched results & voted results
     json_path = stitched_dir / f'zag_elp_cam_{cam_id}' / date / f'*{start_time.replace(":", "")}*{end_time.replace(":", "")}*.json'
-    json_path = list(json_path.parent.glob(json_path.name))[0]
+    # if not exist, raise error
+    try:
+        json_path = list(json_path.parent.glob(json_path.name))[0]
+    except IndexError:
+        json_path = Path(str(json_path).replace('demo', 'demo-'))
+        json_path = list(json_path.parent.glob(json_path.name))[0]
     print("Loading stitched results from JSON:", json_path)
     # read json
     with open(json_path, 'r') as f:
@@ -58,6 +63,7 @@ def compute_id_performance(date : str = '2025-11-15',
     # rename 'identity_label' to 'stitched_id'
     df_stitched = df_stitched.rename(columns={'identity_label': 'stitched_id'})
     
+
     ### load smoothed results (from csvs)
     df_stitched['smoothed_id'] = df_stitched['track_csv_path'].apply(
         lambda x: load_id_from_csv(Path(x))
@@ -84,6 +90,11 @@ def compute_id_performance(date : str = '2025-11-15',
     # print("Evaluation DataFrame head:\n", df_eval.head())
     # remove the items with NaN gt
     df_eval = df_eval[~df_eval['gt'].isna()]
+
+    ### fix typo for gt, voted_track_label, stitched_id, smoothed_id
+    from post_processing.utils import TYPO
+    for col in ['gt', 'voted_track_label', 'stitched_id', 'smoothed_id']:
+        df_eval[col] = df_eval[col].replace(TYPO)
     
     # compute accuracy -- sklearn accuracy_score
     from sklearn.metrics import accuracy_score
@@ -100,7 +111,9 @@ def compute_id_performance(date : str = '2025-11-15',
         'smoothed_id',
     ]
     df_eval = df_eval[columns]
-    output_csv_dir = Path('/media/mu/zoo_vision/post_processing/analysis/csvs') / f'{cam_id}_{date}_id_evaluation_{start_time.replace(":", "")}_{end_time.replace(":", "")}.csv'
+    output_csv_dir = Path('/media/mu/zoo_vision/post_processing/analysis/csvs')
+    output_csv_dir.mkdir(parents=True, exist_ok=True)
+    output_csv_dir = output_csv_dir / f'{cam_id}_{date}_id_evaluation_{start_time.replace(":", "")}_{end_time.replace(":", "")}.csv'
     df_eval.to_csv(
         output_csv_dir,
         index=False
@@ -123,7 +136,8 @@ if __name__ == "__main__":
     
     data_with_gts = {
         
-        '2025-11-15': ['016', '019'],
+        # '2025-11-15': ['016', '019'],
+        '2025-11-15': ['017', '018'],
         # '2025-11-30': ['017', '018'],
     }
     

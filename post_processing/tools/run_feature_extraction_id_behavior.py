@@ -75,6 +75,13 @@ def process_track_video(
         return None
 
     df_tracks = pd.read_csv(csv_path)
+    ### only read columns needed
+    columns_drop = ['behavior_label','behavior_conf','identity_label','quality_label','quality_conf']
+    # remove columns if exist
+    for col in columns_drop:
+        if col in df_tracks.columns:
+            df_tracks = df_tracks.drop(columns=[col])
+
     frame_indices = get_good_frame_indices(df_tracks)
         
     # Behavior classification, saved to CSV (frame level)
@@ -126,16 +133,8 @@ def process_track_video(
                 beh_preds.append(behavior_label)
                 beh_confs.append(behavior_conf)
 
-
             df_tracks["behavior_label"] = beh_preds
             df_tracks["behavior_conf"] = beh_confs
-
-            # df_tracks = behavior_label_smooth(df_tracks, 
-            #                                   beh_col="behavior_label", 
-            #                                   conf_col="behavior_conf",
-            #                                   window_size=21, 
-            #                                   min_conf_threshold=0.7, 
-            #                                   outlier_threshold=0.3)
 
             if len(qua_preds) > 0 and len(qua_confs) > 0:
                 df_tracks["quality_label"] = qua_preds
@@ -214,7 +213,7 @@ def main():
     logger = setup_logger(args.log_level)
     
     logger.info("Loading data from day %s", args.date)
-    camera_ids = ["016", "017", "018", "019"][1:2]
+    camera_ids = ["016", "017", "018", "019"]
     
     all_track_files = list_track_files_all_cams(
         record_root=args.record_root,

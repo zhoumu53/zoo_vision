@@ -46,14 +46,339 @@ def _head_tail_proto(
 ### TODO: num_identities parameter -- how to set it? dynamic?
 ### TODO: stitching - with cosine sim thresholding - assign new id if no good match
 
+def stitch_tracklets_bidirectional_gallery_dynamic(
+    tracklets: List[Tracklet],
+    num_identities: int = 4,
+    max_gap_frames: int = 600,
+    local_sim_th: float = 0.5,
+    gallery_sim_th: float = 0.45,
+    head_k: int = 5,
+    tail_k: int = 5,
+    gallery_k: int = 10,
+    w_local: float = 0.6,
+    w_gallery: float = 0.4,
+    short_tracklet_th: int = 50,  # threshold for short tracklets
+    long_tracklet_th: int = 100,  # threshold for long tracklets
+    logger_: Optional[logging.Logger] = None,
+) -> None:
+    """
+    Bidirectional temporal stitching with identity galleries for long-term elephant tracking.
+    (with temporal non-overlap constraint per identity)
+    
+    Dynamic weight adjustment based on tracklet length:
+    - Short tracklets (< short_tracklet_th frames): Focus on local matching
+    - Medium tracklets: Use default weights
+    - Long tracklets (> long_tracklet_th frames): Focus more on gallery matching
+    """
+    log = logger_ or logger
+    
+    if not tracklets:
+        log.info("stitch_tracklets_bidirectional_gallery: no tracklets.")
+        return
+    
+    if num_identities <= 1:
+        for t in tracklets:
+            t.stitched_id = 0
+        log.info("bidirectional_gallery: num_identities=1 -> all stitched_id = 0")
+        return
+    
+    # -------------------------------
+    # 1) Extract features for all tracklets
+    # -------------------------------
+    head_vecs: Dict[int, np.ndarray] = {}
+    tail_vecs: Dict[int, np.ndarray] = {}
+    mean_vecs: Dict[int, np.ndarray] = {}
+    tracklet_lengths: Dict[int, int] = {}  # store feature lengths
+    start_timestamps: Dict[int, datetime] = {}
+    end_timestamps: Dict[int, datetime] = {}
+    valid_indices: List[int] = []
+    
+    for i, t in enumerate(tracklets):
+        if t.invalid_flag:
+            continue
+        
+        if t.feature_path is None:
+            log.warning(f"[bidirectional] Tracklet {t.track_id} has no feature_path; mark invalid.")
+            t.invalid_flag = True
+            continue
+        
+        if not t.feature_path.exists():
+            log.error(
+                f"[bidirectional] Feature path {t.feature_path} does not exist; mark invalid."
+            )
+            t.invalid_flag = True
+            continue
+        
+        try:
+            feats, frame_ids, _, _ = load_embedding(t.feature_path)
+        except Exception as e:
+            log.error(
+                f"[bidirectional] Failed to load embedding from {t.feature_path} for tracklet {i}, skipping."
+            )
+            t.invalid_flag = True
+            continue
+        
+        feats = np.asarray(feats)
+        if feats.size == 0:
+            log.warning(f"[bidirectional] Tracklet {i} has empty features; mark invalid.")
+            t.invalid_flag = True
+            continue
+        
+        head, tail = _head_tail_proto(feats, head_k=head_k, tail_k=tail_k)
+        mean = _l2norm(feats.mean(axis=0))
+        
+        head_vecs[i] = head
+        tail_vecs[i] = tail
+        mean_vecs[i] = mean
+        tracklet_lengths[i] = len(feats)  # store length
+        
+        if t.start_timestamp is None or t.end_timestamp is None:
+            raise ValueError(f"Tracklet {i} has no start_timestamp/end_timestamp")
+        
+        sf = t.start_timestamp
+        ef = t.end_timestamp
+        start_timestamps[i] = sf
+        end_timestamps[i] = ef
+        valid_indices.append(i)
+    
+    if not valid_indices:
+        sid = 0
+        for t in tracklets:
+            t.stitched_id = sid
+            sid += 1
+        log.warning(
+            "stitch_tracklets_bidirectional_gallery: all tracklets invalid; "
+            "assigned unique stitched_id."
+        )
+        return
+    
+    # -------------------------------
+    # 2) Sort by temporal order
+    # -------------------------------
+    order = sorted(valid_indices, key=lambda i: start_timestamps[i])
+    log.info(
+        f"bidirectional_gallery: N_valid={len(valid_indices)}, "
+        f"num_identities={num_identities}, max_gap_frames={max_gap_frames}, "
+        f"local_sim_th={local_sim_th}, gallery_sim_th={gallery_sim_th}"
+    )
+    
+    # -------------------------------
+    # 3) Identity management
+    # -------------------------------
+    identities: List[Dict] = []
+    next_id = 0
+    assigned_ids: Dict[int, int] = {}
+    processed: List[int] = []
+    
+    def _create_new_identity(idx: int) -> int:
+        nonlocal next_id
+        new_id = next_id
+        identities.append({
+            "id": new_id,
+            "gallery": [mean_vecs[idx]],
+            "last_indices": [idx],
+            "last_end_time": end_timestamps[idx],
+        })
+        assigned_ids[idx] = new_id
+        tracklets[idx].stitched_id = new_id
+        next_id += 1
+        return new_id
+    
+    def _add_to_identity(idx: int, identity_idx: int):
+        identity = identities[identity_idx]
+        identity["gallery"].append(mean_vecs[idx])
+        identity["last_indices"].append(idx)
+        
+        identity["last_end_time"] = max(identity["last_end_time"], end_timestamps[idx])
+        
+        if len(identity["gallery"]) > gallery_k:
+            identity["gallery"] = identity["gallery"][-gallery_k:]
+            identity["last_indices"] = identity["last_indices"][-gallery_k:]
+        
+        assigned_ids[idx] = identity["id"]
+        tracklets[idx].stitched_id = identity["id"]
+    
+    def _get_dynamic_weights(feat_length: int) -> Tuple[float, float]:
+        """
+        Compute dynamic weights based on tracklet length.
+        
+        Short tracklets: More local weight (temporal continuity is more reliable)
+        Long tracklets: More gallery weight (appearance is more reliable)
+        """
+        if feat_length < short_tracklet_th:
+            # Short: 80% local, 20% gallery
+            return 0.8, 0.2
+        elif feat_length > long_tracklet_th:
+            # Long: 40% local, 60% gallery
+            return 0.4, 0.6
+        else:
+            # Medium: interpolate linearly
+            ratio = (feat_length - short_tracklet_th) / (long_tracklet_th - short_tracklet_th)
+            w_local_dynamic = 0.8 - (0.4 * ratio)  # 0.8 -> 0.4
+            w_gallery_dynamic = 0.2 + (0.4 * ratio)  # 0.2 -> 0.6
+            return w_local_dynamic, w_gallery_dynamic
+    
+    fps = 25
+    
+    # -------------------------------
+    # 4) Process tracklets in temporal order
+    # -------------------------------
+    for i in order:
+        sf_i = start_timestamps[i]
+        ef_i = end_timestamps[i]
+        head_i = head_vecs[i]
+        mean_i = mean_vecs[i]
+        feat_len_i = tracklet_lengths[i]
+        
+        # Get dynamic weights based on current tracklet length
+        w_local_dynamic, w_gallery_dynamic = _get_dynamic_weights(feat_len_i)
+        
+        if not identities:
+            _create_new_identity(i)
+            processed.append(i)
+            log.debug(f"[bidirectional] tracklet {i} (len={feat_len_i}): created first identity 0")
+            continue
+        
+        # -------------------------------
+        # a) Local matching: head(i) vs tail(prev_tracks)
+        # -------------------------------
+        best_local_idx = None
+        best_local_sim = -1.0
+        best_local_identity_idx = None
+        
+        for j in reversed(processed):
+            ef_j = end_timestamps[j]
+            gap_frames = int((sf_i - ef_j).total_seconds() * fps)
+            
+            if gap_frames < 0:
+                continue
+            if gap_frames > max_gap_frames:
+                break
+            
+            local_sim = float(np.dot(tail_vecs[j], head_i))
+            if local_sim > best_local_sim:
+                best_local_sim = local_sim
+                best_local_idx = j
+                for idx, ident in enumerate(identities):
+                    if assigned_ids[j] == ident["id"]:
+                        best_local_identity_idx = idx
+                        break
+        
+        # -------------------------------
+        # b) Gallery matching: mean(i) vs each identity's gallery
+        # -------------------------------
+        gallery_scores: List[float] = []
+        for identity in identities:
+            gallery = identity["gallery"]
+            if not gallery:
+                gallery_scores.append(0.0)
+                continue
+            sims = [float(np.dot(mean_i, g)) for g in gallery]
+            gallery_scores.append(float(np.mean(sims)))
+        
+        # -------------------------------
+        # c) Combined scoring with temporal conflict check
+        # -------------------------------
+        combined_scores: List[float] = []
+        no_conflict: List[bool] = []
+        
+        for idx, identity in enumerate(identities):
+            last_end = identity.get("last_end_time", None)
+            
+            conflict = last_end is not None and sf_i < last_end
+            no_conflict.append(not conflict)
+            
+            if conflict:
+                combined_scores.append(-1e6)
+                continue
+            
+            local_contrib = 0.0
+            if best_local_identity_idx == idx and best_local_sim > 0:
+                local_contrib = best_local_sim
+            
+            gallery_contrib = gallery_scores[idx]
+            # Use dynamic weights
+            combined = w_local_dynamic * local_contrib + w_gallery_dynamic * gallery_contrib
+            combined_scores.append(combined)
+        
+        valid_candidates = [k for k, ok in enumerate(no_conflict) if ok]
+        if valid_candidates:
+            best_identity_idx = max(valid_candidates, key=lambda k: combined_scores[k])
+        else:
+            best_identity_idx = int(np.argmax(combined_scores))
+        
+        best_score = combined_scores[best_identity_idx]
+        
+        # -------------------------------
+        # Decision logic (with dynamic thresholds)
+        # -------------------------------
+        decision_made = False
+        
+        # For short tracklets, prioritize local matching more
+        local_th_adjusted = local_sim_th * (1.2 if feat_len_i < short_tracklet_th else 1.0)
+        
+        if best_local_sim >= local_th_adjusted and best_local_identity_idx is not None:
+            _add_to_identity(i, best_local_identity_idx)
+            log.debug(
+                f"[bidirectional] tracklet {i} (len={feat_len_i}, w_local={w_local_dynamic:.2f}) "
+                f"-> identity {identities[best_local_identity_idx]['id']} "
+                f"via strong local (sim={best_local_sim:.3f})"
+            )
+            decision_made = True
+        
+        elif best_score >= (w_local_dynamic * local_sim_th + w_gallery_dynamic * gallery_sim_th):
+            _add_to_identity(i, best_identity_idx)
+            log.debug(
+                f"[bidirectional] tracklet {i} (len={feat_len_i}, w_local={w_local_dynamic:.2f}) "
+                f"-> identity {identities[best_identity_idx]['id']} "
+                f"via combined (score={best_score:.3f}, local={best_local_sim:.3f}, "
+                f"gallery={gallery_scores[best_identity_idx]:.3f})"
+            )
+            decision_made = True
+        
+        elif len(identities) < num_identities:
+            new_id = _create_new_identity(i)
+            log.debug(
+                f"[bidirectional] tracklet {i} (len={feat_len_i}): created new identity {new_id} "
+                f"(best_score={best_score:.3f} < threshold)"
+            )
+            decision_made = True
+        
+        if not decision_made:
+            _add_to_identity(i, best_identity_idx)
+            log.debug(
+                f"[bidirectional] tracklet {i} (len={feat_len_i}) "
+                f"-> identity {identities[best_identity_idx]['id']} "
+                f"(forced, max identities reached, score={best_score:.3f})"
+            )
+        
+        processed.append(i)
+    
+    # -------------------------------
+    # 5) Handle invalid tracklets
+    # -------------------------------
+    for idx, t in enumerate(tracklets):
+        if idx not in valid_indices:
+            t.stitched_id = next_id
+            next_id += 1
+    
+    num_final_ids = len(set(assigned_ids.values()))
+    log.info(
+        f"bidirectional_gallery: stitched {len(valid_indices)} valid tracklets "
+        f"into {num_final_ids} identities (used IDs: {sorted(set(assigned_ids.values()))})"
+    )
+
+    ### update track id - change to stitched_id
+    for t in tracklets:
+        t.track_id = t.stitched_id
+
+
 def stitch_tracklets_bidirectional_gallery(
     tracklets: List[Tracklet],
     num_identities: int = 4,
-    max_gap_frames: int = 600,  # for local continuity (24s at 25fps)
-    max_long_gap_frames: int = 30000,  # HARD limit for any stitching (20 min at 25fps)
+    max_gap_frames: int = 600,
     local_sim_th: float = 0.5,
     gallery_sim_th: float = 0.45,
-    long_gap_gallery_th: float = 0.60,  # Higher threshold for long gaps
     head_k: int = 5,
     tail_k: int = 5,
     gallery_k: int = 10,
@@ -217,40 +542,7 @@ def stitch_tracklets_bidirectional_gallery(
             continue
         
         # -------------------------------
-        # a) Check minimum gap to ANY existing identity
-        # -------------------------------
-        min_gap_to_identities = {}
-        for idx, identity in enumerate(identities):
-            last_end = identity.get("last_end_time", None)
-            if last_end is not None:
-                gap_seconds = (sf_i - last_end).total_seconds()
-                gap_frames = int(gap_seconds * fps)
-                min_gap_to_identities[idx] = gap_frames
-            else:
-                min_gap_to_identities[idx] = 0
-
-        # Find minimum gap across all identities
-        min_gap = min(min_gap_to_identities.values()) if min_gap_to_identities else 0
-        
-        # If MINIMUM gap exceeds hard threshold, create new identity
-        if min_gap > max_long_gap_frames:
-            if len(identities) < num_identities:
-                new_id = _create_new_identity(i)
-                log.info(
-                    f"[bidirectional] tracklet {i}: created new identity {new_id} "
-                    f"(min_gap={min_gap} frames = {min_gap/fps/60:.1f} min > threshold)"
-                )
-                processed.append(i)
-                continue
-            else:
-                log.warning(
-                    f"[bidirectional] tracklet {i}: min_gap={min_gap} frames exceeds threshold "
-                    f"but max identities reached. Will attempt forced assignment."
-                )
-                
-                
-        # -------------------------------
-        # b) Local matching: head(i) vs tail(prev_tracks)
+        # a) Local matching: head(i) vs tail(prev_tracks)
         # -------------------------------
         best_local_idx = None
         best_local_sim = -1.0
@@ -275,7 +567,7 @@ def stitch_tracklets_bidirectional_gallery(
                         break
         
         # -------------------------------
-        # c) Gallery matching: mean(i) vs each identity's gallery
+        # b) Gallery matching: mean(i) vs each identity's gallery
         # -------------------------------
         gallery_scores: List[float] = []
         for identity in identities:
@@ -285,10 +577,9 @@ def stitch_tracklets_bidirectional_gallery(
                 continue
             sims = [float(np.dot(mean_i, g)) for g in gallery]
             gallery_scores.append(float(np.mean(sims)))
-
-
+        
         # -------------------------------
-        # d) Combined scoring with temporal conflict check and gap-adaptive thresholds
+        # c) Combined scoring with temporal conflict check
         # -------------------------------
         combined_scores: List[float] = []
         no_conflict: List[bool] = []
@@ -305,20 +596,6 @@ def stitch_tracklets_bidirectional_gallery(
                 combined_scores.append(-1e6)
                 continue
             
-            # Check gap for this specific identity
-            gap_frames_to_identity = min_gap_to_identities.get(idx, 0)
-            
-            # For long gaps, require higher gallery similarity
-            if gap_frames_to_identity > max_gap_frames:
-                if gallery_scores[idx] < long_gap_gallery_th:
-                    combined_scores.append(-1e6)
-                    log.debug(
-                        f"[bidirectional] tracklet {i} -> identity {identity['id']}: "
-                        f"gap={gap_frames_to_identity} frames, gallery={gallery_scores[idx]:.3f} "
-                        f"< long_gap_th={long_gap_gallery_th:.3f}, penalized"
-                    )
-                    continue
-            
             local_contrib = 0.0
             if best_local_identity_idx == idx and best_local_sim > 0:
                 local_contrib = best_local_sim
@@ -327,28 +604,15 @@ def stitch_tracklets_bidirectional_gallery(
             combined = w_local * local_contrib + w_gallery * gallery_contrib
             combined_scores.append(combined)
         
-
-        # pick best identity among non-conflicting ones
-        valid_candidates = [k for k, ok in enumerate(no_conflict) if ok and combined_scores[k] > -1e6]
+        # pick best identity among non-conflicting ones; if none, fallback to global best (rare case)
+        valid_candidates = [k for k, ok in enumerate(no_conflict) if ok]
         if valid_candidates:
             best_identity_idx = max(valid_candidates, key=lambda k: combined_scores[k])
         else:
-            # No valid candidates (all have conflicts or fail long-gap threshold)
-            if len(identities) < num_identities:
-                new_id = _create_new_identity(i)
-                log.info(
-                    f"[bidirectional] tracklet {i}: created new identity {new_id} "
-                    f"(no valid candidates, conflicts or long gaps)"
-                )
-                processed.append(i)
-                continue
-            else:
-                # Forced to pick best even with penalty
-                best_identity_idx = int(np.argmax(combined_scores))
+            best_identity_idx = int(np.argmax(combined_scores))
         
         best_score = combined_scores[best_identity_idx]
         
-
         # -------------------------------
         # Decision logic
         # -------------------------------
@@ -366,11 +630,10 @@ def stitch_tracklets_bidirectional_gallery(
         # combined score strong enough
         elif best_score >= (w_local * local_sim_th + w_gallery * gallery_sim_th):
             _add_to_identity(i, best_identity_idx)
-            gap_to_best = min_gap_to_identities.get(best_identity_idx, 0)
             log.debug(
                 f"[bidirectional] tracklet {i} -> identity {identities[best_identity_idx]['id']} "
-                f"via combined (score={best_score:.3f}, gap={gap_to_best} frames, "
-                f"local={best_local_sim:.3f}, gallery={gallery_scores[best_identity_idx]:.3f})"
+                f"via combined (score={best_score:.3f}, local={best_local_sim:.3f}, "
+                f"gallery={gallery_scores[best_identity_idx]:.3f})"
             )
             decision_made = True
         
@@ -386,14 +649,12 @@ def stitch_tracklets_bidirectional_gallery(
         # forced assignment (all identities already exist, thresholds not met)
         if not decision_made:
             _add_to_identity(i, best_identity_idx)
-            gap_to_best = min_gap_to_identities.get(best_identity_idx, 0)
-            log.warning(
+            log.debug(
                 f"[bidirectional] tracklet {i} -> identity {identities[best_identity_idx]['id']} "
-                f"(forced, max identities reached, score={best_score:.3f}, gap={gap_to_best} frames)"
+                f"(forced, max identities reached, score={best_score:.3f})"
             )
         
         processed.append(i)
-
     
     # -------------------------------
     # 5) Handle invalid tracklets
@@ -413,4 +674,3 @@ def stitch_tracklets_bidirectional_gallery(
     ### update track id - change to stitched_id
     for t in tracklets:
         t.track_id = t.stitched_id
-

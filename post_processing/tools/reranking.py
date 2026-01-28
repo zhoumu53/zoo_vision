@@ -174,7 +174,7 @@ def _assign_two_identities_optimal(
         s1 = score_matrix[sid1][a1]
         total = s0 + s1
 
-        # Margin: how much better is the chosen label vs the alternative label
+        # Margin: how much better is the chosen label vs the alternative label for each stitched id
         alt0 = [l for l in known_labels if l != a0][0]
         alt1 = [l for l in known_labels if l != a1][0]
         m0 = s0 - score_matrix[sid0][alt0]
@@ -185,17 +185,20 @@ def _assign_two_identities_optimal(
         if best is None:
             best = candidate
         else:
+            # primary: higher total
             if candidate[0] > best[0] + eps:
                 best = candidate
+            # secondary: higher margin (more confident global assignment)
             elif abs(candidate[0] - best[0]) <= eps and candidate[1] > best[1] + eps:
                 best = candidate
+            # tertiary: deterministic ordering (lexicographic labels) to avoid randomness
             elif abs(candidate[0] - best[0]) <= eps and abs(candidate[1] - best[1]) <= eps:
                 if tuple(candidate[2][sid] for sid in stitched_ids) < tuple(best[2][sid] for sid in stitched_ids):
                     best = candidate
 
     best_total, best_margin, best_assignment = best
 
-    # Build output
+    # Enrich output
     out: Dict[int, Dict[str, Any]] = {}
     for sid in stitched_ids:
         ks = score_matrix[sid]

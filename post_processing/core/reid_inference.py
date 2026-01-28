@@ -29,7 +29,7 @@ from project.utils.metrics import eval_func_gpu, compute_cosine_distance
 def compute_similarity(
     features_a: torch.Tensor,
     features_b: torch.Tensor,
-    batch_size: int = 100,
+    batch_size: int = 32,
 ) -> torch.Tensor:
     """Compute cosine similarity matrix (N, M) between two feature sets.
     

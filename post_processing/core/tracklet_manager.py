@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 import logging
 logger = logging.getLogger(__name__)
-from post_processing.utils import load_embedding, load_semi_gt_ids
+from post_processing.utils import load_embedding, load_semi_gt_ids, load_feature_npz, ALIKE_PAIRS
 from post_processing.core.reid_inference import match_to_gallery
 from post_processing.tools.run_reid_feature_extraction import vote_matched_labels
 from post_processing.tools.reranking import assign_identities_from_trackid2label_counts
@@ -398,8 +398,46 @@ class TrackletManager:
         
         # Return True to skip, False to keep
         return not in_range
-    
-    def vote_identity_label(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
+        
+    def vote_identity_label(self, voted_track_label, known_labels=None) -> str:
+        """
+        Validate and correct voted track label based on known labels and alike pairs.
+        
+        Args:
+            voted_track_label: The voted label from the tracklet
+            known_labels: List of valid identity labels for this session
+            
+        Returns:
+            Corrected identity label or the original if no correction needed
+        """
+        if not known_labels or voted_track_label in known_labels:
+            return voted_track_label
+        
+        # Find the most alike label in known_labels
+        for alike_pair in ALIKE_PAIRS:
+            # Check if voted_track_label is in this alike group
+            if voted_track_label in alike_pair:
+                # Find intersection between alike_pair and known_labels
+                valid_alternatives = [label for label in alike_pair if label in known_labels]
+                
+                if valid_alternatives:
+                    # Return the first valid alternative from the alike group
+                    corrected_label = valid_alternatives[0]
+                    self.logger.info(
+                        f"Corrected label '{voted_track_label}' to '{corrected_label}' "
+                        f"based on alike pair {alike_pair} and known_labels {known_labels}"
+                    )
+                    return corrected_label
+        
+        # If no alike pair found or no valid alternative, return original
+        self.logger.warning(
+            f"Label '{voted_track_label}' not in known_labels {known_labels} "
+            f"and no valid alternative found in ALIKE_PAIRS"
+        )
+        return voted_track_label
+
+
+    def vote_identity_label_old(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
         
         # Sample 20% if too many queries
         if len(features) > 10000:
@@ -423,7 +461,8 @@ class TrackletManager:
                 voted_track_label = label
                 break
             else:
-                voted_track_label = "invalid"
+                print(label, "not in known labels", known_labels)
+                voted_track_label = "unknown"
 
         return voted_track_label
 
@@ -501,14 +540,20 @@ class TrackletManager:
             
             voted_track_label = "invalid"
             if tracklet[0].feature_path and tracklet[0].feature_path.exists():
-                feats, frame_ids, _, avg_feat = load_embedding(tracklet[0].feature_path)
+                data = load_feature_npz(tracklet[0].feature_path)
+                # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
+                matched_labels = data['matched_labels']
+                voted_track_label = data['voted_labels']
+
+                # Convert numpy array to string if needed
+                if isinstance(voted_track_label, np.ndarray):
+                    voted_track_label = str(voted_track_label.item()) if voted_track_label.size == 1 else str(voted_track_label[0])
+
                 voted_track_label = self.vote_identity_label(
-                    features=feats,
-                    avg_embedding=avg_feat,
-                    gallery_features=self.gallery_features,
-                    gallery_labels=self.gallery_labels,
+                    voted_track_label=voted_track_label,
                     known_labels=self.known_labels
                 )
+
             tracklet[0].voted_track_label = voted_track_label
 
             self.tracklets.extend(tracklet)
@@ -625,22 +670,22 @@ class TrackletManager:
             self.final_stitched_map.setdefault(idlabel, []).extend(tracklets)
         
         
-        ### flatten track results -- TODO - update 
-        self.final_tracklet_results: Dict[str, Dict[str, object]] = {}
-        for idlabel, tracklets in self.stitched_map.items():
-            if sid in trackid2idlabel:
-                idlabel = trackid2idlabel[sid]
-            else:
-                continue
+        # ### flatten track results -- TODO - update 
+        # self.final_tracklet_results: Dict[str, Dict[str, object]] = {}
+        # for idlabel, tracklets in self.stitched_map.items():
+        #     if sid in trackid2idlabel:
+        #         idlabel = trackid2idlabel[sid]
+        #     else:
+        #         continue
             
-            tracklets = self.stitched_map[sid]
+        #     tracklets = self.stitched_map[sid]
             
-            for t in tracklets:
-                t["identity_label"] = idlabel
-                self.final_tracklet_results[t["track_filename"]] = t
+        #     for t in tracklets:
+        #         t["identity_label"] = idlabel
+        #         self.final_tracklet_results[t["track_filename"]] = t
                 
 
-        return self.final_stitched_map
+        # return self.final_stitched_map
     
     def save_stitched_tracklets(self, 
                                 final_tracklet_results,
@@ -832,10 +877,8 @@ class TrackletManager:
         stitch_tracklets_bidirectional_gallery(
             cam_tracklets,
             max_gap_frames=max_gap_frames, 
-            max_long_gap_frames=max_long_gap_frames,
             local_sim_th=local_sim_th,
             gallery_sim_th=gallery_sim_th,
-            long_gap_gallery_th=long_gap_gallery_th,
             head_k=head_k,
             tail_k=tail_k,
             gallery_k=gallery_k,

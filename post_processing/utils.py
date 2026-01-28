@@ -86,7 +86,24 @@ CAMERA_PARIS = {
 }
 
 
+# type fix
+TYPO = {
+    'Farha': 'Fahra',
+}
 
+ALIKE_PAIRS = {
+    ('Indi', 'Panang', 'Thai'),
+    ('Chandra', 'Fahra'),
+}
+
+
+
+def load_feature_npz(npz_path: Path) -> Tuple[np.ndarray, np.ndarray, Path]:
+    """Load all embeddings and frame ids from NPZ; return (features, frame_ids, video_path)."""
+    if not npz_path.exists():
+        raise FileNotFoundError(f"Feature NPZ file not found: {npz_path}")
+    data = np.load(npz_path, allow_pickle=True)
+    return data
 
 
 def load_embedding(npz_path: Path) -> Tuple[np.ndarray, np.ndarray, Path]:
@@ -129,6 +146,9 @@ def load_sandbox_gts(sandbox_gt_path: Path = Path(SEMI_GT_ID_CSV),
     df["datetime"] = pd.to_datetime(df["datetime"], errors="raise", dayfirst=False)
     # remove date
     df["date"] = df["datetime"].dt.date
+
+    # check if 'individual' has typos
+    df['individual'] = df['individual'].replace(TYPO)
     
     return df
 

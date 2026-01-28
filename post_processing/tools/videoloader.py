@@ -11,7 +11,7 @@ class VideoLoader:
       - Supports __len__, __getitem__, and iteration
     """
 
-    def __init__(self, video_path, ctx=None, verbose=True):
+    def __init__(self, video_path, ctx=None, verbose=False):
         self.video_path = video_path
         self.verbose = verbose
 

@@ -90,21 +90,20 @@ def get_stitched_data(
                 final_stitched_map.setdefault(identity_label, []).append(t)
         
         return final_stitched_map
+    
 
     print("\n" + "=" * 80)
     print("Testing BIDIRECTIONAL GALLERY-based stitching")
     print("=" * 80)
     tracklet_manager.stitch_tracklets_bidirectional(
-        max_gap_frames=900,
-        max_long_gap_frames=12000, 
-        local_sim_th=0.6,
-        gallery_sim_th=0.55,
-        long_gap_gallery_th=0.65,
+        max_gap_frames=600,
+        local_sim_th=0.5,
+        gallery_sim_th=0.45,
         head_k=25,
-        tail_k=25,
+        tail_k= 25,
         gallery_k=10,
-        w_local=0.2,
-        w_gallery=0.8,
+        w_local=0.6,
+        w_gallery=0.4,
     )
     
     tracklet_manager.get_stitched_tracklets()
@@ -170,7 +169,9 @@ def main():
     
     # Load file manager and get input file path
     camera_ids = ["016", "017", "018", "019"]
-    camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"] ## DEBUG
+    camera_ids = [ "017", "018"] 
+    camera_ids = ["016", "019"]
+    # camera_ids = [ "017", "018"] if args.date == '2025-11-30' else ["016", "019"] ## DEBUG
     output_dir= Path(args.output_dir)
 
     reid_model = load_reid(
@@ -261,48 +262,48 @@ def main():
         ("018", "017"),
     ]
 
-    print("\n" + "=" * 80 + "\n")
-    print("Running CROSS-CAMERA ID MATCHING")
-    print("\n" + "=" * 80 + "\n")
+    # print("\n" + "=" * 80 + "\n")
+    # print("Running CROSS-CAMERA ID MATCHING")
+    # print("\n" + "=" * 80 + "\n")
 
-    for cam1_id, cam2_id in cam_pairs:
-        if args.cross_camera_matching is False:
-            logger.info("Skipping cross-camera ID matching as per user request.")
-            break
+    # for cam1_id, cam2_id in cam_pairs:
+    #     if args.cross_camera_matching is False:
+    #         logger.info("Skipping cross-camera ID matching as per user request.")
+    #         break
         
-        if cam1_id not in final_camera_stitched_maps or cam2_id not in final_camera_stitched_maps:
-            logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
-            continue
+    #     if cam1_id not in final_camera_stitched_maps or cam2_id not in final_camera_stitched_maps:
+    #         logger.warning("Skipping cross-camera matching for pair (%s, %s) due to missing data.", cam1_id, cam2_id)
+    #         continue
         
-        ## TODO - avoid same ID to different track issues
-        updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
-                                                     final_camera_stitched_maps[cam2_id][1],
-                                                     window_hours=1,
-                                                     time_window_seconds=0.5,
-                                                     distance_threshold=2.0,
-                                                     downsample_seconds=1.0,
-                                                     use_voted_labels=True)
+    #     ## TODO - avoid same ID to different track issues
+    #     updated_cam2_data = cross_camera_id_matching(final_camera_stitched_maps[cam1_id][1],
+    #                                                  final_camera_stitched_maps[cam2_id][1],
+    #                                                  window_hours=1,
+    #                                                  time_window_seconds=0.5,
+    #                                                  distance_threshold=2.0,
+    #                                                  downsample_seconds=1.0,
+    #                                                  use_voted_labels=True)
         
-        ###  clear the code
-        tracklet_manager, _ = final_camera_stitched_maps[cam2_id]
-        ### Now - don't update the jsons -- we need compare the algorithm performance, TODO - remove it
-        # tracklet_manager.save_stitched_tracklets(
-        #     updated_cam2_data,
-        #     output_dir= output_dir
-        # )
+    #     ###  clear the code
+    #     tracklet_manager, _ = final_camera_stitched_maps[cam2_id]
+    #     ### Now - don't update the jsons -- we need compare the algorithm performance, TODO - remove it
+    #     # tracklet_manager.save_stitched_tracklets(
+    #     #     updated_cam2_data,
+    #     #     output_dir= output_dir
+    #     # )
         
-        csv2identity = track_csv2identity(updated_cam2_data)
-        ## save identity label to csv
-        for track_csv, identity_label in csv2identity.items():
-            df = pd.read_csv(track_csv)
-            df['identity_label'] = identity_label
-            df.to_csv(track_csv, index=False)
-            logger.info("Saved identity label %s to %s", identity_label, track_csv)
+    #     csv2identity = track_csv2identity(updated_cam2_data)
+    #     ## save identity label to csv
+    #     for track_csv, identity_label in csv2identity.items():
+    #         df = pd.read_csv(track_csv)
+    #         df['identity_label'] = identity_label
+    #         df.to_csv(track_csv, index=False)
+    #         logger.info("Saved identity label %s to %s", identity_label, track_csv)
         
-        ### print out the original 
-        # print("updated_cam2_data", updated_cam2_data)
+    #     ### print out the original 
+    #     # print("updated_cam2_data", updated_cam2_data)
 
-
+    
     ## TODO
     print("\n" + "=" * 80 + "\n")
     print("Running CROSS-CAMERA BEHAVIOR MATCHING")

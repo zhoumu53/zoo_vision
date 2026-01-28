@@ -59,6 +59,7 @@ def extract_reid_features_from_video(
     batch_size: int = 32,
     skip_frames: bool = True,
     fps : int = 25,
+    K = 25,
     frame_ids: Optional[List[int]] = None,
 ) -> Tuple[np.ndarray, List[int], np.ndarray]:
     """
@@ -80,37 +81,27 @@ def extract_reid_features_from_video(
     batch_indices: List[int] = []
 
     ### if the video is too long, skip frames  -- save head / tail
-
-    ### len(loader) gives total number of frames
     total_frames = len(loader)
-    indices = list(range(total_frames))
-    
-    
     #### sample frames if frame_ids is None
     if frame_ids is None:
-        # Keep ~1 frame every 4 second (fps=25), and still force-include head/tail frames.
-        if total_frames > fps and skip_frames:
-            step = max(1, int(fps) * 4)
-
-            logger.info(
-                f"Video has {total_frames} frames. Sampling 0.25 fps with step={step} frames "
-                f"(~{total_frames/step:.1f} samples) + head/tail anchors."
-            )
-
-            indices = list(range(0, total_frames, step))
-
-            # Always include K head/tail frames (guard for short videos)
-            K = 10
-            head = list(range(0, min(K, total_frames)))
-            tail_start = max(0, total_frames - K)
-            tail = list(range(tail_start, total_frames))
-
-            indices = sorted(set(indices + head + tail))
-        else:
-            indices = list(range(total_frames))
-            
+        indices = list(range(total_frames))
     else:
         indices = frame_ids
+
+    # Keep ~1 frame every 4 second (fps=25)
+    if len(indices) > 1000 and skip_frames:
+        step = max(1, int(fps) * 4)
+        logger.info(
+            f"Video has {total_frames} frames. Sampling 0.25 fps with step={step} frames "
+            f"(~{total_frames/step:.1f} samples) + head/tail anchors."
+        )
+        indices = list(range(0, total_frames, step))
+        
+    # Always include K head/tail frames (guard for short videos) -- for stitching continuity
+    head = list(range(0, min(K, total_frames)))
+    tail_start = max(0, total_frames - K)
+    tail = list(range(tail_start, total_frames))
+    indices = sorted(set(indices + head + tail))
 
     for idx, frame in enumerate(loader):
         if idx not in indices:
@@ -129,7 +120,7 @@ def extract_reid_features_from_video(
         feats.append(feat.cpu())
 
     if not feats:
-        return np.empty((0, reid_model.feature_dim), dtype=np.float32), []
+        return np.empty((0, reid_model.feature_dim), dtype=np.float32), [], np.empty((0, reid_model.feature_dim), dtype=np.float32)
 
     features = torch.cat(feats, dim=0)
 
@@ -250,17 +241,10 @@ def id_feature_extraction(
     
     matched_labels=[]
     avg_matched_labels=[]
-    voted_label = ''
+    voted_label = 'invalid'
 
     save_path = video_path.with_suffix(".npz")
 
-    if len(frame_ids) == 0:
-        logger.warning(f"No frames processed for video {video_path.name}. Skipping saving features.")
-        # if npz exist, remove it
-        if save_path.exists():
-            os.remove(save_path)
-        return 'invalid'
-    
     features, frame_ids, avg_embedding = extract_reid_features_from_video(
             video_path=video_path,
             reid_model=reid_model,
@@ -268,14 +252,16 @@ def id_feature_extraction(
             frame_ids=frame_ids,
         )
 
-    matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
-    avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
-    
-    voted_labels = vote_matched_labels(matched_labels)
-    voted_label = max(set(voted_labels), key=voted_labels.count)
+    ### if no frame_ids, return 'invalid' label, but still extract features -> for stitching
+    if len(frame_ids) == 0:
+        voted_label = 'invalid'
+    else:
+        matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+        avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
+        
+        voted_labels = vote_matched_labels(matched_labels)
+        voted_label = max(set(voted_labels), key=voted_labels.count)
 
-
-    
     save_features_npz(
         features=features,
         frame_ids=frame_ids,
@@ -289,6 +275,7 @@ def id_feature_extraction(
             "device": device,
         },
     )
+
     return voted_label
 
 def parse_args() -> argparse.Namespace:
