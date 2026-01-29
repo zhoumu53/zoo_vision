@@ -193,15 +193,24 @@ void VideoDBLoader::loadNextVideo(const std::string &cameraName, CameraData &cam
 }
 
 void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
+  image = cv::Mat3b{};
   if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
-    image = cv::Mat3b{};
     return;
   }
 
   assert(cameraData.videoStream_.has_value());
   auto &cvVideo = *cameraData.videoStream_;
 
-  cvVideo >> image;
+  // Retry fetch a few times because some videos have encoding errors
+  constexpr int MAX_TRIES = 5;
+  int tries = 0;
+  bool ok = false;
+  while (tries < MAX_TRIES && !ok) {
+    ok = cvVideo.read(image);
+    tries++;
+  }
+
+  // If we didn't get any image we are probably at the end of the video
   if (image.empty()) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF",
                          cameraData.currentVideo_->videoFile.c_str());

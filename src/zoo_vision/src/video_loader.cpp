@@ -76,14 +76,23 @@ void VideoLoader::loadVideos(const std::span<const std::string> videoFiles,
 }
 
 void VideoLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
+  image = cv::Mat3b{};
   if (!cameraData.videoStream_.has_value()) {
-    image = cv::Mat3b{};
     return;
   }
 
   auto &cvVideo = *cameraData.videoStream_;
 
-  cvVideo >> image;
+  // Retry fetch a few times because some videos have encoding errors
+  constexpr int MAX_TRIES = 5;
+  int tries = 0;
+  bool ok = false;
+  while (tries < MAX_TRIES && !ok) {
+    ok = cvVideo.read(image);
+    tries++;
+  }
+
+  // If we didn't get any image we are probably at the end of the video
   if (image.empty()) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF", cameraData.videoFile.c_str());
     cameraData.videoStream_.reset();
