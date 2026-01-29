@@ -33,12 +33,13 @@ const std::string DEFAULT_VIDEO_NAME = "sample_video.mp4";
 namespace zoo {
 
 ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("input_camera_{}", nameIndex), options) {
+    : Node(std::format("input_camera_{}", nameIndex), options), profileTic_{"ZooCamera::tic"} {
   this->cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting zoo_camera for %s", cameraName_.c_str());
 
   const nlohmann::json &config = getConfig();
   const bool useLiveStream = config["live_stream"].get<bool>();
+  skipFrameCount_ = config["skip_frame_count"].get<int>();
 
   if (useLiveStream) {
     const auto &streamConfig = config["cameras"][cameraName_]["stream"];
@@ -82,6 +83,10 @@ void ZooCamera::openCamera() {
 }
 
 void ZooCamera::onTimer() {
+  ProfileStackGuard stackGuard{profilerStack_};
+  profileTic_.tic();
+  ProfileSection s{"onTimer"};
+
   auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
   msg->header.frame_id = frameIndex_;
   setMsgString(msg->encoding, "rgb8");
@@ -106,6 +111,15 @@ void ZooCamera::onTimer() {
     }
   }
 
+  // Skip frames
+  {
+    ProfileSection s{"skipFrames"};
+    for (int i = 0; i < skipFrameCount_; ++i) {
+      cvStream_.grab();
+    }
+  }
+
+  // Real capture
   cvStream_ >> image;
   if (image.empty()) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Failed to get image from camera %s", cameraName_.c_str());
