@@ -86,7 +86,7 @@
   "rerun_config": {
     "low_res": false,
     "save_to_disk": false,
-    "recording_filename": "/media/ElephantsWD/elephants/rerun_recordings/new/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
+    "recording_filename": "rerun/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
     "max_seconds_per_recording": 1800
   },
   "video_root": "/mnt/camera_nas",

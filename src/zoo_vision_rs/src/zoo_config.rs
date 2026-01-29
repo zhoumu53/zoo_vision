@@ -7,6 +7,7 @@ pub struct ZooConfig {
     pub individuals: HashMap<String, ClassifierClassInfo>,
     pub behaviours: HashMap<String, ClassifierClassInfo>,
     pub map: Map,
+    pub record_root: String,
     pub rerun_config: RerunConfig,
     // pub models: Models,
     pub cameras: HashMap<String, CameraCalib>,

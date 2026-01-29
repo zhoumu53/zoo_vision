@@ -78,12 +78,17 @@ fn rerun_from_hex(color: &HexColor) -> rerun::Color {
 }
 
 fn start_rerun_file_recording(recording_filename: &str) -> Result<RecordingStream, Error> {
+    // Format time
     let dt_fmt = time::format_description::parse(recording_filename)?;
 
     let local_offset = time::UtcOffset::current_local_offset()?;
     let now = time::UtcDateTime::now().to_offset(local_offset);
-    let path = now.format(&dt_fmt)?;
-    println!("Saving rerun stream to {}", path);
+    let path = PathBuf::from(now.format(&dt_fmt).unwrap());
+    println!("Saving rerun stream to {}", path.display());
+
+    // Create parent dirs
+    let prefix = path.parent().unwrap();
+    std::fs::create_dir_all(prefix).unwrap();
 
     let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
     return Ok(stream_builder.save(path)?);
@@ -231,7 +236,9 @@ impl RerunForwarder {
 
         // Begin rerun stream
         let recording = if config.rerun_config.save_to_disk {
-            start_rerun_file_recording(&config.rerun_config.recording_filename)?
+            let filename =
+                PathBuf::from_iter([&config.record_root, &config.rerun_config.recording_filename]);
+            start_rerun_file_recording(&filename.into_os_string().into_string().unwrap())?
         } else {
             let stream_builder = rerun::RecordingStreamBuilder::new(RERUN_APP_ID);
             let ws_port = 9877u16;
