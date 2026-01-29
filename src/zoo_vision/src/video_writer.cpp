@@ -276,5 +276,9 @@ bool VideoWriter::open(const std::string &filename, Vector2i frameSize, float32_
   impl_ = std::make_unique<detail::VideoWriterImpl>(filename, frameSize, fps);
   return true;
 }
+
 void VideoWriter::write(const uint8_t *imgRgb, int stride) { impl_->write(imgRgb, stride); }
+
+void VideoWriter::close() { impl_.reset(); }
+
 } // namespace zoo

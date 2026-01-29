@@ -35,6 +35,7 @@ public:
   bool isOpen() const { return impl_ != nullptr; }
   bool open(const std::string &filename, Vector2i frameSize, float32_t fps);
   void write(const uint8_t *imgRgb, int stride);
+  void close();
 
 private:
   std::unique_ptr<detail::VideoWriterImpl> impl_;

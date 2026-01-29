@@ -37,13 +37,19 @@ struct TrackData;
 class TrackWriter {
 public:
   TrackWriter(const std::filesystem::path &rootTracksPath, TrackData &track, float32_t fps);
+  ~TrackWriter();
 
   void writeFrame(uint64_t frameId, const at::Tensor &cropImage, const Vector3f &worldPosition,
                   const Vector2i imageSize);
-  void close(SysTime time);
+  void close();
 
 private:
   TrackData &track_;
+
+  std::filesystem::path rootTracksPath_;
+  std::filesystem::path infoPath_;
+  std::filesystem::path videoPath_;
+
   std::ofstream infoFd_;
   VideoWriter trackVideo_;
 };
