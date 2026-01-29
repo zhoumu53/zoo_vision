@@ -14,6 +14,7 @@ from post_processing.core.reid_inference import match_to_gallery
 from post_processing.tools.run_reid_feature_extraction import vote_matched_labels
 from post_processing.tools.reranking import assign_identities_from_trackid2label_counts
 import json
+from collections import Counter
 
 seed = 42
 np.random.seed(seed)
@@ -28,10 +29,10 @@ class Tracklet:
     track_video_path: Optional[Path] = None  # optional raw video path for visualization
     
     camera_id: str = ""
-    identity_label: str = "invalid" # final identity label after voting
-    stitched_label: str = "invalid"  # identity label during stitching
-    smoothed_label: str = "invalid"  # identity label after temporal smoothing
-    voted_track_label: str = "invalid" # identity label voted from ReID features (from current tracklet only)
+    identity_label: str = "" # final identity label after voting
+    stitched_label: str = ""  # identity label during stitching
+    smoothed_label: str = ""  # identity label after temporal smoothing
+    voted_track_label: str = "" # identity label voted from ReID features (from current tracklet only)
     semi_gt_labels: List[str] = field(default_factory=list)  # list of semi GT IDs matched to this tracklet
     stitched_id: Optional[int] = None
     invalid_flag: bool = False    ## whether the tracklet is invalid (e.g. in invalid zone, else?)
@@ -67,7 +68,7 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
     track_filename = Path(track_csv).stem
 
     ## load identity label from npz if exists
-    voted_track_label = "invalid"
+    voted_track_label = "unknown"
   
     t = Tracklet(track_id=track_id, 
                  raw_track_id=track_id, 
@@ -85,16 +86,178 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
     return [t]
 
 
-def track_csv2identity(final_stitched_map: Dict[str, List[Dict[str, object]]],
-                       is_voted: bool = True) -> Dict[str, str]:
+
+def vote_identity_from_matched_labels(
+    matched_labels: np.ndarray,
+    known_labels: Optional[List[str]] = None,
+    sample_rate: float = 0.1,
+    min_samples: int = 10,
+    max_samples: int = 100,
+    return_details: bool = False
+) -> Dict:
+    """
+    Vote on identity label from matched_labels, optionally filtering by known_labels.
     
+    Args:
+        matched_labels: Array of matched labels, shape (n_frames, top_k)
+        known_labels: List of valid labels to consider. If provided, only these labels are counted.
+                     If None, all labels are considered.
+        sample_rate: Fraction of frames to sample (default: 0.1 = 10%)
+        min_samples: Minimum number of frames to sample
+        max_samples: Maximum number of frames to sample
+        return_details: Whether to return detailed sampling info
+        
+    Returns:
+        Dict containing:
+            - 'voted_label': The most common label (filtered by known_labels if provided)
+            - 'confidence': Percentage of the most common label
+            - 'ranked_labels': List of (label, count, percentage) tuples sorted by count
+            - 'total_votes': Total number of label votes counted
+            - 'filtered_votes': Number of votes after filtering (if known_labels provided)
+            - 'known_labels': List of known labels used for filtering
+            - 'sampled_frames': Number of frames sampled (if return_details=True)
+    """
+    n_frames = len(matched_labels)
+    
+    # Calculate number of samples
+    n_samples = max(min_samples, min(max_samples, int(n_frames * sample_rate)))
+    n_samples = min(n_samples, n_frames)  # Don't exceed total frames
+    
+    # Sample frame indices uniformly
+    if n_samples == n_frames:
+        sampled_indices = np.arange(n_frames)
+    else:
+        sampled_indices = np.linspace(0, n_frames - 1, n_samples, dtype=int)
+    
+    # Collect all labels from sampled frames
+    all_labels = []
+    for idx in sampled_indices:
+        frame_labels = matched_labels[idx]
+        # Handle both single labels and arrays of labels (top-k)
+        if isinstance(frame_labels, np.ndarray):
+            all_labels.extend(frame_labels.tolist())
+        else:
+            all_labels.append(frame_labels)
+    
+    # Count all labels
+    label_counts = Counter(all_labels)
+    total_votes = sum(label_counts.values())
+    
+    top1 = label_counts.most_common(1)
+    top1_label = top1[0][0] if top1 else None
+    
+    ## find the most alike one from top1
+    top1_label = vote_identity_label(top1_label, known_labels)
+    
+    # Filter by known_labels if provided
+    if known_labels is not None:
+        filtered_counts = {
+            label: count 
+            for label, count in label_counts.items() 
+            if label in known_labels
+        }
+        
+        if not filtered_counts:
+            return {
+                'voted_label': top1_label,
+                'confidence': 0.0,
+                'ranked_labels': [],
+                'total_votes': total_votes,
+                'filtered_votes': 0,
+                'known_labels': known_labels,
+                'warning': f'No labels found in known_labels: {known_labels}'
+            }
+        
+        label_counts = Counter(filtered_counts)
+        filtered_votes = sum(label_counts.values())
+    else:
+        filtered_votes = total_votes
+    
+    # Create ranked list with percentages (based on filtered votes)
+    ranked_labels = [
+        (label, count, (count / filtered_votes * 100))
+        for label, count in label_counts.most_common()
+    ]
+    
+    # Get the voted label (most common after filtering)
+    voted_label = ranked_labels[0][0] if ranked_labels else top1_label  
+    confidence = ranked_labels[0][2] if ranked_labels else 0.0
+    
+    result = {
+        'voted_label': voted_label,
+        'confidence': confidence,
+        'ranked_labels': ranked_labels,
+        'total_votes': total_votes,
+        'filtered_votes': filtered_votes,
+        'known_labels': known_labels,
+    }
+    
+    if return_details:
+        result['sampled_frames'] = len(sampled_indices)
+        result['frame_indices'] = sampled_indices.tolist()
+    
+    return result
+
+
+def vote_identity_label(voted_track_label, known_labels) -> str:
+    """
+    Validate and correct voted track label based on known labels and alike pairs.
+    
+    Args:
+        voted_track_label: The voted label from the tracklet
+        
+    Returns:
+        Corrected identity label or the original if no correction needed
+    """
+    
+    # Find the most alike label in known_labels
+    for alike_pair in ALIKE_PAIRS:
+        # Check if voted_track_label is in this alike group
+        if voted_track_label in alike_pair:
+            # Find intersection between alike_pair and known_labels
+            valid_alternatives = [label for label in alike_pair if label in known_labels]
+            
+            if valid_alternatives:
+                # Return the first valid alternative from the alike group
+                corrected_label = valid_alternatives[0]
+                logging.info(
+                    f"Corrected label '{voted_track_label}' to '{corrected_label}' "
+                    f"based on alike pair {alike_pair} and known_labels {known_labels}"
+                )
+                return corrected_label
+    
+    # If no alike pair found or no valid alternative, return original
+    logging.warning(
+        f"Label '{voted_track_label}' not in known_labels {known_labels} "
+        f"and no valid alternative found in ALIKE_PAIRS"
+    )
+    return voted_track_label
+
+def track_csv2identity(tracklets: List[Tracklet], 
+                       label_type: str = "identity_label") -> Dict[str, str]:
+    """
+    Extract CSV path to identity label mapping from tracklets.
+    
+    Args:
+        tracklets: List of Tracklet objects
+        label_type: Which label to use - "identity_label", "stitched_label", or "smoothed_label"
+    
+    Returns:
+        Dict mapping track_csv_path (str) -> identity label (str)
+    """
     csv2identity = {}
     
-    for idlabel, tracklets in final_stitched_map.items():
-        for t in tracklets:
-            track_csv = t.get("track_csv_path", "")
-            if track_csv:
-                csv2identity[track_csv] = t.get("identity_label", "invalid") if not is_voted else t.get("voted_track_label", "invalid")
+    for t in tracklets:
+        if t.track_csv_path:
+            csv_path = str(t.track_csv_path)
+            if label_type == "identity_label":
+                csv2identity[csv_path] = t.identity_label
+            elif label_type == "stitched_label":
+                csv2identity[csv_path] = t.stitched_label
+            elif label_type == "smoothed_label":
+                csv2identity[csv_path] = t.smoothed_label
+            else:
+                csv2identity[csv_path] = t.identity_label
     
     return csv2identity
 
@@ -402,42 +565,6 @@ class TrackletManager:
         # Return True to skip, False to keep
         return not in_range
         
-    def vote_identity_label(self, voted_track_label, known_labels=None) -> str:
-        """
-        Validate and correct voted track label based on known labels and alike pairs.
-        
-        Args:
-            voted_track_label: The voted label from the tracklet
-            known_labels: List of valid identity labels for this session
-            
-        Returns:
-            Corrected identity label or the original if no correction needed
-        """
-        if not known_labels or voted_track_label in known_labels:
-            return voted_track_label
-        
-        # Find the most alike label in known_labels
-        for alike_pair in ALIKE_PAIRS:
-            # Check if voted_track_label is in this alike group
-            if voted_track_label in alike_pair:
-                # Find intersection between alike_pair and known_labels
-                valid_alternatives = [label for label in alike_pair if label in known_labels]
-                
-                if valid_alternatives:
-                    # Return the first valid alternative from the alike group
-                    corrected_label = valid_alternatives[0]
-                    self.logger.info(
-                        f"Corrected label '{voted_track_label}' to '{corrected_label}' "
-                        f"based on alike pair {alike_pair} and known_labels {known_labels}"
-                    )
-                    return corrected_label
-        
-        # If no alike pair found or no valid alternative, return original
-        self.logger.warning(
-            f"Label '{voted_track_label}' not in known_labels {known_labels} "
-            f"and no valid alternative found in ALIKE_PAIRS"
-        )
-        return voted_track_label
 
 
     def vote_identity_label_old(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
@@ -540,22 +667,46 @@ class TrackletManager:
 
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
+            tracklet[0].semi_gt_labels = self.known_labels
             
             voted_track_label = "invalid"
+            # print("tracklet[0].feature_path:", tracklet[0].feature_path)
             if tracklet[0].feature_path and tracklet[0].feature_path.exists():
+                # features = load_embedding(tracklet[0].feature_path)[0]
+                # ## if known_labels is not None, get indicies of known labels in gallery_labels, gallery_features
+                # gallery_features = self.gallery_features
+                # gallery_labels = self.gallery_labels
+                # # if self.known_labels is not None:
+                # #     known_indices = [i for i, label in enumerate(self.gallery_labels) if label in self.known_labels]
+                # #     gallery_features = gallery_features[known_indices]
+                # #     gallery_labels = [gallery_labels[i] for i in known_indices]
+                    
+                
+                # matched_labels = match_to_gallery(features, 
+                #                                   gallery_features, 
+                #                                   gallery_labels=gallery_labels)[-1]
+
+                ## type2
                 data = load_feature_npz(tracklet[0].feature_path)
                 # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
                 matched_labels = data['matched_labels']
-                voted_track_label = data['voted_labels']
+                
+                voted_results = vote_identity_from_matched_labels(
+                    matched_labels=np.array(matched_labels),
+                    known_labels=self.known_labels,
+                    sample_rate=1,
+                    return_details=True
+                )
+                voted_track_label = voted_results['voted_label']
+                print("voted_track_label:", voted_track_label)
 
                 # Convert numpy array to string if needed
                 if isinstance(voted_track_label, np.ndarray):
                     voted_track_label = str(voted_track_label.item()) if voted_track_label.size == 1 else str(voted_track_label[0])
 
-                voted_track_label = self.vote_identity_label(
-                    voted_track_label=voted_track_label,
-                    known_labels=self.known_labels
-                )
+                # voted_track_label = self.vote_identity_label(
+                #     voted_track_label=voted_track_label
+                # )
 
             tracklet[0].voted_track_label = voted_track_label
 
@@ -593,180 +744,305 @@ class TrackletManager:
 
         return agg_features
 
-                
-
-    def get_stitched_tracklets(self) -> None:
+    def update_smoothed_labels(self, smoothed_labels_dict: Dict[str, str]):
         """
-        Save stitched tracklets metadata to json file.
-        This does NOT save per-frame data or features,
-        only high-level info including stitched_id.
-
-        dict format: stiched_id -> {
-            ["track_id": str,   
-            "stitched_id": int,
-            "camera_id": str,
-            "start_timestamp": str,
-            "end_timestamp": str,
-            ...]
-        }
+        Update smoothed_label field in tracklets.
+        
+        Args:
+            smoothed_labels_dict: Dict mapping track_csv_path or track_filename -> smoothed label
         """
-
-        known_labels = self.known_labels
-        self.stitched_map: Dict[str, List[Dict[str, object]]] = {}
         for t in self.tracklets:
+            csv_path = str(t.track_csv_path) if t.track_csv_path else None
+            filename = t.track_filename
             
-            # voted_track_label = 'invalid'
-            # # if voted_track_label is None or voted_track_label == "invalid":
-            # if t.feature_path and t.feature_path.exists():
-            #     feats, frame_ids, _, avg_feat = load_embedding(t.feature_path)
-            #     voted_track_label = self.vote_identity_label(
-            #         features=feats,
-            #         avg_embedding=avg_feat,
-            #         gallery_features=gallery_features,
-            #         gallery_labels=gallery_labels,
-            #         known_labels=known_labels
-            #     )
-                                        
-            sid = "unassigned" if t.invalid_flag else str(t.stitched_id)
-            
-            self.stitched_map.setdefault(sid, []).append(
-                {
-                    "track_id": t.track_id,
-                    "raw_track_id": t.raw_track_id,
-                    "track_filename": t.track_filename,
-                    "track_csv_path": str(t.track_csv_path) if t.track_csv_path else "",
-                    "track_video_path": str(t.track_video_path) if t.track_video_path else "",
-                    "stitched_id": t.stitched_id,
-                    "camera_id": t.camera_id,
-                    # "avg_tracklet_label": avg_tracklet_label,  ### avg embedding from all tracklets
-                    "voted_track_label": t.voted_track_label,   ### voted label from this track
-                    "semi_gt_labels": known_labels,
-                    # "identity_label": identity_label,   ### final label
-                    "invalid_flag": t.invalid_flag,
-                    "start_timestamp": t.start_timestamp.isoformat() if isinstance(t.start_timestamp, datetime) else "",
-                    "end_timestamp": t.end_timestamp.isoformat() if isinstance(t.end_timestamp, datetime) else "",
-                    "start_frame_id": t.start_frame_id,
-                    "end_frame_id": t.end_frame_id,
-                    "feature_path": str(t.feature_path) if t.feature_path else "",
-                }
-            )
-            
-        ### update stitched_map - get final voted label for each stitched_id 
+            if csv_path and csv_path in smoothed_labels_dict:
+                t.smoothed_label = smoothed_labels_dict[csv_path]
+            elif filename and filename in smoothed_labels_dict:
+                t.smoothed_label = smoothed_labels_dict[filename]
+        
+        self.logger.info(f"Updated smoothed labels for tracklets")
+                    
+
+    def get_stitched_tracklets(self):
+        """
+        Update tracklets with stitched_label and identity_label directly.
+        No more separate maps - all labels are stored in tracklet objects.
+        """
+        known_labels = self.known_labels
+        
+        # Vote on identity labels for each stitched_id
         start_time = None
         end_time = None
-        trackid2idlabel = self.vote_tracklet_identity_labels(start_time = start_time, end_time = end_time, known_labels=known_labels)
-        ### update self.stitched_map: voted_track_label -> tracklets, not track_id -> tracklets
-
-        self.final_stitched_map: Dict[str, List[Dict[str, object]]] = {}
-        ### self.final_stitched_map -> update final identity_label for each tracklet
-        for sid in self.stitched_map:
-            if sid in trackid2idlabel:
-                idlabel = trackid2idlabel[sid]
+        trackid2idlabel = self.vote_tracklet_identity_labels(
+            start_time=start_time, 
+            end_time=end_time, 
+            known_labels=known_labels
+        )
+        
+        # Update each tracklet with stitched_label and identity_label
+        for t in self.tracklets:
+            if t.invalid_flag:
+                t.stitched_label = "unassigned"
+                t.identity_label = "invalid"
             else:
-                continue
-            
-            tracklets = self.stitched_map[sid]
-            
-            for t in tracklets:
-                t["identity_label"] = idlabel
-                
-            self.final_stitched_map.setdefault(idlabel, []).extend(tracklets)
+                sid = str(t.stitched_id)
+                if sid in trackid2idlabel:
+                    identity = trackid2idlabel[sid]
+                    t.stitched_label = identity
+                    t.identity_label = identity
+                else:
+                    t.stitched_label = "unassigned"
+                    t.identity_label = "invalid"
         
-        
-        # ### flatten track results -- TODO - update 
-        # self.final_tracklet_results: Dict[str, Dict[str, object]] = {}
-        # for idlabel, tracklets in self.stitched_map.items():
-        #     if sid in trackid2idlabel:
-        #         idlabel = trackid2idlabel[sid]
-        #     else:
-        #         continue
-            
-        #     tracklets = self.stitched_map[sid]
-            
-        #     for t in tracklets:
-        #         t["identity_label"] = idlabel
-        #         self.final_tracklet_results[t["track_filename"]] = t
-                
+        self.logger.info(f"Updated {len(self.tracklets)} tracklets with identity labels")
 
-        # return self.final_stitched_map
-    
-    def save_stitched_tracklets(self, 
-                                final_tracklet_results,
-                                output_dir : Path):
-
+    def save_stitched_tracklets(self, tracklets, output_dir: Path):
+        """
+        Save tracklets as a list of dictionaries to JSON.
+        Each tracklet contains all its labels (stitched_label, identity_label, smoothed_label).
+        """
         if self.start_time and self.end_time:
             date_str = '%Y%m%d_%H%M%S'
             time_range_str = f"{self.start_time.strftime(date_str)}_{self.end_time.strftime(date_str)}"
         else:
             raise ValueError("Both start_time and end_time must be specified to save stitched tracklets.")
-            
+        
         if output_dir is None:
             raise ValueError("output_dir must be specified to save stitched tracklets.")
-        else:
-            camera_str = f"zag_elp_cam_{self.camera_id}"
-            date_str = self.start_time.strftime("%Y-%m-%d") if self.start_time else "unknown_date"
-            save_path = output_dir / camera_str / date_str / f"stitched_tracklets_cam{self.camera_id}_{time_range_str}.json"
-            save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        camera_str = f"zag_elp_cam_{self.camera_id}"
+        date_str = self.start_time.strftime("%Y-%m-%d") if self.start_time else "unknown_date"
+        save_path = output_dir / camera_str / date_str / f"stitched_tracklets_cam{self.camera_id}_{time_range_str}.json"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        
 
+        # Convert tracklets to list of dicts
+        tracklets_data = []
+        for t in tracklets:
+            tracklets_data.append({
+                "track_id": t.track_id,
+                "raw_track_id": t.raw_track_id,
+                "track_filename": t.track_filename,
+                "track_csv_path": str(t.track_csv_path) if t.track_csv_path else "",
+                "track_video_path": str(t.track_video_path) if t.track_video_path else "",
+                "camera_id": t.camera_id,
+                "stitched_id": t.stitched_id,
+                "stitched_label": t.stitched_label,
+                "identity_label": t.identity_label,
+                "smoothed_label": t.smoothed_label,
+                "voted_track_label": t.voted_track_label,
+                "semi_gt_labels": t.semi_gt_labels,
+                "invalid_flag": t.invalid_flag,
+                "start_timestamp": t.start_timestamp.isoformat() if isinstance(t.start_timestamp, datetime) else "",
+                "end_timestamp": t.end_timestamp.isoformat() if isinstance(t.end_timestamp, datetime) else "",
+                "start_frame_id": t.start_frame_id,
+                "end_frame_id": t.end_frame_id,
+                "feature_path": str(t.feature_path) if t.feature_path else "",
+            })
+        
         with save_path.open("w") as f:
-            json.dump(final_tracklet_results, f, indent=2)
-
+            json.dump(tracklets_data, f, indent=2)
+        
         if self.logger:
-            self.logger.info("Saved stitched tracklets JSON to %s", save_path)
-
-    def load_stitched_tracklets_from_dir(self, dir: Path = None) -> Dict[str, List[Dict[str, object]]]:
-        """Load stitched tracklets from a JSON file."""        
+            self.logger.info("Saved %d tracklets to %s", len(tracklets_data), save_path)
+        
+        
+    def load_stitched_tracklets_from_dir(self, dir: Path = None) -> List[Tracklet]:
+        """Load stitched tracklets from a JSON file and return as Tracklet objects."""
         
         if dir is None:
-            raise ValueError("output_dir must be specified to save stitched tracklets.")
+            raise ValueError("dir must be specified to load stitched tracklets.")
         
         time_range_str = self.start_time.strftime("%Y%m%d_%H%M%S") + "_" + self.end_time.strftime("%Y%m%d_%H%M%S") if self.start_time and self.end_time else "fullday"
         camera_str = f"zag_elp_cam_{self.camera_id}"
         date_str = self.start_time.strftime("%Y-%m-%d") if self.start_time else "unknown_date"
         json_path = dir / camera_str / date_str / f"stitched_tracklets_cam{self.camera_id}_{time_range_str}.json"
-
+        
         if not json_path.exists():
             self.logger.error(f"Stitched tracklets JSON file not found: {json_path}")
             return None
-
+        
         with json_path.open("r") as f:
-            stitched_tracklets = json.load(f)
+            tracklets_data = json.load(f)
+        
+        # Convert dicts back to Tracklet objects
+        tracklets = []
+        for t_dict in tracklets_data:
+            t = Tracklet(
+                track_id=t_dict.get("track_id", ""),
+                raw_track_id=t_dict.get("raw_track_id", ""),
+                track_filename=t_dict.get("track_filename", ""),
+                track_csv_path=Path(t_dict["track_csv_path"]) if t_dict.get("track_csv_path") else None,
+                track_video_path=Path(t_dict["track_video_path"]) if t_dict.get("track_video_path") else None,
+                camera_id=t_dict.get("camera_id", ""),
+                stitched_id=t_dict.get("stitched_id"),
+                stitched_label=t_dict.get("stitched_label", "invalid"),
+                identity_label=t_dict.get("identity_label", "invalid"),
+                smoothed_label=t_dict.get("smoothed_label", "invalid"),
+                voted_track_label=t_dict.get("voted_track_label", "invalid"),
+                semi_gt_labels=t_dict.get("semi_gt_labels", []),
+                invalid_flag=t_dict.get("invalid_flag", False),
+                start_timestamp=datetime.fromisoformat(t_dict["start_timestamp"]) if t_dict.get("start_timestamp") else None,
+                end_timestamp=datetime.fromisoformat(t_dict["end_timestamp"]) if t_dict.get("end_timestamp") else None,
+                start_frame_id=t_dict.get("start_frame_id"),
+                end_frame_id=t_dict.get("end_frame_id"),
+                feature_path=Path(t_dict["feature_path"]) if t_dict.get("feature_path") else None,
+            )
+            tracklets.append(t)
+        
+        self.logger.info(f"Loaded {len(tracklets)} tracklets from {json_path}")
+        return tracklets
 
-        self.logger.info(f"Loaded stitched tracklets from {json_path}")
-        return stitched_tracklets
+    # def vote_tracklet_identity_labels(self, start_time: Optional[datetime | str] = None, 
+    #                                    end_time: Optional[datetime | str] = None,
+    #                                    filter_labels: List[str] = ["Thai"], 
+    #                                    known_labels: List[str] = None) -> Dict[str, str]:
+    #     """Vote on final identity labels for each stitched tracklet ID based on a time window.
+        
+    #     Args:
+    #         start_time: Start time for filtering tracklets (datetime or string "HH:MM:SS" or "yyyymmdd HH:MM:SS")
+    #         end_time: End time for filtering tracklets (datetime or string "HH:MM:SS" or "yyyymmdd HH:MM:SS")
+    #         filter_labels: Labels to filter out when multiple IDs are detected (default: ["Thai"])
+            
+    #     Returns:
+    #         Dict mapping stitched_id (str) -> final identity label (str)
+    #     """
+    #     from collections import Counter
+        
+    #     if not hasattr(self, 'stitched_map') or not self.stitched_map:
+    #         self.logger.warning("No stitched_map available. Please run save_stitched_tracklets first.")
+    #         return {}
+        
+    #     # Convert string inputs to datetime objects
+    #     if start_time and isinstance(start_time, str):
+    #         start_time = self._format_time(start_time)
+    #     if end_time and isinstance(end_time, str):
+    #         end_time = self._format_time(end_time)
+        
+    #     trackid2idlabel = {}
+    #     trackid2label_counts = {}
+        
+    #     # Process each stitched ID
+    #     for stitched_id, tracklets in self.stitched_map.items():
+    #         if stitched_id == "unassigned":
+    #             continue
+            
+    #         # Filter tracklets by time range
+    #         filtered_tracklets = []
+    #         for t in tracklets:
+    #             if start_time or end_time:
+    #                 t_start = datetime.fromisoformat(t["start_timestamp"]) if t.get("start_timestamp") else None
+    #                 if not t_start:
+    #                     continue
+                    
+    #                 # Apply time filtering logic
+    #                 if start_time and end_time:
+    #                     if start_time > end_time:
+    #                         if not (t_start >= start_time or t_start <= end_time):
+    #                             continue
+    #                     else:
+    #                         if not (start_time <= t_start <= end_time):
+    #                             continue
+    #                 elif start_time and t_start < start_time:
+    #                     continue
+    #                 elif end_time and t_start > end_time:
+    #                     continue
+                
+    #             filtered_tracklets.append(t)
 
+    #         # Skip invalid tracklets
+    #         filtered_tracklets = [t for t in filtered_tracklets if not t.get("voted_track_label") == 'invalid']
+            
+    #         # Skip if no tracklets in time window
+    #         if not filtered_tracklets:
+    #             trackid2idlabel[stitched_id] = "invalid"
+    #             print("=================== No tracklets for stitched_id", stitched_id, "in time window ===================")
+    #             continue
+            
+    #         # Count voted labels
+    #         label_counts = Counter()
+    #         for t in filtered_tracklets:
+    #             label = t.get("voted_track_label", "invalid") or "invalid"
+    #             if label != "invalid":
+    #                 label_counts[label] += 1
+            
+    #         # Get unique labels (excluding "invalid")
+    #         unique_labels = [label for label in label_counts.keys() if label != "invalid"]
+            
+    #         # Apply filtering logic -- filter out the wrong labels from group if not Thai in the room
+    #         if len(unique_labels) >= 2 and ("Thai" not in known_labels if known_labels else True):
+    #             for filter_label in filter_labels:
+    #                 if filter_label in label_counts:
+    #                     del label_counts[filter_label]
+    #                     self.logger.debug(f"Filtered out '{filter_label}' from stitched_id {stitched_id}")
+                        
+    #         ### if known_labels provided, further filter the labels not in known_labels
+    #         if known_labels:
+    #             for label in list(label_counts.keys()):
+    #                 if label not in known_labels:
+    #                     del label_counts[label]
+    #                     self.logger.debug(f"Filtered out invalid label '{label}' from stitched_id {stitched_id} based on known_labels")
+            
+    #         trackid2label_counts[stitched_id] = dict(label_counts)
+            
+    #         # # Get top voted label
+    #         # if label_counts:
+    #         #     final_label = label_counts.most_common(1)[0][0]
+    #         #     self.logger.info(f"Stitched ID {stitched_id}: voted label = {final_label} (from {dict(label_counts)})")
+    #         # else:
+    #         #     final_label = "invalid"
+    #         #     self.logger.warning(f"Stitched ID {stitched_id}: no valid labels after filtering")
+            
+    #         # trackid2idlabel[stitched_id] = final_label
+            
+    #     ### re-ranking based on counts
+    #     if known_labels is not None:
+    #         if len(known_labels) == 1:
+    #             for sid in trackid2label_counts.keys():
+    #                 trackid2idlabel[sid] = 'Thai'
+    #         else:
+    #             ranks = assign_identities_from_trackid2label_counts(trackid2label_counts, known_labels, score_mode="ratio")
+    #             for sid, info in ranks.items():
+    #                 trackid2idlabel[sid] = info["assigned_label"]
+        
+    #     print("====== Known labels used for voting: ", known_labels, "======")
+    #     self.analyze_stitching_results(trackid2idlabel=trackid2idlabel, start_time=start_time, end_time=end_time)
+        
+    #     return trackid2idlabel
 
     def vote_tracklet_identity_labels(self, start_time: Optional[datetime | str] = None, 
-                                       end_time: Optional[datetime | str] = None,
-                                       filter_labels: List[str] = ["Thai"], 
-                                       known_labels: List[str] = None) -> Dict[str, str]:
-        """Vote on final identity labels for each stitched tracklet ID based on a time window.
+                                    end_time: Optional[datetime | str] = None,
+                                    filter_labels: List[str] = ["Thai"], 
+                                    known_labels: List[str] = None) -> Dict[str, str]:
+        """
+        Vote on final identity labels for each stitched_id based on tracklets.
         
-        Args:
-            start_time: Start time for filtering tracklets (datetime or string "HH:MM:SS" or "yyyymmdd HH:MM:SS")
-            end_time: End time for filtering tracklets (datetime or string "HH:MM:SS" or "yyyymmdd HH:MM:SS")
-            filter_labels: Labels to filter out when multiple IDs are detected (default: ["Thai"])
-            
         Returns:
             Dict mapping stitched_id (str) -> final identity label (str)
         """
         from collections import Counter
-        
-        if not hasattr(self, 'stitched_map') or not self.stitched_map:
-            self.logger.warning("No stitched_map available. Please run save_stitched_tracklets first.")
-            return {}
         
         # Convert string inputs to datetime objects
         if start_time and isinstance(start_time, str):
             start_time = self._format_time(start_time)
         if end_time and isinstance(end_time, str):
             end_time = self._format_time(end_time)
+
+        # Group tracklets by stitched_id
+        stitched_groups = {}
+        for t in self.tracklets:
+            if t.invalid_flag:
+                continue
+            sid = str(t.stitched_id) if t.stitched_id is not None else "unassigned"
+            if sid not in stitched_groups:
+                stitched_groups[sid] = []
+            stitched_groups[sid].append(t)
         
         trackid2idlabel = {}
         trackid2label_counts = {}
-        
+
         # Process each stitched ID
-        for stitched_id, tracklets in self.stitched_map.items():
+        for stitched_id, tracklets in stitched_groups.items():
             if stitched_id == "unassigned":
                 continue
             
@@ -774,7 +1050,7 @@ class TrackletManager:
             filtered_tracklets = []
             for t in tracklets:
                 if start_time or end_time:
-                    t_start = datetime.fromisoformat(t["start_timestamp"]) if t.get("start_timestamp") else None
+                    t_start = t.start_timestamp
                     if not t_start:
                         continue
                     
@@ -794,64 +1070,64 @@ class TrackletManager:
                 filtered_tracklets.append(t)
 
             # Skip invalid tracklets
-            filtered_tracklets = [t for t in filtered_tracklets if not t.get("voted_track_label") == 'invalid']
+            filtered_tracklets = [t for t in filtered_tracklets if t.voted_track_label != 'invalid']
             
             # Skip if no tracklets in time window
             if not filtered_tracklets:
                 trackid2idlabel[stitched_id] = "invalid"
-                print("=================== No tracklets for stitched_id", stitched_id, "in time window ===================")
                 continue
             
             # Count voted labels
             label_counts = Counter()
             for t in filtered_tracklets:
-                label = t.get("voted_track_label", "invalid") or "invalid"
+                label = t.voted_track_label or "invalid"
                 if label != "invalid":
                     label_counts[label] += 1
             
             # Get unique labels (excluding "invalid")
             unique_labels = [label for label in label_counts.keys() if label != "invalid"]
             
-            # Apply filtering logic -- filter out the wrong labels from group if not Thai in the room
+            # Apply filtering logic
             if len(unique_labels) >= 2 and ("Thai" not in known_labels if known_labels else True):
                 for filter_label in filter_labels:
                     if filter_label in label_counts:
                         del label_counts[filter_label]
                         self.logger.debug(f"Filtered out '{filter_label}' from stitched_id {stitched_id}")
-                        
-            ### if known_labels provided, further filter the labels not in known_labels
+            
+            # Filter labels not in known_labels
             if known_labels:
                 for label in list(label_counts.keys()):
                     if label not in known_labels:
                         del label_counts[label]
-                        self.logger.debug(f"Filtered out invalid label '{label}' from stitched_id {stitched_id} based on known_labels")
+                        self.logger.debug(f"Filtered out invalid label '{label}' from stitched_id {stitched_id}")
             
             trackid2label_counts[stitched_id] = dict(label_counts)
-            
-            # # Get top voted label
-            # if label_counts:
-            #     final_label = label_counts.most_common(1)[0][0]
-            #     self.logger.info(f"Stitched ID {stitched_id}: voted label = {final_label} (from {dict(label_counts)})")
-            # else:
-            #     final_label = "invalid"
-            #     self.logger.warning(f"Stitched ID {stitched_id}: no valid labels after filtering")
-            
-            # trackid2idlabel[stitched_id] = final_label
-            
-        ### re-ranking based on counts
+
+        
+        # Re-ranking based on counts
         if known_labels is not None:
             if len(known_labels) == 1:
                 for sid in trackid2label_counts.keys():
-                    trackid2idlabel[sid] = 'Thai'
+                    trackid2idlabel[sid] = known_labels[0]
             else:
+                from post_processing.tools.reranking import assign_identities_from_trackid2label_counts
                 ranks = assign_identities_from_trackid2label_counts(trackid2label_counts, known_labels, score_mode="ratio")
                 for sid, info in ranks.items():
                     trackid2idlabel[sid] = info["assigned_label"]
         
-        print("====== Known labels used for voting: ", known_labels, "======")
         self.analyze_stitching_results(trackid2idlabel=trackid2idlabel, start_time=start_time, end_time=end_time)
         
+        ### final safe assign for 'invalid' labels - get stitched_id for 'invalid' labels -> assign to another valid label if only one valid label in known_labels
+        if known_labels is not None:
+            valid_labels = [label for label in known_labels if label != 'invalid']
+            if len(valid_labels) == 1:
+                for sid in trackid2idlabel.keys():
+                    if trackid2idlabel[sid] == 'invalid':
+                        trackid2idlabel[sid] = valid_labels[0]
+                        self.logger.info(f"Re-assigned stitched_id {sid} from 'invalid' to '{valid_labels[0]}' as it is the only valid label.")
+        
         return trackid2idlabel
+
 
     def stitch_tracklets_bidirectional(
         self,
@@ -868,7 +1144,7 @@ class TrackletManager:
     ):
         """
         """
-        from post_processing.core.stitching import stitch_tracklets_bidirectional_gallery
+        from post_processing.core.stitching import stitch_tracklets_temporal_window, stitch_tracklets_bidirectional_gallery_strict, stitch_tracklets_bidirectional_gallery, stitch_tracklets_bidirectional_gallery_dynamic, stitch_tracklets_bidirectional_gallery_robust
         
         cam_tracklets = [t for t in self.tracklets if t.camera_id == self.camera_id and t.invalid_flag==False]
         if not cam_tracklets:
@@ -877,7 +1153,7 @@ class TrackletManager:
             )
             return
         print("Total tracklets for camera", self.camera_id, ":", len(cam_tracklets))
-        stitch_tracklets_bidirectional_gallery(
+        stitch_tracklets_bidirectional_gallery_strict(
             cam_tracklets,
             max_gap_frames=max_gap_frames, 
             local_sim_th=local_sim_th,
