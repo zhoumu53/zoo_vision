@@ -67,6 +67,9 @@ int main(int argc, char *argv[]) {
 
   rclcpp::init(argc, argv);
 
+  std::stack<ProfilerSectionData *> profilerStack;
+  ProfileStackGuard stackGuard{profilerStack};
+
   setComputeDevice();
 
   // Load config once before initializing all nodes

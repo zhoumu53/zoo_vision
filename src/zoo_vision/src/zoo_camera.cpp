@@ -65,6 +65,7 @@ ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
 }
 
 void ZooCamera::openCamera() {
+  ProfileSection s{"openCamera"};
   if (cvStream_.isOpened()) {
     cvStream_.release();
   }
