@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
-from post_processing.utils import IDENTITY_NAMES
+from post_processing.utils import IDENTITY_NAMES, TYPO
 # ---------------------------
 # Label normalization
 # ---------------------------
@@ -39,12 +39,12 @@ def normalize_pred_behavior(s: pd.Series) -> pd.Series:
 def build_track_to_gt_id_map(df_gt_id: pd.DataFrame) -> dict[str, str]:
     """
     df_gt_id columns: filename (no .csv), gt (Indi/Chandra/...)
-    Returns map: 'Txxxxxx_IDyyyyyy.csv' -> 'Indi'
+    Returns map: 'Txxxxxx_IDyyyyyy' -> 'Indi'
     """
-    # check if 'csv' suffix is present in 'filename' column; if not, add it
+    # check if 'csv' suffix is present in 'filename' column; if not, correctly build the map
+    m = {}
     if not df_gt_id["filename"].astype(str).str.endswith(".csv").all():
-        df_gt_id["filename"] = df_gt_id["filename"].astype(str) + ".csv"
-    m = dict(zip(df_gt_id["filename"].astype(str), df_gt_id["gt"].astype(str)))
+        m = dict(zip(df_gt_id["filename"].astype(str), df_gt_id["gt"].astype(str)))
     return m
 
 
@@ -81,7 +81,9 @@ def build_gt_behavior_for_results(
         if start<=end: start <= t <= end
         else: t >= start OR t <= end
     """
+    
     d = df_results.copy()
+    # print(d.head(), d.shape)
     d[ts_col] = _to_dt64(d[ts_col])
     d["tod"] = d[ts_col].dt.time
 
@@ -140,14 +142,28 @@ def build_gt_behavior_for_results(
                        "quality_conf"])
     d = d[columns_to_keep]
     
+    # print("After building GT behavior, df shape:", d.head(), d.shape)
+    
     # filter the items with NaN gt_identity
     d = d.dropna(subset=["gt_identity"])
+
+    # print("After dropping NaN gt_identity, df shape:", d.shape)
     
     ### remove the rows where pred_behavior is invalid -- '00_invalid'
     d = d[d["pred_behavior"] != "00_invalid"]
+
+    # print("After filtering invalid pred_behavior, df shape:", d.shape)
     
     ### remove the rows where gt_identits is not in IDENTITY_NAMES
+
+    for col in ['pred_behavior', 'identity_label', 'gt_identity']:
+        d[col] = d[col].replace(TYPO)
     d = d[d["gt_identity"].isin(IDENTITY_NAMES)]
+
+    # print("After filtering gt_identity not in IDENTITY_NAMES, df shape:", d.shape, IDENTITY_NAMES)
+    
+    # import sys; sys.exit(0) 
+    # d.to_csv("debug_build_gt_behavior_for_results.csv", index=False)
 
     return d
 
@@ -201,6 +217,66 @@ def behavior_metrics_per_id(
 
         if verbose:
             print(f"\n===== ID: {_id} (n={len(g)} frames) =====")
+            print(f"Joint Accuracy (ID & Behavior): {acc:.4f}")
+            print("Labels:", lab)
+            print("\nConfusion Matrix (normalized):")
+            ## print cm with 3 decimal places
+            cm = np.array2string(cm, formatter={'float_kind':lambda x: "%.3f" % x})
+            print(cm)
+            # print("\nClassification Report:")
+            # print(report)
+
+    return results
+
+
+
+def behavior_metrics_per_id_per_cam(
+    df_eval: pd.DataFrame,
+    id_col: str = "gt_identity",          # evaluate "per ID" using ground-truth identity
+    gt_beh_col: str = "gt_behavior",
+    pred_beh_col: str = "pred_behavior",
+    pred_id_col: str = "identity_label",
+    gt_id_col: str = "gt_identity",
+    wrong_id_as: str = "__WRONG_ID__",    # sentinel label so wrong-ID rows count as behavior-wrong
+    labels: list | None = None,           # optional fixed label order (recommended)
+    verbose: bool = True,
+):
+    df = df_eval.copy()
+
+    # Only count behavior as correct if identity AND behavior are correct:
+    # If identity is wrong, force the predicted behavior to a sentinel wrong class.
+    df["_pred_beh_joint"] = np.where(
+        df[pred_id_col].astype(str) == df[gt_id_col].astype(str),
+        df[pred_beh_col].astype(str),
+        wrong_id_as,
+    )
+
+    results = {}
+
+    for (_id, _cam), g in df.groupby([id_col, "camera_id"]):
+        gts = g[gt_beh_col].astype(str).tolist()
+        preds = g["_pred_beh_joint"].astype(str).tolist()
+
+        if labels is None:
+            lab = sorted(set(gts) | set(preds))
+        else:
+            lab = labels
+
+        acc = accuracy_score(gts, preds)
+        cm = confusion_matrix(gts, preds, labels=lab)
+        
+        report = classification_report(gts, preds, labels=lab, zero_division=0)
+
+        results[(_id, _cam)] = {
+            "n": len(g),
+            "accuracy": acc,
+            "labels": lab,
+            "confusion_matrix": cm,
+            "classification_report": report,
+        }
+
+        if verbose:
+            print(f"\n===== ID: {_id}, Camera: {_cam} (n={len(g)} frames) =====")
             print(f"Joint Accuracy (ID & Behavior): {acc:.4f}")
             print("Labels:", lab)
             print("\nConfusion Matrix (normalized):")

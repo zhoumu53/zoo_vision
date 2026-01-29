@@ -114,38 +114,168 @@ def filter_short_tracks(df: pd.DataFrame,
     return df
 
 
-def extract_track_data(csv_path: Path) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+def extract_track_data(csv_path: Path) -> Optional[pd.DataFrame]:
     """
     Return:
       - first non-empty 'identity_label' in the CSV (or None)
       - total number of data rows in the CSV (excluding header)
     """
-    identity: Optional[str] = None
 
     if not csv_path.exists():
-        return None, None
+        return None
 
     df = pd.read_csv(csv_path)
     if df.empty:
-        return None, None
-    if 'identity_label' not in df.columns or 'timestamp' not in df.columns:
-        return None, None
-    
-    identity = df['identity_label'].iloc[0]
-    if pd.isna(identity) or identity == '':
-        identity = None
+        return None
     # filter short tracks
     df = filter_short_tracks(df)
     if df is None:
-        return None, None
+        return None
     
     # filter bad tracks based on bbox wh ratio
     avg_wh_ratio = compute_avg_bbox_wh_ratio(df)
     if avg_wh_ratio < 0.3 or avg_wh_ratio > 3.0:
-        # print(f"Filtered bad track {csv_path} with avg wh ratio {avg_wh_ratio:.2f}")
-        return None, None
+            # print(f"Filtered bad track {csv_path} with avg wh ratio {avg_wh_ratio:.2f}")
+        return None
 
-    return df, identity
+    return df
+
+
+# def load_valid_tracks(record_root,
+#                       camera_ids,
+#                       start_datetime: pd.Timestamp,
+#                       end_datetime: pd.Timestamp,
+#                       new_beh_model: bool = False,
+#                       logger: Optional[logging.Logger] = None,) -> pd.DataFrame:
+    
+#     # check if date comes from 2 days
+#     if isinstance(start_datetime, str):
+#         start_datetime = pd.to_datetime(start_datetime)
+#     if isinstance(end_datetime, str):
+#         end_datetime = pd.to_datetime(end_datetime)
+#     start_date = start_datetime.date()
+#     end_date = end_datetime.date()
+#     date_list = pd.date_range(start=start_date, end=end_date).strftime("%Y-%m-%d").tolist()
+    
+#     all_track_csvs = {}
+    
+#     all_track_files: Dict[str, Tuple[List[Path], List[Path]]] = {}
+#     for cam_id in camera_ids:
+#         for date in date_list:
+#             td = offline_track_dir(record_root, cam_id, date)
+#             csv_list = list_track_files(td, logger=logger)
+#             if cam_id not in all_track_csvs:
+#                 all_track_csvs[cam_id] = []
+#             all_track_csvs[cam_id].extend(csv_list)
+        
+#     valid_track_df = pd.DataFrame()
+#     valid_count = 0
+#     for cam_id, track_files in all_track_csvs.items():
+#         for track_file in track_files:
+#             # print("Processing track file:", track_file)
+#             timestamp = track_file.stem.split('_')[0].replace('T', ' ')
+#             date = track_file.parent.name
+#             ## if date+timestamp not in range (start_datetime, end_datetime): continue
+#             track_datetime = pd.to_datetime(f"{date} {timestamp}")
+#             if track_datetime < start_datetime or track_datetime > end_datetime:
+#                 # print(f"Skipping track {track_datetime} outside datetime range.", start_datetime, end_datetime)
+#                 continue
+
+#             if '_id_behavior' in str(track_file):
+#                 continue
+#             _track_file = track_file
+
+#             new_beh_csv = str(track_file).replace('.csv', '_id_behavior.csv') if '_id_behavior' not in str(track_file) else None
+
+#             if new_beh_csv is not None and Path(new_beh_csv).exists():
+#                 if new_beh_model:
+#                     _track_file = Path(new_beh_csv)
+#                 else:
+#                     _track_file = Path(track_file)
+#             else:
+#                 continue
+
+#             track_data, identity = extract_track_data(_track_file)
+
+#             if track_data is None:
+#                 continue
+#             valid_count += 1
+
+#             track_data['track_filename'] = track_file.name
+#             track_data['track_csv_path'] = str(_track_file)
+#             track_data['camera_id'] = cam_id
+#             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
+    
+#     # sort by timestamp
+#     valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
+#     print(f"Total valid tracks loaded between {start_datetime} and {end_datetime}: {valid_count}")
+    
+#     return valid_track_df
+
+def load_identity_labels_from_json(
+    record_root: Path,
+    camera_ids: list,
+    start_datetime: pd.Timestamp,
+    end_datetime: pd.Timestamp,
+) -> pd.DataFrame:
+    """
+    Load identity labels from stitched tracklets JSON files.
+    
+    Returns:
+        DataFrame with columns: track_filename, stitched_label, voted_track_label, 
+                                smoothed_label, identity_label
+    """
+    import json
+    
+    # Format datetime for JSON filename
+    start_time_str = start_datetime.strftime("%Y%m%d_%H%M%S")
+    end_time_str = end_datetime.strftime("%Y%m%d_%H%M%S")
+    date_str = start_datetime.strftime("%Y-%m-%d")
+    
+    all_labels = []
+    
+    for cam_id in camera_ids:
+        # Construct JSON path
+        json_dir = record_root / 'demo' / f'zag_elp_cam_{cam_id}' / date_str
+        json_pattern = f'stitched_tracklets_cam{cam_id}_{start_time_str}_{end_time_str}.json'
+        
+        # Find the JSON file
+        json_files = list(json_dir.glob(json_pattern))
+        # print(f"Searching for JSON files in: {json_dir} with pattern: {json_pattern}")
+        if not json_files:
+            # Try alternative directory
+            json_dir = record_root / 'demo-' / f'zag_elp_cam_{cam_id}' / date_str
+            json_files = list(json_dir.glob(json_pattern))
+        
+        if not json_files:
+            print(f"Warning: No JSON file found for camera {cam_id} at {json_dir}")
+            continue
+        
+        json_path = json_files[0]
+        print(f"Loading identity labels from: {json_path}")
+        
+        # Load JSON
+        with open(json_path, 'r') as f:
+            tracklets_data = json.load(f)
+        
+        # Extract labels for each track
+        for tracklet in tracklets_data:
+            all_labels.append({
+                'track_filename': tracklet.get('track_filename', ''),
+                'track_csv_path': tracklet.get('track_csv_path', ''),
+                'camera_id': tracklet.get('camera_id', cam_id),
+                'stitched_label': tracklet.get('stitched_label', 'invalid'),
+                'voted_track_label': tracklet.get('voted_track_label', 'invalid'),
+                'smoothed_label': tracklet.get('smoothed_label', 'invalid'),
+                'identity_label': tracklet.get('identity_label', 'invalid'),
+            })
+    
+    if not all_labels:
+        print("Warning: No identity labels loaded from JSON files")
+        return pd.DataFrame()
+    
+    df_labels = pd.DataFrame(all_labels)
+    return df_labels
 
 
 def load_valid_tracks(record_root,
@@ -153,7 +283,7 @@ def load_valid_tracks(record_root,
                       start_datetime: pd.Timestamp,
                       end_datetime: pd.Timestamp,
                       new_beh_model: bool = False,
-                      logger: Optional[logging.Logger] = None,) -> pd.DataFrame:
+                      logger: Optional[logging.Logger] = None) -> pd.DataFrame:
     
     # check if date comes from 2 days
     if isinstance(start_datetime, str):
@@ -174,18 +304,22 @@ def load_valid_tracks(record_root,
             if cam_id not in all_track_csvs:
                 all_track_csvs[cam_id] = []
             all_track_csvs[cam_id].extend(csv_list)
-            
+        
     valid_track_df = pd.DataFrame()
     valid_count = 0
     for cam_id, track_files in all_track_csvs.items():
         for track_file in track_files:
+            # print("Processing track file:", track_file)
             timestamp = track_file.stem.split('_')[0].replace('T', ' ')
             date = track_file.parent.name
-            ## if date+timestamp not in range (start_datetime, end_datetime): continue
             track_datetime = pd.to_datetime(f"{date} {timestamp}")
             if track_datetime < start_datetime or track_datetime > end_datetime:
                 # print(f"Skipping track {track_datetime} outside datetime range.", start_datetime, end_datetime)
                 continue
+
+            if '_id_behavior' in str(track_file):
+                continue
+            _track_file = track_file
 
             new_beh_csv = str(track_file).replace('.csv', '_id_behavior.csv') if '_id_behavior' not in str(track_file) else None
 
@@ -197,22 +331,20 @@ def load_valid_tracks(record_root,
             else:
                 continue
 
-            track_data, identity = extract_track_data(_track_file)
+            track_data = extract_track_data(_track_file)
             if track_data is None:
                 continue
             valid_count += 1
-            
-            track_data['track_filename'] = track_file.name
+
+            track_data['track_filename'] = track_file.name.replace('.csv', '')
             track_data['track_csv_path'] = str(_track_file)
             track_data['camera_id'] = cam_id
             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
     
     # sort by timestamp
     valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
-    print(f"Total valid tracks loaded between {start_datetime} and {end_datetime}: {valid_count}")
-    
+            
     return valid_track_df
-        
 
 def load_gt_id(dir='/media/mu/zoo_vision/data/GT_id_behavior/id_GTs',
                camera_id='016',
@@ -291,38 +423,15 @@ def get_args():
     return parser.parse_args()
 
 
-def main():
+def main(record_root, date, camera_ids, is_smooth=False, eval_type='voted_track_label'):
     
-    logger = setup_logger("INFO")
-    
-    args = get_args()
-    
-    record_root = args.record_root
-    camera_ids=args.camera_ids
-    date = args.date
-
-    ### THAI - data/GT_id_behavior/behavior_GTs/017_018_2025-12-15_2025-12-16.csv, ./data/GT_id_behavior/behavior_GTs/016_019_2025-12-01_2025-12-02.csv
-    camera_ids = ["017", "018"]
-    date = "2025-12-15"
-
-    date = "2025-12-01"
-    camera_ids=["016", "019"]
-    
-    # ### IC group
-    
-    camera_ids=["016", "019"]
-    date = "2025-11-15"
-    
-    camera_ids = ["017", "018"]
-    date = "2025-11-30"
-
     next_day = (pd.to_datetime(date) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     
-    start_datetime=pd.Timestamp(f"{date} 18:00:00")
-    end_datetime=pd.Timestamp(f"{next_day} 07:59:59")
+    start_datetime=pd.Timestamp(f"{date} 15:30:00")
+    end_datetime=pd.Timestamp(f"{next_day} 08:00:00")
     
     
-    for new_beh_model in [False, True]:
+    for new_beh_model in [False]:
 
         df_results = load_valid_tracks(
             record_root=record_root,
@@ -332,25 +441,32 @@ def main():
             new_beh_model=new_beh_model
         )
         
-        # print("df results columns:", df_results.columns.tolist())
-        # print("len(df_results):", len(df_results))
-
-
-        # ### do smooth single cam
-        # df_results = behavior_label_smooth(df_results, window_size=21, min_conf_threshold=0.7)
+        df_label_predictions = load_identity_labels_from_json(
+            record_root=Path(record_root),
+            camera_ids=camera_ids,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime
+        )
+        # merge identity labels into df_results, on track_filename
+        df_results = df_results.merge(
+            df_label_predictions[['track_filename', 'stitched_label', 'voted_track_label', 'smoothed_label', 'identity_label']],
+            on='track_filename',
+            how='left'
+        )
         
-        ### do cross-camera standing - matching
-        # df_results = smooth_behavior_cross_cameras(df_results)
+        print(f"===== Identity Label TYPE: {eval_type} =====")
+        df_results['identity_label'] = df_results[eval_type]
         
-        # df_results = update_csv_from_df(df_results, record_root=record_root)
-        
-        # print(df_results['track_filename'].unique().tolist())
-        
-        # import sys; sys.exit()
-    
+        if is_smooth:
+            # df_results = behavior_label_smooth(df_results, window_size=21, min_conf_threshold=0.7)
+            ### do cross-camera standing - matching
+            df_results = smooth_behavior_cross_cameras(df_results)
+            print("Applied temporal smoothing to behavior labels.", len(df_results))
+            
+            
         model_type = 'swinb' if new_beh_model else 'swinb_2_heads'
         print("\n" + "=" * 80 + "\n")
-        print(f"========== Evaluation: between {start_datetime} and {end_datetime} on cameras {camera_ids} + [{model_type}] model ========== ")
+        print(f"========== Evaluation: between {start_datetime} and {end_datetime} on cameras {camera_ids} + [{model_type}] model + [is_smooth={is_smooth}] ========== ")
 
         semi_group_gt = load_semi_gt_ids(
             sandbox_gt_path=Path('/media/mu/zoo_vision/data/semi_supervised_gt/semi_supervised_gt_ids.csv'),
@@ -380,26 +496,29 @@ def main():
             camera_ids=camera_ids,
             date=date
         )
-        # print("df_gt_behavior head:")
+        # print("df_gt_behavior head:", df_gt_id['gt'].unique().tolist())
         # print(df_gt_behavior.head())
+
+        # print("df_results shape:", df_results.shape)
         
     
         df_eval = build_gt_behavior_for_results(df_results, df_gt_id, df_gt_behavior)
 
+        # print("df_eval shape:", df_eval.shape)
+
         # print("Evaluation DataFrame head:")
         # print(df_eval['pred_behavior'])
 
-        df_eval['quality'] = df_eval.apply(
-            lambda row: row['pred_behavior'].split('_')[-1] if 'good' in row['pred_behavior'] or 'bad' in row['pred_behavior'] else 'unknown',
-            axis=1
-        )
+        dir = '/media/mu/zoo_vision/post_processing/analysis/csvs/id_behaviors/data'
+        Path(dir).mkdir(parents=True, exist_ok=True)
+
+        df_eval.to_csv(f"{dir}/eval_behavior_cam{camera_ids[0]}_cam{camera_ids[1]}_{date}_model_is_smooth{is_smooth}.csv", index=False)
 
         df_eval['pred_behavior'] = df_eval['pred_behavior'].apply(lambda x: x.replace(f"_{x.split('_')[-1]}", "") if 'good' in x or 'bad' in x else x)
 
-
         df_eval_correct_ids = df_eval[ df_eval['gt_identity'] == df_eval['identity_label'] ]
         df_eval_correct_ids_wrong_beahvior = df_eval_correct_ids[ df_eval_correct_ids['gt_behavior'] != df_eval_correct_ids['pred_behavior'] ]
-        df_eval_correct_ids_wrong_beahvior.to_csv(f"eval_correct_ids_wrong_behavior_cam{camera_ids[0]}_cam{camera_ids[1]}_{date}_model.csv", index=False)
+        df_eval_correct_ids_wrong_beahvior.to_csv(f"eval_correct_ids_wrong_behavior_cam{camera_ids[0]}_cam{camera_ids[1]}_{date}_model_is_smooth{is_smooth}.csv", index=False)
         
 
         if 'Thai' in semi_group_gt:
@@ -427,12 +546,17 @@ def main():
             # print("df eval columns:", df_eval.columns.tolist())
             
             out = behavior_metrics_per_id(df_eval)
-            print("Behavior metrics per ID:")
+            print("\nBehavior metrics per ID:")
             for _id, metrics in out.items():
                 print(f"ID: {_id}, Accuracy: {metrics['accuracy']:.4f}")
                 # print(f", n: {metrics['n']}")
                 
+            out = behavior_metrics_per_id_per_cam(df_eval)
+            print("\nBehavior metrics per ID per Camera:")
+            for (_id, _cam), metrics in out.items():
+                print(f"ID: {_id}, Camera: {_cam}, Accuracy: {metrics['accuracy']:.4f}, n: {metrics['n']}")
                 
+            """
             out = compute_gt_joint_wrongid_hours(df_eval, fps=25, log_every_n_frames=5, extra_group_cols=["camera_id"])
             pp = postprocess_time_outputs(out)
             
@@ -441,13 +565,6 @@ def main():
                 dt_seconds=out["dt_seconds"],      # IMPORTANT: reuse same dt
                 extra_group_cols=["camera_id"],    # optional, but keep consistent
             )
-
-            # pp["per_id_behavior_merged"] = add_predicted_hours_to_per_id_behavior(
-            #     pp["per_id_behavior_merged"],
-            #     predicted_hours,
-            # )
-            # print("\nPer ID Behavior with Predicted Hours:")
-            # print(pp["per_id_behavior_merged"])
              
             # Wrong-ID hours per PREDICTED behavior per GT ID
             wrong_by_pred = wrong_id_hours_per_behavior(df_eval, dt_seconds=out["dt_seconds"], behavior_source="pred", per_id=True)
@@ -498,9 +615,45 @@ def main():
                     print(f"{str(item):20}", end="")
                 print()
             print()
-            
+            """
             # 
 
         
 if __name__ == "__main__":
-    main()
+
+
+    args = get_args()
+    
+    record_root = args.record_root
+    camera_ids=args.camera_ids
+    date = args.date
+
+
+    gt_dates_cams= {
+        '2025-11-15': [['017', '018'], ['016', '019']],
+        '2025-11-30': [['017', '018'], ['016', '019']],
+        '2025-12-01': [['016', '019']],
+        '2025-12-15': [['017', '018']],
+    }
+
+
+
+    # ### THAI - data/GT_id_behavior/behavior_GTs/017_018_2025-12-15_2025-12-16.csv, ./data/GT_id_behavior/behavior_GTs/016_019_2025-12-01_2025-12-02.csv
+    # camera_ids = ["017", "018"]
+    # date = "2025-12-15"
+
+    # date = "2025-12-01"
+    # camera_ids=["016", "019"]
+    
+    # # ### IC group
+    
+    # camera_ids=["016", "019"]
+    # date = "2025-11-15"
+    # camera_ids = ["017", "018"]
+    # date = "2025-11-30"
+
+    for date, camera_ids_list in gt_dates_cams.items():
+        for camera_ids in camera_ids_list:
+            print(f"\n\nProcessing date {date} for cameras {camera_ids}...\n")
+            for is_smooth in [True]:
+                main(record_root, date, camera_ids, is_smooth=is_smooth)
