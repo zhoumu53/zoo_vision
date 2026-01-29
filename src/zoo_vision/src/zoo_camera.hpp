@@ -35,6 +35,7 @@ private:
   uint32_t frameHeight_;
   size_t frameIndex_;
 
+  rclcpp::Time lastReset_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

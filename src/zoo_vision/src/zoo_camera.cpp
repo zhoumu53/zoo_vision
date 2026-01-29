@@ -14,6 +14,7 @@
 
 #include "zoo_vision/zoo_camera.hpp"
 
+#include "zoo_vision/profiler.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <nlohmann/json.hpp>
@@ -77,11 +78,12 @@ void ZooCamera::openCamera() {
   }
   assert(frameHeight_ * frameWidth_ * 3 <= zoo_msgs::msg::Image12m::DATA_MAX_SIZE);
   frameIndex_ = 0;
+  lastReset_ = now();
 }
 
 void ZooCamera::onTimer() {
   auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
-  msg->header.stamp = now();
+  msg->header.frame_id = frameIndex_;
   setMsgString(msg->encoding, "rgb8");
   msg->width = frameWidth_;
   msg->height = frameHeight_;
@@ -90,6 +92,13 @@ void ZooCamera::onTimer() {
 
   cv::Mat3b image(frameHeight_, frameWidth_, reinterpret_cast<cv::Vec3b *>(&msg->data));
 
+  // Reset camera every 5min because they have been observed to get out of sync after long sessions
+  const auto durationSinceLastReset = now() - lastReset_;
+  if (durationSinceLastReset > std::chrono::seconds(5 * 60)) {
+    cvStream_.release();
+  }
+
+  // Reopen camera if closed
   if (!cvStream_.isOpened()) {
     openCamera();
     if (!cvStream_.isOpened()) {
@@ -105,10 +114,11 @@ void ZooCamera::onTimer() {
     return;
   }
 
+  // Set time right after capture
+  msg->header.stamp = now();
+
   // TODO: converting BGR->RGB like this is inefficient!
   cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
-  msg->header.frame_id = frameIndex_;
 
   frameIndex_++;
   publisher_->publish(std::move(msg));
