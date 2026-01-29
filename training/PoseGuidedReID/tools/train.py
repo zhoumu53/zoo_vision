@@ -111,13 +111,6 @@ def main():
         device_ids = cfg.MODEL.DEVICE_ID[0]
         device = torch.device("cuda:{}".format(device_ids))
 
-    ### copy the swinT model to the output_dir
-    if args.do_training:
-        if cfg.MODEL.TYPE == 'swin':
-            shutil.copy(f'{os.getcwd()}/project/models/backbones/swin_transformer.py', os.path.join(output_dir, 'swin_transformer.py'))
-        elif cfg.MODEL.TYPE == 'swinv2':
-            shutil.copy(f'{os.getcwd()}/project/models/backbones/swin_transformer_v2.py', os.path.join(output_dir, 'swin_transformer_v2.py'))
-
     if cfg.DATASETS.NAMES == 'bear' or cfg.DATASETS.NAMES == 'macaque' or cfg.DATASETS.NAMES == 'elephant':
         train_loader, train_loader_normal, \
             test_iid_loader, test_ood_loader, val_iid_loader, \

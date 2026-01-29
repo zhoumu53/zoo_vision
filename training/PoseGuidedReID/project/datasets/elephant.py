@@ -35,19 +35,17 @@ class Elephant(BaseDataset):
     def __init__(self, 
                  cfg=None,
                  root='', 
-                 verbose=True, 
+                 verbose=True,
+                 merge_all=True,  # If True, merge all subdirectories for training
+                 val_samples=100,  # Number of random samples for validation
                  **kwargs):
         super(Elephant, self).__init__()
 
         self.root = osp.abspath(osp.expanduser(root))
         self.dataset_dir = self.root
         self.cfg = cfg
-        
-        self.train_dir = osp.join(self.dataset_dir, 'train')
-        self.val_dir = osp.join(self.dataset_dir, 'val')
-        
-        # Simple setup: train for training, val for testing
-        self.test_iid_dir = self.val_dir
+        self.merge_all = merge_all
+        self.val_samples = val_samples
         
         # Camera mapping from filename
         self.camera_pattern = re.compile(r'(zag_elp_cam_\d{3})')
@@ -64,7 +62,8 @@ class Elephant(BaseDataset):
             'Indi': 1,
             'Fahra': 2,
             'Panang': 3,
-            'Thai': 4
+            'Thai': 4,
+            'Zali': 5
         }
 
         self._check_before_run()
@@ -73,8 +72,21 @@ class Elephant(BaseDataset):
         self.cid_container = set()
         self.year_container = set()
         
-        self.train, self.train_year_list, self.n_train_classes = self.process_dir(self.train_dir, data_type='train')
-        self.test_iid, self.test_iid_year_list, self.n_test_iid_classes = self.process_dir(self.test_iid_dir, data_type='iid')
+        # Check if we should merge all data or use train/val split
+        train_dir = osp.join(self.dataset_dir, 'train')
+        val_dir = osp.join(self.dataset_dir, 'val')
+        
+        if self.merge_all or not (osp.exists(train_dir) and osp.exists(val_dir)):
+            if verbose:
+                print("=> Merging all subdirectories for training data")
+            # Process all subdirectories and create train/val split
+            self.train, self.test_iid, self.train_year_list, self.test_iid_year_list, self.n_train_classes, self.n_test_iid_classes = \
+                self.process_merged_dir(self.dataset_dir)
+        else:
+            if verbose:
+                print("=> Using existing train/val split")
+            self.train, self.train_year_list, self.n_train_classes = self.process_dir(train_dir, data_type='train')
+            self.test_iid, self.test_iid_year_list, self.n_test_iid_classes = self.process_dir(val_dir, data_type='iid')
         
         # Not used, but required by the base dataloader interface
         self.test = self.test_iid
@@ -176,6 +188,130 @@ class Elephant(BaseDataset):
         self.year_container.update(year_set)
         
         return processed_data, year_set, len(pid_set)
+
+    def process_merged_dir(self, root_dir):
+        """
+        Process all subdirectories, merge data, and create train/val split.
+        
+        Args:
+            root_dir: Root directory containing all subdirectories
+            
+        Returns:
+            tuple: (train_data, val_data, train_years, val_years, n_train_classes, n_val_classes)
+        """
+        print(f'Processing merged elephant directory: {root_dir}')
+        
+        all_data = []
+        pid_set = set()
+        year_set = set()
+        
+        # Get all subdirectories that contain identity folders
+        # Exclude common non-data directories
+        exclude_dirs = {'.git', '__pycache__', 'models', 'logs', 'checkpoints'}
+        
+        for subdir in os.listdir(root_dir):
+            subdir_path = osp.join(root_dir, subdir)
+            
+            # Skip files and excluded directories
+            if not osp.isdir(subdir_path) or subdir in exclude_dirs:
+                continue
+            
+            # Check if this directory contains identity folders (e.g., 01_Chandra, 02_Indi)
+            id_folders = [d for d in os.listdir(subdir_path) 
+                         if osp.isdir(osp.join(subdir_path, d)) and '_' in d]
+            
+            if not id_folders:
+                continue
+                
+            print(f'  Processing subdirectory: {subdir}')
+            
+            # Process each identity folder in this subdirectory
+            for id_folder in id_folders:
+                # Extract name from folder (e.g., "01_Chandra" -> "Chandra")
+                parts = id_folder.split('_', 1)
+                if len(parts) != 2:
+                    continue
+                    
+                pid_str, name = parts
+                
+                # Map name to 0-based PID
+                if name not in self.name2id:
+                    print(f"Warning: Unknown elephant name '{name}', skipping folder {id_folder}")
+                    continue
+                
+                pid = self.name2id[name]
+                pid_set.add(pid)
+                
+                # Get all images in this identity folder
+                id_path = osp.join(subdir_path, id_folder)
+                
+                # Recursively find all images (some might be in subdirectories)
+                img_paths = []
+                for root, dirs, files in os.walk(id_path):
+                    for file in files:
+                        if file.lower().endswith(('.jpg', '.png', '.jpeg')):
+                            img_paths.append(osp.join(root, file))
+                
+                for img_path in img_paths:
+                    img_name = osp.basename(img_path)
+                    
+                    # Extract metadata from filename
+                    camid = self._extract_camera_id(img_name)
+                    year = self._extract_year(img_name)
+                    
+                    # Update containers
+                    self.cid_container.add(camid)
+                    year_set.add(year)
+                    
+                    # Create metadata
+                    meta_info = [
+                        pid,
+                        name,
+                        camid,
+                        -1,  # timestamp (not available)
+                        1,   # is_unique
+                        img_name,
+                        -1   # sex (not available)
+                    ]
+                    
+                    all_data.append((img_path, pid, camid, meta_info))
+        
+        self.year_container.update(year_set)
+        
+        if not all_data:
+            print("Warning: No data found, returning empty datasets")
+            return [], [], set([2025]), set([2025]), 0, 0
+        
+        print(f'Total images found: {len(all_data)}')
+        
+        # Shuffle and split into train/val
+        import random
+        random.seed(42)  # For reproducibility
+        random.shuffle(all_data)
+        
+        # Take val_samples for validation, rest for training
+        val_size = min(self.val_samples, len(all_data) // 10)  # At most 10% for val
+        val_data = all_data[:val_size]
+        train_data = all_data[val_size:]
+        
+        print(f'Split: {len(train_data)} train, {len(val_data)} val')
+        
+        # Update pid containers
+        for data in train_data:
+            pid = data[1]
+            name = data[3][1]
+            self.pid_container['train'][pid] = name
+        
+        for data in val_data:
+            pid = data[1]
+            name = data[3][1]
+            self.pid_container['iid'][pid] = name
+        
+        # Calculate unique classes in each split
+        train_pids = set([d[1] for d in train_data])
+        val_pids = set([d[1] for d in val_data])
+        
+        return train_data, val_data, year_set, year_set, len(train_pids), len(val_pids)
 
     def print_dataset_statistics(self):
         """Print dataset statistics."""
