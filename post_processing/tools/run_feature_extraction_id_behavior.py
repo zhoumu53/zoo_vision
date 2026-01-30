@@ -61,6 +61,7 @@ def process_track_video(
     overwrite_behavior: bool = True,
     overwrite_reid: bool = True,
     out_csv_path: Path | None = None,
+    sample_rate: float = 1.0,
 ) -> str | None:
     """Run behavior + ReID on a single track video."""
     track_video_filename = track_video_file.name
@@ -166,6 +167,13 @@ def process_track_video(
                 voted_identity_label,
             )
             return voted_identity_label
+        
+        if sample_rate < 1.0:
+            frame_indices = sorted(list(frame_indices))
+            # sample frame_indices according to sample_rate - uniformly
+            _frame_indices = frame_indices[:: int(1/sample_rate)]
+            frame_indices = set(_frame_indices)
+            logger.info(f"Sampled {len(frame_indices)} frames for ReID from {len(df_tracks)} total frames.")
 
         voted_identity_label = id_feature_extraction(
             video_path=track_video_file,
@@ -202,6 +210,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--height", type=int, default=1080, help="Height of the video frames.")
     parser.add_argument("--width", type=int, default=1920, help="Width of the video frames.")
+    parser.add_argument("--sample-rate", type=float, default=1.0, help="Sample rate for frame selection in ReID (0 < rate <= 1).")
+    parser.add_argument("--camera-ids", nargs='+', default=["016", "017", "018", "019"], help="List of camera IDs to process.")
 
     return parser.parse_args()
 
@@ -213,7 +223,7 @@ def main():
     logger = setup_logger(args.log_level)
     
     logger.info("Loading data from day %s", args.date)
-    camera_ids = ["016", "017", "018", "019"]
+    camera_ids = args.camera_ids
     
     all_track_files = list_track_files_all_cams(
         record_root=args.record_root,
@@ -264,7 +274,7 @@ def main():
             overwrite_behavior=args.overwrite_behavior,
             overwrite_reid=args.overwrite_reid,
             logger=logger,
-            # out_csv_path=str(track_video_file).replace('.mkv', '_id_behavior.csv') if behavior_model is not None else None,
+            sample_rate=args.sample_rate,
         )
     endtime = datetime.now()
     logger.info("Post-processing completed in %s", str(endtime - starttime))
