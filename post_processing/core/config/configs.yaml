@@ -14,6 +14,12 @@ directories:
   # Output base directory
   output_base_dir: "/media/ElephantsWD/tracking_results/tracking_w_behavior_4cams"
   
+  # Record root for track data
+  record_root: "/media/ElephantsWD/elephants/test"
+  
+  # Output directory for post-processing results
+  output_dir: "/media/ElephantsWD/elephants/xmas/demo"
+  
 # ==============================================================================
 # Model Paths
 # ==============================================================================
@@ -25,20 +31,15 @@ models:
   
   # ReID model (PoseGuidedReID)
   reid:
-    config: "./training/PoseGuidedReID/configs/elephant_resnet.yml"
-    checkpoint: "./training/PoseGuidedReID/logs/elephant/lr001_bs16_softmax_triplet/net_best.pth"
+    config: "/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml"
+    checkpoint: "/media/ElephantsWD/elephants/reid_models/swin_adamw_lr0003_bs128_softmax_triplet_Fulldata/net_best.pth"
+    gallery_path: null  # Optional: path to pre-computed gallery features
     num_classes: 6
   
   # Behavior classification model (ViT)
   behavior:
-    model_path: "./models/certainty/vit/v4/config.json"
-    # Alternative paths:
-    # model_path: "./models/sleep/vit/v2_no_validation/config.ptc"
+    model_path: '/media/mu/zoo_vision/training/classification_vit/runs_sleep/two_heads_swinb_flip'
   
-  # Gallery features for identity anchoring
-  gallery:
-    features: "./training/PoseGuidedReID/logs/elephant/lr001_bs16_softmax_triplet/pred_features/train_iid/pytorch_result_e.npz"
-
 # ==============================================================================
 # Device Configuration
 # ==============================================================================
@@ -49,15 +50,63 @@ devices:
   gallery: "cpu"        # cuda, cpu
 
 # ==============================================================================
+# Processing Configuration
+# ==============================================================================
+processing:
+  device: "cuda"        # Device to run inference on (cuda, cuda:0, cpu)
+  batch_size: 256       # Batch size for inference
+  sample_rate: 1.0      # Frame sampling rate for ReID (0 < rate <= 1)
+  overwrite_behavior: false
+  overwrite_reid: false
+
+# ==============================================================================
 # Camera Configuration
 # ==============================================================================
 cameras:
   ids: ["016", "017", "018", "019"]
+  height: 1080
+  width: 1920
   pairs:
     "016": "019"
     "017": "018"
     "018": "017"
     "019": "016"
+
+# ==============================================================================
+# Time Window Settings
+# ==============================================================================
+time_window:
+  start_time: "15:30:00"  # PM (covers night from PM to AM)
+  end_time: "08:00:00"    # AM next day
+
+# ==============================================================================
+# Stitching Parameters
+# ==============================================================================
+stitching:
+  run_stitching: true
+  max_gap_frames: 600
+  local_sim_th: 0.5
+  gallery_sim_th: 0.45
+  head_k: 25
+  tail_k: 25
+  gallery_k: 10
+  w_local: 0.6
+  w_gallery: 0.4
+  num_identities: 2  # Expected number of elephants
+
+# ==============================================================================
+# Cross-Camera Settings
+# ==============================================================================
+cross_camera:
+  enabled: true
+  run_behavior_matching: false
+  time_tolerance_seconds: 3.0
+
+# ==============================================================================
+# Logging
+# ==============================================================================
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 # ==============================================================================
 # Stage 1: Online Tracking Parameters

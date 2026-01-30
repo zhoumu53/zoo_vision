@@ -111,6 +111,7 @@ class BehaviorInference:
         is_two_heads = False
         if path.is_file() and path.suffix == ".pt":
             is_timm = True
+            is_two_heads = 'two_heads' in path.name
         
         # Check if it's a directory containing stage1 checkpoint
         if path.is_dir():

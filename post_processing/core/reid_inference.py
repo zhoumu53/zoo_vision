@@ -237,6 +237,7 @@ class ReIDInference:
     def load_features(
         self,
         load_path: str | Path,
+        known_labels: Optional[List[str]] = None,
     ) -> Tuple[torch.Tensor, np.ndarray, np.ndarray]:
         """Load feature database from NPZ file, returns (features, label, ids)."""
         load_path = Path(load_path)
@@ -247,7 +248,12 @@ class ReIDInference:
         data = np.load(load_path, allow_pickle=True)
 
         labels = data.get("label", None)
-        features = torch.from_numpy(data["feature"]).float()
+        features = data["feature"]
+        if known_labels:
+            indices = [i for i, lbl in enumerate(labels) if lbl in known_labels]
+            labels = labels[indices]
+            features = features[indices]
+        features = torch.from_numpy(features).float()
         features = features.to(self.device)
         self.logger.info("Loaded %d features from %s", len(features), load_path)
         return features, labels

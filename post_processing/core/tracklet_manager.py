@@ -15,6 +15,7 @@ from post_processing.tools.run_reid_feature_extraction import vote_matched_label
 from post_processing.tools.reranking import assign_identities_from_trackid2label_counts
 import json
 from collections import Counter
+from post_processing.tools.utils import tlbr2fullsize
 
 seed = 42
 np.random.seed(seed)
@@ -146,11 +147,11 @@ def vote_identity_from_matched_labels(
     top1 = label_counts.most_common(1)
     top1_label = top1[0][0] if top1 else None
     
-    ## find the most alike one from top1
-    top1_label = vote_identity_label(top1_label, known_labels)
     
     # Filter by known_labels if provided
     if known_labels is not None:
+        ## find the most alike one from top1
+        top1_label = vote_identity_label_by_human_prior(top1_label, known_labels)
         filtered_counts = {
             label: count 
             for label, count in label_counts.items() 
@@ -199,7 +200,7 @@ def vote_identity_from_matched_labels(
     return result
 
 
-def vote_identity_label(voted_track_label, known_labels) -> str:
+def vote_identity_label_by_human_prior(voted_track_label, known_labels) -> str:
     """
     Validate and correct voted track label based on known labels and alike pairs.
     
@@ -215,22 +216,17 @@ def vote_identity_label(voted_track_label, known_labels) -> str:
         # Check if voted_track_label is in this alike group
         if voted_track_label in alike_pair:
             # Find intersection between alike_pair and known_labels
-            valid_alternatives = [label for label in alike_pair if label in known_labels]
+            valid_alternative = [label for label in alike_pair if label in known_labels][0]
             
-            if valid_alternatives:
+            if valid_alternative and valid_alternative != voted_track_label:
                 # Return the first valid alternative from the alike group
-                corrected_label = valid_alternatives[0]
                 logging.info(
-                    f"Corrected label '{voted_track_label}' to '{corrected_label}' "
+                    f"Corrected label '{voted_track_label}' to '{valid_alternative}' "
                     f"based on alike pair {alike_pair} and known_labels {known_labels}"
                 )
-                return corrected_label
-    
-    # If no alike pair found or no valid alternative, return original
-    logging.warning(
-        f"Label '{voted_track_label}' not in known_labels {known_labels} "
-        f"and no valid alternative found in ALIKE_PAIRS"
-    )
+                return valid_alternative
+
+
     return voted_track_label
 
 def track_csv2identity(tracklets: List[Tracklet], 
@@ -460,8 +456,10 @@ class TrackletManager:
                  invalid_zones_dir: Path = Path('/media/mu/zoo_vision/data/invalid_zones'),
                  height: int = 1520,
                  width: int = 1920,
+                 known_labels: Optional[List[str]] = None,
                  gallery_features = None,
                  gallery_labels = None,
+                 vote_with_gallery: bool = True
                  ):
         
         """Initialize TrackletManager.
@@ -493,10 +491,12 @@ class TrackletManager:
         self.width = width
         self.gallery_features = gallery_features
         self.gallery_labels = gallery_labels
+        self.vote_with_gallery = vote_with_gallery
 
         self.invalid_zone_handler = InvalidZoneHandler(invalid_zones_dir, 
                                                        self.logger)
-        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id)
+        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else None
+        print("Loaded known labels for camera", self.camera_id, ":", self.known_labels)
 
     def _format_time(self, timestamp) -> datetime:
         """Convert time string to datetime object.
@@ -656,12 +656,16 @@ class TrackletManager:
                 # Check bbox locations - if in invalid zone, mark invalid_flag=True
                 df = pd.read_csv(track_file)
                 invalid_flag = False
-                ### compute the mean bbox of whole tracklet  TODO: update this when we only have yolo-xywh format box
+                ### compute the mean bbox of whole tracklet  TODO: update this when we only have yolo-xyxy2 format box                    
+                if 'bbox_top2' in df.columns and 'bbox_top' not in df.columns:
+                    df = tlbr2fullsize(df, self.width, self.height)
+                    import sys; sys.exit(0)
                 box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
                 if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
                     invalid_flag = True
                     n_invalid += 1
                     print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
+                    import sys; sys.exit(0)
                 ### set invalid_flag
                 tracklet[0].invalid_flag = invalid_flag
 
@@ -672,41 +676,39 @@ class TrackletManager:
             voted_track_label = "invalid"
             # print("tracklet[0].feature_path:", tracklet[0].feature_path)
             if tracklet[0].feature_path and tracklet[0].feature_path.exists():
-                # features = load_embedding(tracklet[0].feature_path)[0]
-                # ## if known_labels is not None, get indicies of known labels in gallery_labels, gallery_features
-                # gallery_features = self.gallery_features
-                # gallery_labels = self.gallery_labels
-                # # if self.known_labels is not None:
-                # #     known_indices = [i for i, label in enumerate(self.gallery_labels) if label in self.known_labels]
-                # #     gallery_features = gallery_features[known_indices]
-                # #     gallery_labels = [gallery_labels[i] for i in known_indices]
-                    
-                
-                # matched_labels = match_to_gallery(features, 
-                #                                   gallery_features, 
-                #                                   gallery_labels=gallery_labels)[-1]
+                if self.vote_with_gallery:
+                    features = load_embedding(tracklet[0].feature_path)[0]
 
-                ## type2
-                data = load_feature_npz(tracklet[0].feature_path)
-                # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
-                matched_labels = data['matched_labels']
-                
+                    gallery_features=self.gallery_features
+                    gallery_labels=self.gallery_labels
+                    if self.known_labels is not None:
+                        # get feature from known labels only
+                        #indices
+                        g_labels = [label for label in gallery_labels if label in self.known_labels]
+                        g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
+
+                    matched_labels = match_to_gallery(features, 
+                                                      gallery_features, 
+                                                      gallery_labels=gallery_labels)[-1]
+                    
+                else:
+                    ## type2
+                    data = load_feature_npz(tracklet[0].feature_path)
+                    # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
+                    matched_labels = data['matched_labels']
+                    
                 voted_results = vote_identity_from_matched_labels(
                     matched_labels=np.array(matched_labels),
-                    known_labels=self.known_labels,
+                    known_labels= self.known_labels,
                     sample_rate=1,
                     return_details=True
                 )
                 voted_track_label = voted_results['voted_label']
-                print("voted_track_label:", voted_track_label)
+                # print("voted_track_label:", voted_track_label)
 
                 # Convert numpy array to string if needed
                 if isinstance(voted_track_label, np.ndarray):
                     voted_track_label = str(voted_track_label.item()) if voted_track_label.size == 1 else str(voted_track_label[0])
-
-                # voted_track_label = self.vote_identity_label(
-                #     voted_track_label=voted_track_label
-                # )
 
             tracklet[0].voted_track_label = voted_track_label
 
@@ -846,6 +848,7 @@ class TrackletManager:
         if self.logger:
             self.logger.info("Saved %d tracklets to %s", len(tracklets_data), save_path)
         
+        return save_path
         
     def load_stitched_tracklets_from_dir(self, dir: Path = None) -> List[Tracklet]:
         """Load stitched tracklets from a JSON file and return as Tracklet objects."""
@@ -860,7 +863,7 @@ class TrackletManager:
         
         if not json_path.exists():
             self.logger.error(f"Stitched tracklets JSON file not found: {json_path}")
-            return None
+            return None, json_path
         
         with json_path.open("r") as f:
             tracklets_data = json.load(f)
@@ -891,7 +894,7 @@ class TrackletManager:
             tracklets.append(t)
         
         self.logger.info(f"Loaded {len(tracklets)} tracklets from {json_path}")
-        return tracklets
+        return tracklets, json_path
 
     # def vote_tracklet_identity_labels(self, start_time: Optional[datetime | str] = None, 
     #                                    end_time: Optional[datetime | str] = None,
@@ -1114,8 +1117,8 @@ class TrackletManager:
                 ranks = assign_identities_from_trackid2label_counts(trackid2label_counts, known_labels, score_mode="ratio")
                 for sid, info in ranks.items():
                     trackid2idlabel[sid] = info["assigned_label"]
-        
-        self.analyze_stitching_results(trackid2idlabel=trackid2idlabel, start_time=start_time, end_time=end_time)
+        # TODO- update it with new format
+        # self.analyze_stitching_results(trackid2idlabel=trackid2idlabel, start_time=start_time, end_time=end_time)
         
         ### final safe assign for 'invalid' labels - get stitched_id for 'invalid' labels -> assign to another valid label if only one valid label in known_labels
         if known_labels is not None:

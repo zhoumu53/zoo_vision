@@ -1,189 +1,279 @@
-"""
-Configuration Loader
-
-Utilities for loading and managing pipeline configuration from YAML file.
-"""
-from __future__ import annotations
-
-import os
-from pathlib import Path
-from string import Template
-from typing import Any, Dict, Optional
-
+"""Configuration loader for post-processing pipeline."""
 import yaml
+from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Optional
 
 
-class Config:
-    """Pipeline configuration manager."""
+@dataclass
+class ModelConfig:
+    """Model configuration."""
+    reid_config: Path
+    reid_checkpoint: Path
+    reid_gallery_path: Optional[Path]
+    behavior_model_path: Path
+
+
+@dataclass
+class ProcessingConfig:
+    """Processing configuration."""
+    device: str
+    batch_size: int
+    sample_rate: float
+    overwrite_behavior: bool
+    overwrite_reid: bool
+
+
+@dataclass
+class DataConfig:
+    """Data paths configuration."""
+    record_root: Path
+    output_dir: Path
+
+
+@dataclass
+class CameraConfig:
+    """Camera configuration."""
+    ids: List[str]
+    height: int
+    width: int
+
+
+@dataclass
+class TimeWindowConfig:
+    """Time window configuration."""
+    start_time: str
+    end_time: str
+
+
+@dataclass
+class StitchingConfig:
+    """Stitching parameters configuration."""
+    run_stitching: bool
+    max_gap_frames: int
+    local_sim_th: float
+    gallery_sim_th: float
+    head_k: int
+    tail_k: int
+    gallery_k: int
+    w_local: float
+    w_gallery: float
+    num_identities: int
+
+
+@dataclass
+class CrossCameraConfig:
+    """Cross-camera settings."""
+    enabled: bool
+    run_behavior_matching: bool
+
+
+@dataclass
+class PipelineConfig:
+    """Complete pipeline configuration."""
+    models: ModelConfig
+    processing: ProcessingConfig
+    data: DataConfig
+    cameras: CameraConfig
+    time_window: TimeWindowConfig
+    stitching: StitchingConfig
+    cross_camera: CrossCameraConfig
+    log_level: str
     
-    def __init__(self, config_path: Optional[str] = None):
-        """
-        Initialize configuration.
+    def update_from_dict(self, updates: dict) -> None:
+        """Update config values from a dictionary.
         
         Args:
-            config_path: Path to YAML config file. If None, uses default config.
+            updates: Dictionary with keys in dot notation (e.g., 'processing.batch_size')
+                    and values to set
+        
+        Example:
+            config.update_from_dict({
+                'processing.batch_size': 128,
+                'cameras.ids': ['016', '017'],
+                'data.record_root': '/new/path'
+            })
         """
-        if config_path is None:
-            config_path = Path(__file__).parent / "configs.yaml"
-        
-        self.config_path = Path(config_path)
-        
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        
-        with open(self.config_path, 'r') as f:
-            self._raw_config = yaml.safe_load(f)
-        
-        self._config = self._resolve_variables(self._raw_config)
-    
-    def _resolve_variables(self, obj: Any, context: Optional[Dict] = None) -> Any:
-        """Recursively resolve ${var} references in config."""
-        if context is None:
-            context = {}
-        
-        if isinstance(obj, dict):
-            resolved = {}
-            for key, value in obj.items():
-                resolved[key] = self._resolve_variables(value, context)
-                if key not in context:
-                    context[key] = resolved[key]
-            return resolved
-        
-        elif isinstance(obj, list):
-            return [self._resolve_variables(item, context) for item in obj]
-        
-        elif isinstance(obj, str):
-            if '${' in obj:
-                template = Template(obj)
+        for key_path, value in updates.items():
+            keys = key_path.split('.')
+            if len(keys) < 2:
+                continue
+                
+            section = keys[0]
+            attr = keys[1]
+            
+            # Get the section object
+            if not hasattr(self, section):
+                continue
+            
+            section_obj = getattr(self, section)
+            
+            # Update the attribute
+            if hasattr(section_obj, attr):
+                # Convert to appropriate type
+                original = getattr(section_obj, attr)
                 try:
-                    return template.safe_substitute(**self._flatten_dict(self._raw_config))
-                except (KeyError, ValueError):
-                    return obj
-            return obj
-        
-        return obj
-    
-    def _flatten_dict(self, d: Dict, parent_key: str = '', sep: str = '_') -> Dict:
-        """Flatten nested dictionary for template substitution."""
-        items = []
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
-            else:
-                items.append((new_key, v))
-        return dict(items)
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get config value by dot-separated key path."""
-        keys = key.split('.')
-        value = self._config
-        
-        for k in keys:
-            if isinstance(value, dict) and k in value:
-                value = value[k]
-            else:
-                return default
-        
-        return value
-    
-    def __getitem__(self, key: str) -> Any:
-        """Dict-like access to config."""
-        return self.get(key)
-    
-    def __contains__(self, key: str) -> bool:
-        """Check if key exists."""
-        return self.get(key) is not None
-    
-    @property
-    def directories(self) -> Dict:
-        """Get all directory paths."""
-        return self._config.get('directories', {})
-    
-    @property
-    def models(self) -> Dict:
-        """Get all model paths."""
-        return self._config.get('models', {})
-    
-    @property
-    def devices(self) -> Dict:
-        """Get device configuration."""
-        return self._config.get('devices', {})
-    
-    @property
-    def cameras(self) -> Dict:
-        """Get camera configuration."""
-        return self._config.get('cameras', {})
-    
-    @property
-    def identities(self) -> Dict:
-        """Get identity mapping."""
-        return self._config.get('identities', {})
-    
-    def format_path(self, template: str, **kwargs) -> str:
-        """Format path template with provided variables."""
-        t = Template(template)
-        return t.safe_substitute(**kwargs)
-    
-    def get_video_path(self, cam_id: str, date: str, ampm: str) -> Path:
-        """Get video directory path for camera, date, and AM/PM."""
-        template = self.get('video_patterns.directory_format')
-        raw_video_dir = self.get('directories.raw_video_dir')
-        
-        path = self.format_path(
-            template,
-            raw_video_dir=raw_video_dir,
-            cam_id=cam_id,
-            date=date,
-            ampm=ampm
-        )
-        return Path(path)
-    
-    def get_output_dir(self, stage: str, date: str, hour: int) -> Path:
-        """Get output directory for processing stage."""
-        key_map = {
-            'online': 'directories.online_tracking_output',
-            'offline': 'directories.offline_stitching_output',
-            'postproc': 'directories.post_processing_output',
-            'behavior': 'directories.behavior_analysis_output',
-        }
-        
-        key = key_map.get(stage)
-        if not key:
-            raise ValueError(f"Unknown stage: {stage}")
-        
-        template = self.get(key)
-        output_base = self.get('directories.output_base_dir')
-        
-        path = self.format_path(
-            template,
-            output_base_dir=output_base,
-            date=date,
-            hour=f"{hour:02d}"
-        )
-        return Path(path)
-    
-    def to_dict(self) -> Dict:
-        """Export configuration as dictionary."""
-        return self._config.copy()
+                    if isinstance(original, Path):
+                        converted = Path(value)
+                    elif isinstance(original, bool):
+                        converted = value if isinstance(value, bool) else str(value).lower() in ('true', '1', 'yes')
+                    elif isinstance(original, (int, float, str, list)):
+                        converted = type(original)(value) if not isinstance(value, type(original)) else value
+                    else:
+                        converted = value
+                    
+                    setattr(section_obj, attr, converted)
+                except (ValueError, TypeError):
+                    pass  # Skip invalid conversions
 
 
-def load_config(config_path: Optional[str] = None) -> Config:
-    """Load configuration from YAML file."""
-    return Config(config_path)
+def load_config(config_path: Path | str) -> PipelineConfig:
+    """Load configuration from YAML file.
+    
+    Args:
+        config_path: Path to YAML config file
+        
+    Returns:
+        PipelineConfig object with all settings
+    """
+    config_path = Path(config_path)
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    # Parse model config
+    models = ModelConfig(
+        reid_config=Path(data['models']['reid']['config']),
+        reid_checkpoint=Path(data['models']['reid']['checkpoint']),
+        reid_gallery_path=Path(data['models']['reid']['gallery_path']) if data['models']['reid']['gallery_path'] else None,
+        behavior_model_path=Path(data['models']['behavior']['model_path']),
+    )
+    
+    # Parse processing config
+    processing = ProcessingConfig(
+        device=data['processing']['device'],
+        batch_size=data['processing']['batch_size'],
+        sample_rate=data['processing']['sample_rate'],
+        overwrite_behavior=data['processing']['overwrite_behavior'],
+        overwrite_reid=data['processing']['overwrite_reid'],
+    )
+    
+    # Parse data config
+    data_config = DataConfig(
+        record_root=Path(data['directories']['record_root']),
+        output_dir=Path(data['directories']['output_dir']),
+    )
+    
+    # Parse camera config
+    cameras = CameraConfig(
+        ids=data['cameras']['ids'],
+        height=data['cameras']['height'],
+        width=data['cameras']['width'],
+    )
+    
+    # Parse time window
+    time_window = TimeWindowConfig(
+        start_time=data['time_window']['start_time'],
+        end_time=data['time_window']['end_time'],
+    )
+    
+    # Parse stitching config
+    stitching = StitchingConfig(
+        run_stitching=data['stitching']['run_stitching'],
+        max_gap_frames=data['stitching']['max_gap_frames'],
+        local_sim_th=data['stitching']['local_sim_th'],
+        gallery_sim_th=data['stitching']['gallery_sim_th'],
+        head_k=data['stitching']['head_k'],
+        tail_k=data['stitching']['tail_k'],
+        gallery_k=data['stitching']['gallery_k'],
+        w_local=data['stitching']['w_local'],
+        w_gallery=data['stitching']['w_gallery'],
+        num_identities=data['stitching']['num_identities'],
+    )
+    
+    # Parse cross-camera config
+    cross_camera = CrossCameraConfig(
+        enabled=data['cross_camera']['enabled'],
+        run_behavior_matching=data['cross_camera']['run_behavior_matching'],
+    )
+    
+    return PipelineConfig(
+        models=models,
+        processing=processing,
+        data=data_config,
+        cameras=cameras,
+        time_window=time_window,
+        stitching=stitching,
+        cross_camera=cross_camera,
+        log_level=data['logging']['level'],
+    )
+
+
+def update_config_from_args(config: PipelineConfig, **kwargs) -> None:
+    """Update config from command-line arguments.
+    
+    Args:
+        config: PipelineConfig object to update
+        **kwargs: Keyword arguments with values to override
+        
+    Example:
+        update_config_from_args(config, 
+                               record_root='/new/path',
+                               batch_size=128,
+                               camera_ids=['016', '017'])
+    """
+    updates = {}
+    
+    # Map common argument names to config paths
+    arg_to_config = {
+        'record_root': 'data.record_root',
+        'output_dir': 'data.output_dir',
+        'batch_size': 'processing.batch_size',
+        'sample_rate': 'processing.sample_rate',
+        'device': 'processing.device',
+        'camera_ids': 'cameras.ids',
+        'cam_ids': 'cameras.ids',
+        'start_time': 'time_window.start_time',
+        'end_time': 'time_window.end_time',
+        'overwrite_behavior': 'processing.overwrite_behavior',
+        'overwrite_reid': 'processing.overwrite_reid',
+    }
+    
+    for arg_name, value in kwargs.items():
+        if value is None:
+            continue
+            
+        # Use mapping or assume dot notation
+        config_path = arg_to_config.get(arg_name, arg_name)
+        updates[config_path] = value
+    
+    if updates:
+        config.update_from_dict(updates)
 
 
 if __name__ == "__main__":
     # Test config loading
-    config = load_config()
+    config_path = Path(__file__).parent / "configs.yaml"
+    config = load_config(config_path)
     
     print("Configuration loaded successfully!")
-    print(f"Project root: {config.get('directories.project_root')}")
-    print(f"Raw video dir: {config.get('directories.raw_video_dir')}")
-    print(f"ReID checkpoint: {config.get('models.reid.checkpoint')}")
-    print(f"Cameras: {config.get('cameras.ids')}")
-    print(f"Identities: {config.get('identities.id_to_name')}")
+    print(f"Record root: {config.data.record_root}")
+    print(f"Output dir: {config.data.output_dir}")
+    print(f"ReID checkpoint: {config.models.reid_checkpoint}")
+    print(f"Cameras: {config.cameras.ids}")
+    print(f"Batch size: {config.processing.batch_size}")
+    print(f"Device: {config.processing.device}")
     
-    # Test path formatting
-    video_path = config.get('models')
-    print(f"Video path example: {video_path}")
+    # Test updating config
+    print("\nTesting config update...")
+    update_config_from_args(config, 
+                           batch_size=128,
+                           camera_ids=['016', '017'],
+                           record_root='/tmp/test')
+    
+    print(f"Updated batch size: {config.processing.batch_size}")
+    print(f"Updated cameras: {config.cameras.ids}")
+    print(f"Updated record root: {config.data.record_root}")
