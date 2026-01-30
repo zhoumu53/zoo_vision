@@ -181,53 +181,6 @@ def vote_matched_labels(matched_labels: List[List[str]]) -> List[str]:
     return voted_labels
 
 
-# def id_feature_extraction(
-#     video_path: Path,
-#     reid_model: ReIDInference,
-#     device: str = "cpu",
-#     batch_size: int = 32,
-#     gallery_path: Path = None,
-#     known_labels: Optional[List[str]] = ['Thai'],
-# ) -> str:
-#     """High-level helper: load model, extract features, and save alongside the video."""
-#     features, frame_ids, avg_embedding = extract_reid_features_from_video(
-#         video_path=video_path,
-#         reid_model=reid_model,
-#         batch_size=batch_size
-#     )
-
-#     logger.info(f"Extracted {len(features)} features from video {video_path.name}")
-
-#     ### TODO: load gallery features from Known Group (I&C or P&F)
-#     gallery_features, gallery_labels = reid_model.load_features(gallery_path) 
-
-#     matched_labels = reid_model.match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
-#     avg_matched_labels = reid_model.match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
-    
-#     voted_labels = vote_matched_labels(matched_labels, topk=1)
-#     # most common label
-#     voted_label = max(set(voted_labels), key=voted_labels.count)
-#     print(f"Voted labels for video {video_path.name}: {voted_label}")
-
-#     save_path = video_path.with_suffix(".npz")
-#     save_features_npz(
-#         features=features,
-#         frame_ids=frame_ids,
-#         avg_embedding=avg_embedding,
-#         matched_labels=matched_labels,
-#         avg_matched_labels=avg_matched_labels,
-#         voted_labels=voted_label,
-#         save_path=save_path,
-#         metadata={
-#             "video": str(video_path),
-#             "device": device,
-#         },
-#     )
-#     print()
-#     return voted_label
-
-
-
 def id_feature_extraction(
     video_path: Path,
     reid_model: ReIDInference,
@@ -252,16 +205,16 @@ def id_feature_extraction(
             frame_ids=frame_ids,
         )
 
+    matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
+    avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
+    
+    voted_labels = vote_matched_labels(matched_labels)
+    voted_label = max(set(voted_labels), key=voted_labels.count)
+
     ### if no frame_ids, return 'invalid' label, but still extract features -> for stitching
     if len(frame_ids) == 0:
         voted_label = 'invalid'
-    else:
-        matched_labels = match_to_gallery(features, gallery_features, gallery_labels=gallery_labels)[-1]
-        avg_matched_labels = match_to_gallery(avg_embedding, gallery_features, gallery_labels=gallery_labels)[-1]
         
-        voted_labels = vote_matched_labels(matched_labels)
-        voted_label = max(set(voted_labels), key=voted_labels.count)
-
     save_features_npz(
         features=features,
         frame_ids=frame_ids,

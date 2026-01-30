@@ -142,10 +142,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default='/media/mu/zoo_vision/training/PoseGuidedReID/configs/swim_transformer/swin/swin_base_patch4_window7_224_22k.yaml', help="ReID config file path.")
     parser.add_argument("--checkpoint", type=Path, default='/media/ElephantsWD/elephants/reid_models/swin_adamw_lr0003_bs128_softmax_triplet_Fulldata/net_best.pth', help="ReID checkpoint path.")
     parser.add_argument(
-        "--start_timestamp", type=str, help="Start timestamp for processing, e.g., '180000'", required=True
+        "--start_timestamp", type=str, help="Start timestamp for processing, e.g., '180000'", default='180000'
     )
     parser.add_argument(
-        "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", required=True
+        "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", default='080000'
     )
     parser.add_argument("--device", type=str, default="cuda", help="Device to run inference on (e.g., cuda:0 or cpu).")
     parser.add_argument("--gallery-path", type=Path, default=None, help="Path to gallery features NPZ file.")
@@ -153,7 +153,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--height", type=int, default=1080, help="Height of the video frames.")
     parser.add_argument("--width", type=int, default=1920, help="Width of the video frames.")
-    parser.add_argument("--known_individuals", type=list, default=[], nargs="+", help="List of known individual IDs for the room.")
+    parser.add_argument("--cam1619-individuals", type=list, default=[], nargs="*", help="List of known individual IDs for the room.")
+    parser.add_argument("--cam1718-individuals", type=list, default=[], nargs="*", help="List of known individual IDs for the room.")
     parser.add_argument("--output_dir", type=str, default='/media/ElephantsWD/elephants/xmas/demo', 
                         help="Output directory for post-processed results.")
     parser.add_argument("--run-stitching", action="store_true", help="Whether to run tracklet stitching.")
@@ -176,7 +177,8 @@ def main():
     # Load file manager and get input file path
     camera_ids = args.camera_ids
     output_dir= Path(args.output_dir)
-    known_individuals = args.known_individuals
+    cam1619_individuals = args.cam1619_individuals
+    cam1718_individuals = args.cam1718_individuals
 
     reid_model = load_reid(
         config_path=args.config,
@@ -217,14 +219,23 @@ def main():
         dates.append(date)
             
 
-    start_datetime = f"{dates[0]} {start_timestamp.strftime('%H%M%S')}"
-    end_datetime = f"{dates[-1]} {end_timestamp.strftime('%H%M%S')}"
+    start_datetime = f"{dates[0]} {start_timestamp.strftime('%H:%M:%S')}"
+    end_datetime = f"{dates[-1]} {end_timestamp.strftime('%H:%M:%S')}"
 
     # stitching per camera
 
     final_camera_tracklets = {}
 
     for camera_id in camera_ids:
+
+        known_individuals = None
+        if camera_id in ['016', '019']:
+            known_individuals = cam1619_individuals
+        elif camera_id in ['017', '018']:
+            known_individuals = cam1718_individuals
+
+        print("\n" + "=" * 80)
+        print("record root:", args.record_root)
                             
         track_dirs = [get_track_dir(
             record_root=args.record_root,
