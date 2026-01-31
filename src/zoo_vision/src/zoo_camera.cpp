@@ -15,6 +15,7 @@
 #include "zoo_vision/zoo_camera.hpp"
 
 #include "zoo_vision/profiler.hpp"
+#include "zoo_vision/timings.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <nlohmann/json.hpp>
@@ -33,7 +34,10 @@ const std::string DEFAULT_VIDEO_NAME = "sample_video.mp4";
 namespace zoo {
 
 ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("input_camera_{}", nameIndex), options), profileTic_{"ZooCamera::tic"} {
+    : Node(std::format("input_camera_{}", nameIndex), options), localTz_{std::chrono::current_zone()},
+      profileTic_{"ZooCamera::tic"} {
+  CHECK_NOT_NULL(localTz_);
+
   this->cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting zoo_camera for %s", cameraName_.c_str());
 
@@ -64,6 +68,11 @@ ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
   timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); });
 }
 
+rclcpp::Time ZooCamera::nowLocal() {
+  const auto nt = localTz_->to_local(sysTimeFromRos(now()));
+  return rclcpp::Time(nt.time_since_epoch().count());
+}
+
 void ZooCamera::openCamera() {
   ProfileSection s{"openCamera"};
   if (cvStream_.isOpened()) {
@@ -80,7 +89,7 @@ void ZooCamera::openCamera() {
   }
   assert(frameHeight_ * frameWidth_ * 3 <= zoo_msgs::msg::Image12m::DATA_MAX_SIZE);
   frameIndex_ = 0;
-  lastReset_ = now();
+  lastReset_ = nowLocal();
 }
 
 void ZooCamera::onTimer() {
@@ -99,7 +108,7 @@ void ZooCamera::onTimer() {
   cv::Mat3b image(frameHeight_, frameWidth_, reinterpret_cast<cv::Vec3b *>(&msg->data));
 
   // Reset camera every 5min because they have been observed to get out of sync after long sessions
-  const auto durationSinceLastReset = now() - lastReset_;
+  const auto durationSinceLastReset = nowLocal() - lastReset_;
   if (durationSinceLastReset > std::chrono::seconds(5 * 60)) {
     cvStream_.release();
   }
@@ -130,7 +139,7 @@ void ZooCamera::onTimer() {
   }
 
   // Set time right after capture
-  msg->header.stamp = now();
+  msg->header.stamp = nowLocal();
 
   // TODO: converting BGR->RGB like this is inefficient!
   cv::cvtColor(image, image, cv::COLOR_BGR2RGB);

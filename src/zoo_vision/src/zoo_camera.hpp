@@ -27,6 +27,7 @@ public:
   explicit ZooCamera(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
 
 private:
+  rclcpp::Time nowLocal();
   void openCamera();
   void onTimer();
 
@@ -38,6 +39,8 @@ private:
   uint32_t frameWidth_;
   uint32_t frameHeight_;
   size_t frameIndex_;
+
+  const std::chrono::time_zone *localTz_;
 
   rclcpp::Time lastReset_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;

@@ -29,9 +29,12 @@ using nanoseconds = std::chrono::nanoseconds;
 using seconds = std::chrono::seconds;
 using SecondsTimePoint = std::chrono::time_point<SysClock, seconds>;
 
-inline SysTime sysTimeFromRos(const builtin_interfaces::msg::Time rosTime) {
-  const SysTime frameTimeNs{nanoseconds{rclcpp::Time(rosTime).nanoseconds()}};
+inline SysTime sysTimeFromRos(const rclcpp::Time rosTime) {
+  const SysTime frameTimeNs{nanoseconds{rosTime.nanoseconds()}};
   return frameTimeNs;
+}
+inline SysTime sysTimeFromRos(const builtin_interfaces::msg::Time rosTime) {
+  return sysTimeFromRos(rclcpp::Time(rosTime));
 }
 
 inline SecondsTimePoint secondsTimePointFromTimePoint(const SysTime time) {
