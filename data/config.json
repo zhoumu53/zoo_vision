@@ -84,6 +84,7 @@
     "behaviour": "../models/sleep/vit/v2_no_validation/config.ptc"
   },
   "rerun_config": {
+    "disable": false,
     "low_res": false,
     "save_to_disk": false,
     "recording_filename": "rerun/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
