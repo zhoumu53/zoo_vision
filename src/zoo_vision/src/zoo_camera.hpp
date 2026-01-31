@@ -44,6 +44,8 @@ private:
 
   rclcpp::Time lastReset_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
+
+  rclcpp::CallbackGroup::SharedPtr timerCbGroup_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   std::stack<ProfilerSectionData *> profilerStack_;

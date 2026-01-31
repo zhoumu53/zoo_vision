@@ -65,7 +65,9 @@ ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
   openCamera();
 
   publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName_ + "/image", 10);
-  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); });
+
+  timerCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); }, timerCbGroup_);
 }
 
 rclcpp::Time ZooCamera::nowLocal() {
