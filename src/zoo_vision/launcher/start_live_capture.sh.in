@@ -1,0 +1,6 @@
+cd ${CMAKE_SOURCE_DIR}
+source ${CMAKE_SOURCE_DIR}/activate_ros.sh
+${CMAKE_CURRENT_BINARY_DIR}/zoo_vision \
+    -c /rerun_config/disable=true \
+    -c /live_stream=true \
+    -c /record_tracks=true
