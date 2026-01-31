@@ -50,6 +50,7 @@ rerun-sdk==0.22.1
 # Labelling tool requirements
 git+https://github.com/plumonito/sam2 # Custom repo to allow passing images directly 
 pyside6 # UI components
+streamlit
 
 # Other
 simple-parsing # Define input args as a Dataclass
