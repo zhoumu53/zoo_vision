@@ -24,7 +24,7 @@ namespace zoo {
 
 class PatchCropper {
 public:
-  static constexpr int CROP_SIZE = 512;
+  static constexpr int CROP_SIZE = 256;
 
   explicit PatchCropper();
 
