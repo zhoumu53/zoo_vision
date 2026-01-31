@@ -84,9 +84,10 @@
     "behaviour": "../models/sleep/vit/v2_no_validation/config.ptc"
   },
   "rerun_config": {
+    "disable": false,
     "low_res": false,
     "save_to_disk": false,
-    "recording_filename": "/media/ElephantsWD/elephants/rerun_recordings/new/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
+    "recording_filename": "rerun/zoo_vision_[year]_[month]_[day]__[hour]_[minute]_[second].rrd",
     "max_seconds_per_recording": 1800
   },
   "video_root": "/mnt/camera_nas",
@@ -98,7 +99,7 @@
   "record_masks": false,
   "profile_log_interval_s": 300,
   "skip_frame_count": 4,
-  "track_crf": 23,
+  "track_crf": 15,
   "live_stream": false,
   "video_db": "/media/ElephantsWD/elephants/bytetrack/video_db.json",
   "videos": [],

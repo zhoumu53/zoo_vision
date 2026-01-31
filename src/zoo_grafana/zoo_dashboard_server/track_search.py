@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import psycopg2
 import cv2
 import pytz
+import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +76,37 @@ def get_video_path(csv_path: Path) -> Path:
 def read_track_ranges(path: Path) -> DayData:
     data = DayData([], [], [], [])
     for f in sorted(path.glob("*.csv")):
+        # Check that name exactly matches our format, e.g. T082241_ID007719.csv
+        if not re.match(r"T\d{6}_ID\d{6}.csv", f.name):
+            continue
+
         # Read track details
         df_timestamps = pd.read_csv(
             f,
-            usecols=["timestamp", "bbox_top", "bbox_left", "bbox_bottom", "bbox_right"],
+            usecols=lambda x: x
+            in [
+                "timestamp",
+                "bbox_top",
+                "bbox_left",
+                "bbox_bottom",
+                "bbox_right",
+                "bbox_top2",
+                "bbox_left2",
+                "bbox_bottom2",
+                "bbox_right2",
+            ],
             parse_dates=["timestamp"],
         )
+        if len(df_timestamps) == 0:
+            # Empty file, ignore silently
+            continue
+        if not pd.api.types.is_datetime64_dtype(df_timestamps["timestamp"]):
+            # Error in file, ignore
+            logger.error(
+                f"Ignoring csv {f}. Timestamp is of type {df_timestamps['timestamp'].dtype}"
+            )
+            continue
+
         # All server data is stored in CET timezone
         # FIXME: we should store timezone in the timestamp itself
         df_timestamps["timestamp"] = df_timestamps["timestamp"].dt.tz_localize(
@@ -94,7 +121,7 @@ def read_track_ranges(path: Path) -> DayData:
     return data
 
 
-def find_track_images(
+async def find_track_images(
     camera: str, day_data: DayData, timestamp: datetime
 ) -> list[Detection]:
     detections = []
@@ -124,16 +151,24 @@ def find_track_images(
         video_frameid = csv_index
 
         # Read info from csv
-        # TODO: top and left dimensions normalized with the wrong values!!!
-        width = 1060 / 2688 * 1520
-        height = 600 / 1520 * 2688
-        # TODO: top and left dimensions are flipped in the csv!!!
-        bbox_tlbr = (
-            csv_data["bbox_left"].iloc[csv_index] / width,
-            csv_data["bbox_top"].iloc[csv_index] / height,
-            csv_data["bbox_right"].iloc[csv_index] / width,
-            csv_data["bbox_bottom"].iloc[csv_index] / height,
-        )
+        if "bbox_top2" in csv_data:
+            bbox_tlbr = (
+                csv_data["bbox_top2"].iloc[csv_index],
+                csv_data["bbox_left2"].iloc[csv_index],
+                csv_data["bbox_bottom2"].iloc[csv_index],
+                csv_data["bbox_right2"].iloc[csv_index],
+            )
+        else:
+            # TODO: top and left dimensions normalized with the wrong values!!!
+            width = 1060 / 2688 * 1520
+            height = 600 / 1520 * 2688
+            # TODO: top and left dimensions are flipped in the csv!!!
+            bbox_tlbr = (
+                csv_data["bbox_left"].iloc[csv_index] / width,
+                csv_data["bbox_top"].iloc[csv_index] / height,
+                csv_data["bbox_right"].iloc[csv_index] / width,
+                csv_data["bbox_bottom"].iloc[csv_index] / height,
+            )
         bbox_tlhw = (
             bbox_tlbr[0],
             bbox_tlbr[1],
@@ -169,7 +204,6 @@ def find_track_images(
     # Query database for the identities
     if len(detections) > 0:
         all_tracknames = [Path(d.csv_path).stem for d in detections]
-        all_tracknames_filter = "(" + ",".join([f'"{x}"' for x in all_tracknames]) + ")"
 
         with psycopg2.connect(
             "dbname=zoo_vision user=grafanareader password=asdf"
@@ -177,8 +211,8 @@ def find_track_images(
             with db_connection.cursor() as db_cursor:
                 db_cursor.execute(
                     "SELECT track_filename, identity_id "
-                    "FROM tracks "
-                    "WHERE camera_id=%s AND track_filename IN ("
+                    + "FROM tracks "
+                    + "WHERE camera_id=%s AND track_filename IN ("
                     + ",".join(["%s" for _ in all_tracknames])
                     + ")",
                     (CAMERA_ID_FROM_NAME[camera.lower()], *all_tracknames),

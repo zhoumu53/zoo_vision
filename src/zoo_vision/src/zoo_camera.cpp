@@ -14,6 +14,8 @@
 
 #include "zoo_vision/zoo_camera.hpp"
 
+#include "zoo_vision/profiler.hpp"
+#include "zoo_vision/timings.hpp"
 #include "zoo_vision/utils.hpp"
 
 #include <nlohmann/json.hpp>
@@ -32,12 +34,16 @@ const std::string DEFAULT_VIDEO_NAME = "sample_video.mp4";
 namespace zoo {
 
 ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
-    : Node(std::format("input_camera_{}", nameIndex), options) {
+    : Node(std::format("input_camera_{}", nameIndex), options), localTz_{std::chrono::current_zone()},
+      profileTic_{"ZooCamera::tic"} {
+  CHECK_NOT_NULL(localTz_);
+
   this->cameraName_ = declare_parameter<std::string>("camera_name");
   RCLCPP_INFO(get_logger(), "Starting zoo_camera for %s", cameraName_.c_str());
 
   const nlohmann::json &config = getConfig();
   const bool useLiveStream = config["live_stream"].get<bool>();
+  skipFrameCount_ = config["skip_frame_count"].get<int>();
 
   if (useLiveStream) {
     const auto &streamConfig = config["cameras"][cameraName_]["stream"];
@@ -59,10 +65,18 @@ ZooCamera::ZooCamera(const rclcpp::NodeOptions &options, int nameIndex)
   openCamera();
 
   publisher_ = rclcpp::create_publisher<zoo_msgs::msg::Image12m>(*this, cameraName_ + "/image", 10);
-  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); });
+
+  timerCbGroup_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  timer_ = create_wall_timer(30ms, [this]() { this->onTimer(); }, timerCbGroup_);
+}
+
+rclcpp::Time ZooCamera::nowLocal() {
+  const auto nt = localTz_->to_local(sysTimeFromRos(now()));
+  return rclcpp::Time(nt.time_since_epoch().count());
 }
 
 void ZooCamera::openCamera() {
+  ProfileSection s{"openCamera"};
   if (cvStream_.isOpened()) {
     cvStream_.release();
   }
@@ -77,11 +91,16 @@ void ZooCamera::openCamera() {
   }
   assert(frameHeight_ * frameWidth_ * 3 <= zoo_msgs::msg::Image12m::DATA_MAX_SIZE);
   frameIndex_ = 0;
+  lastReset_ = nowLocal();
 }
 
 void ZooCamera::onTimer() {
+  ProfileStackGuard stackGuard{profilerStack_};
+  profileTic_.tic();
+  ProfileSection s{"onTimer"};
+
   auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
-  msg->header.stamp = now();
+  msg->header.frame_id = frameIndex_;
   setMsgString(msg->encoding, "rgb8");
   msg->width = frameWidth_;
   msg->height = frameHeight_;
@@ -90,6 +109,13 @@ void ZooCamera::onTimer() {
 
   cv::Mat3b image(frameHeight_, frameWidth_, reinterpret_cast<cv::Vec3b *>(&msg->data));
 
+  // Reset camera every 5min because they have been observed to get out of sync after long sessions
+  const auto durationSinceLastReset = nowLocal() - lastReset_;
+  if (durationSinceLastReset > std::chrono::seconds(5 * 60)) {
+    cvStream_.release();
+  }
+
+  // Reopen camera if closed
   if (!cvStream_.isOpened()) {
     openCamera();
     if (!cvStream_.isOpened()) {
@@ -97,6 +123,15 @@ void ZooCamera::onTimer() {
     }
   }
 
+  // Skip frames
+  {
+    ProfileSection s{"skipFrames"};
+    for (int i = 0; i < skipFrameCount_; ++i) {
+      cvStream_.grab();
+    }
+  }
+
+  // Real capture
   cvStream_ >> image;
   if (image.empty()) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Failed to get image from camera %s", cameraName_.c_str());
@@ -105,10 +140,11 @@ void ZooCamera::onTimer() {
     return;
   }
 
+  // Set time right after capture
+  msg->header.stamp = nowLocal();
+
   // TODO: converting BGR->RGB like this is inefficient!
   cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
-  msg->header.frame_id = frameIndex_;
 
   frameIndex_++;
   publisher_->publish(std::move(msg));

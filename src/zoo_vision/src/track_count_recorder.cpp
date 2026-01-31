@@ -40,7 +40,7 @@ TrackCountRecorder::TrackCountRecorder(std::string_view cameraName) : cameraName
   } else {
     // Write header
     fd_.open(path);
-    fd_ << "start,end,track_count" << std::endl;
+    fd_ << "start_time,duration_s,track_count" << std::endl;
   }
   CHECK_TRUE(!fd_.fail());
 }
@@ -72,7 +72,9 @@ void TrackCountRecorder::recordCount(SysTime time, size_t count) {
 }
 
 void TrackCountRecorder::writeCount(SysTime endTime) {
-  fd_ << formatTime(*startTime_) << "," << formatTime(endTime) << "," << count_ << std::endl;
+  const auto duration = endTime - *startTime_;
+  const auto duration_s = std::chrono::duration<double>(duration).count();
+  fd_ << formatTime(*startTime_) << "," << std::format("{:.3f}", duration_s) << "," << count_ << std::endl;
 }
 
 } // namespace zoo

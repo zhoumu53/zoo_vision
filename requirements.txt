@@ -62,7 +62,6 @@ cvat-sdk
 cvat-cli
 
 # Dashboard server
-flask
-flask-cors
-flask-caching
-waitress
+quart
+quart-cors
+hypercorn

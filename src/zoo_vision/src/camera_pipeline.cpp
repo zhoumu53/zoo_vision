@@ -289,7 +289,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       }
       if (config_.recordTracks) {
         // moveTrackImagesToIdentityPath(track);
-        track.writer.close(sysTime);
+        track.writer.close();
       }
       trackUpdateStats.closedTracks.clear();
     }
@@ -421,7 +421,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, cons
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx));
+    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx), config_.detectionImageSize);
   }
 }
 

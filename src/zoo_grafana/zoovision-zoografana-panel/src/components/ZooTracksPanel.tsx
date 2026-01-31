@@ -7,7 +7,7 @@ import { useStyles2 } from '@grafana/ui';
 const NO_IMAGE_JPG = require('../img/no_image.jpg');
 
 const DEFAULT_TIMESTAMP = "2025-11-15 19:08:22.308000000";
-const CAMERAS = ["zag_elp_cam_016", "zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_019"];
+const CAMERAS = ["zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_016", "zag_elp_cam_019"];
 
 interface Props extends PanelProps<ZooTracksOptions> { }
 
@@ -29,6 +29,17 @@ type CameraImageState = {
   isLoading: boolean;
   image: string;
 }
+
+const INVALID_DETECTION = {
+  timestamp: "n/a",
+  image: NO_IMAGE_JPG,
+  bbox_tlhw: [0, 0, 0, 0],
+  color: "#777777",
+  identity_id: 0,
+  identity_name: "Invalid",
+  behaviour_id: 0,
+  behaviour_name: "Invalid"
+};
 
 const getStyles = () => {
   return {
@@ -90,6 +101,9 @@ const getStyles = () => {
       position: absolute;
       border: 1px solid;
       background-color: #00000000;
+    `,
+    verticalCell: css`
+      vertical-align: top;
     `
   };
 };
@@ -117,6 +131,9 @@ async function fetchTrackImages(url: string, abortSignal: any, setCurrentTimesta
       throw new Error(response.statusText);
     }
     const dataJson = await response.json();
+    if ("error" in dataJson) {
+      throw new Error(dataJson["error"])
+    }
     server_timestamp = dataJson["timestamp"];
     new_state = { isLoading: false, detections: dataJson["detections"] };
   } catch (err: any) {
@@ -125,7 +142,8 @@ async function fetchTrackImages(url: string, abortSignal: any, setCurrentTimesta
     }
     console.log("Error fetching %s: %s", url, err);
     server_timestamp = "n/a"
-    new_state = { isLoading: false, detections: [{ image: NO_IMAGE_JPG }] };
+
+    new_state = { isLoading: false, detections: [INVALID_DETECTION] };
   }
   setCurrentTimestamp(server_timestamp)
   setState(new_state);
@@ -139,7 +157,10 @@ async function fetchCameraImages(url: string, abortSignal: any, setState: (state
       throw new Error(response.statusText);
     }
     const dataJson = await response.json();
-    new_state = { isLoading: true, image: dataJson["image"] };
+    if ("error" in dataJson) {
+      throw new Error(dataJson["error"])
+    }
+    new_state = { isLoading: false, image: dataJson["image"] };
   } catch (err: any) {
     if (err.name === "AbortError") {
       return;
@@ -217,9 +238,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
     };
   });
 
-  const makeImages = (cameraIndex: number) => {
-    return <div className={cx(styles.cameraBlock)}>
-      <div>{CAMERAS[cameraIndex]}</div>
+  const makeTrackImages = (cameraIndex: number) => {
+    return <>
       <div>Tracks</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)} >Loading</div>
@@ -227,9 +247,21 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         {trackImages[cameraIndex].detections.map((detection, index) =>
           <div key={index} className={cx(styles.trackImageDiv)}>
             <img src={detection.image} className={cx(styles.trackImage)} />
+            <div style={{
+              position: "absolute",
+              backgroundColor: 'black',
+              color: detection.color,
+              bottom: '0%'
+            }}>
+              {detection.identity_name}
+            </div>
           </div>
         )}
       </div>
+    </>
+  };
+  const makeCameraImages = (cameraIndex: number) => {
+    return <>
       <div>Source</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)}>Loading</div>
@@ -243,7 +275,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           }}>
             <div style={{
               position: "absolute",
-              backgroundColor: 'gray',
+              backgroundColor: 'black',
+              color: detection.color,
               top: '100%'
             }}>
               {detection.identity_name}
@@ -252,7 +285,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
         )}
         <img src={cameraImages[cameraIndex].image} className={cx(styles.fillImage)} />
       </div>
-    </div>
+    </>
   };
 
   return (
@@ -267,26 +300,21 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       )}
     >
       <div id="time-label">Time: {currentTimestamp}</div>
-      <div className={cx(styles.rowFlex)}>
-        <div className={cx(styles.areaName)}>
-          <h2>
-            Sand box mit
-          </h2>
-          <div className={cx(styles.rowFlex)}>
-            {makeImages(1)}
-            {makeImages(2)}
-          </div>
-        </div>
-        <div className={cx(styles.areaName)}>
-          <h2>
-            Sand box ohne
-          </h2>
-          <div className={cx(styles.rowFlex)}>
-            {makeImages(0)}
-            {makeImages(3)}
-          </div>
-        </div>
-      </div>
+      <table>
+        <tr>
+          <th colSpan={2}><h2>Sand box mit</h2></th>
+          <th colSpan={2}><h2>Sand box ohne</h2></th>
+        </tr>
+        <tr>
+          {CAMERAS.map((cameraName) => <td>{cameraName}</td>)}
+        </tr>
+        <tr>
+          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
+        </tr>
+        <tr>
+          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeCameraImages(index)}</td>)}
+        </tr>
+      </table>
     </div >
   );
 };

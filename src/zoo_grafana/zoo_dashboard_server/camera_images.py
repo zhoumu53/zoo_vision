@@ -21,14 +21,13 @@ def parse_timestamp(timestamp_str: str) -> datetime:
     return timestamp
 
 
-def find_camera_image(
+async def find_camera_image(
     video_db, video_root: Path, camera: str, timestamp: datetime
 ) -> np.ndarray | None:
     camera_db = video_db["cameras"][camera]
     for video_name, start_time_str, end_time_str in zip(
         camera_db["videos"], camera_db["start_times"], camera_db["end_times"]
     ):
-        print(video_name)
         start_time = parse_timestamp(start_time_str)
         if start_time > timestamp:
             # Videos are sorted, we can skip all the rest

@@ -13,6 +13,8 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
+#include "zoo_vision/profiler.hpp"
+
 #include "rclcpp/rclcpp.hpp"
 #include "zoo_msgs/msg/image12m.hpp"
 #include <opencv2/highgui/highgui.hpp>
@@ -25,8 +27,11 @@ public:
   explicit ZooCamera(const rclcpp::NodeOptions &options = rclcpp::NodeOptions(), int nameIndex = 999);
 
 private:
+  rclcpp::Time nowLocal();
   void openCamera();
   void onTimer();
+
+  int skipFrameCount_;
 
   std::string cameraName_;
   std::string videoUrl_;
@@ -35,7 +40,15 @@ private:
   uint32_t frameHeight_;
   size_t frameIndex_;
 
+  const std::chrono::time_zone *localTz_;
+
+  rclcpp::Time lastReset_;
   std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
+
+  rclcpp::CallbackGroup::SharedPtr timerCbGroup_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  std::stack<ProfilerSectionData *> profilerStack_;
+  ProfileTicOnly profileTic_;
 };
 } // namespace zoo

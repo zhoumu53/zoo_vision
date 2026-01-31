@@ -67,6 +67,9 @@ int main(int argc, char *argv[]) {
 
   rclcpp::init(argc, argv);
 
+  std::stack<ProfilerSectionData *> profilerStack;
+  ProfileStackGuard stackGuard{profilerStack};
+
   setComputeDevice();
 
   // Load config once before initializing all nodes
@@ -90,7 +93,12 @@ int main(int argc, char *argv[]) {
   std::vector<std::shared_ptr<rclcpp::Node>> nodes;
 
   // Start rerun first so we can connect right away
-  nodes.push_back(std::make_shared<RerunForwarder>(options));
+  {
+    const bool disableRerun = config["rerun_config"]["disable"].get<bool>();
+    if (!disableRerun) {
+      nodes.push_back(std::make_shared<RerunForwarder>(options));
+    }
+  }
 
   // Camera rate limiters
   for (const auto &cameraName : cameraNames) {

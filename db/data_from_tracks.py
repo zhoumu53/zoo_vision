@@ -3,22 +3,9 @@
 from pathlib import Path
 from datetime import datetime
 import enlighten
-import random
 import pandas as pd
 import psycopg2
 
-BEHAVIOUR_STAND_ID = 1
-BEHAVIOUR_SLEEP_LEFT_ID = 2
-BEHAVIOUR_SLEEP_RIGHT_ID = 3
-
-SOCIAL_GROUPS = ["IC", "FP", "T"]
-INDIVIDUALS_TO_GROUPS = {
-    "Chandra": "IC",
-    "Farha": "FP",
-    "Indi": "IC",
-    "Panang": "FP",
-    "Thai": "T",
-}
 INDIVIDUALS_TO_ID = {
     "Chandra": 1,
     "Farha": 3,
@@ -27,12 +14,11 @@ INDIVIDUALS_TO_ID = {
     "Thai": 5,
     "Invalid": 0,
 }
-ROOMS = ["sand_box_ohne", "sand_box_mit", "other"]
-CAMERA_TO_ROOM = {
-    "zag_elp_cam_016": "sand_box_ohne",
-    "zag_elp_cam_019": "sand_box_ohne",
-    "zag_elp_cam_017": "sand_box_mit",
-    "zag_elp_cam_018": "sand_box_mit",
+BEHAVIOURS_TO_ID = {
+    "00_invalid": 0,
+    "01_standing": 1,
+    "02_sleeping_left": 2,
+    "03_sleeping_right": 3,
 }
 
 CAMERA_TO_ID = {
@@ -72,40 +58,7 @@ def gather_all_dates(root_dir: Path) -> list[str]:
     return list(sorted(all_dates))
 
 
-def assign_individuals_to_cameras():
-    groups = SOCIAL_GROUPS.copy()
-    random.shuffle(groups)
-    groups_to_room = {g: r for g, r in zip(groups, ROOMS)}
-    individuals_to_camera = {}
-    camera_to_individuals = {c: [] for c in CAMERA_TO_ROOM.keys()}
-    for camera, room in CAMERA_TO_ROOM.items():
-        for individual, group in INDIVIDUALS_TO_GROUPS.items():
-            if groups_to_room[group] == room:
-                camera_to_individuals[camera].append(individual)
-    return camera_to_individuals
-
-
-def select_sleeping_hours() -> list[int]:
-    MIN_HOUR = 22
-    MAX_HOUR = 8
-    sleep_range_size = MAX_HOUR - MIN_HOUR
-    if sleep_range_size < 0:
-        sleep_range_size += 24
-    sleep_hours = int(random.normalvariate(mu=3, sigma=1))
-    if sleep_hours < 1:
-        sleep_hours = 1
-    if sleep_hours > sleep_range_size:
-        sleep_hours = sleep_range_size
-
-    hours = [MIN_HOUR + h for h in range(sleep_range_size)]
-    hours = [h if h < 24 else h - 24 for h in hours]
-    random.shuffle(hours)
-    return hours[0:sleep_hours]
-
-
-def log_track(
-    db_cursor, camera: str, individual: str, sleeping_hours: list[int], track_file: Path
-):
+def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = pd.read_csv(
@@ -140,13 +93,11 @@ def log_track(
         world_x = float(df_track["world_x"].iloc[i])
         world_y = float(df_track["world_y"].iloc[i])
 
-        if ts.hour in sleeping_hours:
-            if ts.minute <= 30:
-                behaviour_id = BEHAVIOUR_SLEEP_LEFT_ID
-            else:
-                behaviour_id = BEHAVIOUR_SLEEP_RIGHT_ID
+        if "behavior_label" in df_track:
+            behaviour = df_track["behavior_label"].iloc[i]
         else:
-            behaviour_id = BEHAVIOUR_STAND_ID
+            behaviour = "00_invalid"
+        behaviour_id = BEHAVIOURS_TO_ID[behaviour.lower()]
 
         db_cursor.execute(
             """
@@ -165,7 +116,18 @@ def load_individual_from_csv(track_file: Path) -> str:
     df_track = pd.read_csv(track_file)
     row_count = len(df_track)
     if row_count == 0:  ### Empty track csv
-        return None
+        return "Invalid"
+    if "identity_label" not in df_track.columns:
+        return "Invalid"
+    individual = df_track["identity_label"].mode()[0]
+    return individual
+
+
+def load_behaviour_from_csv(track_file: Path) -> str:
+    df_track = pd.read_csv(track_file)
+    row_count = len(df_track)
+    if row_count == 0:  ### Empty track csv
+        return "Invalid"
     if "identity_label" not in df_track.columns:
         return "Invalid"
     individual = df_track["identity_label"].mode()[0]
@@ -198,14 +160,8 @@ def main(args):
         total=len(all_dates), desc="Processing dates", unit="day"
     )
     for date in pbar(all_dates):
-        # Randomly select which individuals are where
-        camera_to_individuals = assign_individuals_to_cameras()
-        individual_to_sleeping_hours = {
-            i: select_sleeping_hours() for i in INDIVIDUALS_TO_ID.keys()
-        }
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
-            possible_individuals = camera_to_individuals[camera]
             track_files = list((camera_dir / date).glob("*.csv"))
 
             pbar2 = pbar_manager.counter(
@@ -219,10 +175,9 @@ def main(args):
                     db_cursor,
                     camera,
                     individual,
-                    individual_to_sleeping_hours[individual],
                     track_file,
                 )
-                db_connection.commit()
+    db_connection.commit()
 
 
 if __name__ == "__main__":
