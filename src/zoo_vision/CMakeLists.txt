@@ -219,6 +219,7 @@ install(TARGETS
 # Configure launcher
 # TODO: this adds an app shortcut whenever the project is configured.
 #       Maybe we should change this to build or install time?
+configure_file(launcher/start_live_capture.sh.in ${CMAKE_BINARY_DIR}/start_live_capture.sh)
 configure_file(launcher/run_zoo_vision.sh.in ${CMAKE_BINARY_DIR}/run_zoo_vision.sh)
 configure_file(launcher/run_zoo_vision_ui.sh.in ${CMAKE_BINARY_DIR}/run_zoo_vision_ui.sh)
 configure_file(launcher/zoo_vision.desktop.in $ENV{HOME}/.local/share/applications/zoo_vision.desktop)
