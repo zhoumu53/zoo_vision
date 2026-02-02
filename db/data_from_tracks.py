@@ -121,13 +121,24 @@ def gather_all_dates(root_dir: Path) -> list[str]:
     return list(sorted(all_dates))
 
 
+def merge_track_behavior(track_file: Path) -> pd.DataFrame:
+    df_track = pd.read_csv(track_file)
+    behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
+    if not behavior_file.exists():
+        return df_track
+    df_behavior = pd.read_csv(behavior_file)
+    df_merged = pd.merge(df_track, df_behavior, on='timestamp', how='left')
+    return df_merged
+
+
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
     individual_id = INDIVIDUALS_TO_ID[individual]
-    df_track = pd.read_csv(
-        track_file,
-        parse_dates=["timestamp"],
-    )
+    # df_track = pd.read_csv(
+    #     track_file,
+    #     parse_dates=["timestamp"],
+    # )
+    df_track = merge_track_behavior(track_file)
     row_count = len(df_track)
     if row_count == 0:
         return
