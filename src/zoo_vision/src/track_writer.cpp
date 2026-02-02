@@ -123,7 +123,7 @@ void TrackWriter::writeFrame(uint64_t frameId, const at::Tensor &cropImage, cons
 
   cv::Mat3b cropCv = wrapCvFromTensor3b(cropImage);
   // cv::imwrite((rootPath_ / "test.png").string(), cropCv);
-  trackVideo_.write(cropCv.data, cropCv.step[0]);
+  trackVideo_.write(cropCv.data, cropCv.step[0], imageSize[0], imageSize[1]);
 }
 
 void TrackWriter::close() {

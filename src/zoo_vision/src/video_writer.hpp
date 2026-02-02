@@ -18,6 +18,8 @@
 #include <filesystem>
 #include <memory>
 
+#include <opencv2/videoio.hpp>
+
 namespace zoo {
 namespace detail {
 class VideoWriterImpl;
@@ -32,12 +34,12 @@ public:
   VideoWriter();
   ~VideoWriter();
 
-  bool isOpen() const { return impl_ != nullptr; }
+  bool isOpen() const { return writer_.isOpened(); }
   bool open(const std::string &filename, Vector2i frameSize, float32_t fps);
-  void write(const uint8_t *imgRgb, int stride);
+  void write(const uint8_t *imgRgb, int stride, int width, int height);
   void close();
 
 private:
-  std::unique_ptr<detail::VideoWriterImpl> impl_;
+  cv::VideoWriter writer_;
 };
 } // namespace zoo
