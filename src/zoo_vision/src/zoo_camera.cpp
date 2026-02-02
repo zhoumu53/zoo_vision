@@ -90,7 +90,6 @@ void ZooCamera::openCamera() {
     frameWidth_ = frameHeight_ = 500;
   }
   assert(frameHeight_ * frameWidth_ * 3 <= zoo_msgs::msg::Image12m::DATA_MAX_SIZE);
-  frameIndex_ = 0;
   lastReset_ = nowLocal();
 }
 
@@ -110,10 +109,11 @@ void ZooCamera::onTimer() {
   cv::Mat3b image(frameHeight_, frameWidth_, reinterpret_cast<cv::Vec3b *>(&msg->data));
 
   // Reset camera every 5min because they have been observed to get out of sync after long sessions
-  const auto durationSinceLastReset = nowLocal() - lastReset_;
-  if (durationSinceLastReset > std::chrono::seconds(5 * 60)) {
-    cvStream_.release();
-  }
+  // TODO: camera reset disabled for now, revisit later.
+  // const auto durationSinceLastReset = nowLocal() - lastReset_;
+  // if (durationSinceLastReset > std::chrono::seconds(5 * 60)) {
+  //   cvStream_.release();
+  // }
 
   // Reopen camera if closed
   if (!cvStream_.isOpened()) {

@@ -38,7 +38,7 @@ private:
   cv::VideoCapture cvStream_;
   uint32_t frameWidth_;
   uint32_t frameHeight_;
-  size_t frameIndex_;
+  size_t frameIndex_ = 0;
 
   const std::chrono::time_zone *localTz_;
 
