@@ -211,6 +211,10 @@ def id_feature_extraction(
     voted_labels = vote_matched_labels(matched_labels)
     voted_label = max(set(voted_labels), key=voted_labels.count)
 
+    # print("---matched_labels:", matched_labels)
+    # print("---avg_matched_labels:", avg_matched_labels)
+    # print("---voted_label:", voted_label)
+
     ### if no frame_ids, return 'invalid' label, but still extract features -> for stitching
     if len(frame_ids) == 0:
         voted_label = 'invalid'

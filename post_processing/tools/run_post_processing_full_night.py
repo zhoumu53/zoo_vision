@@ -49,10 +49,13 @@ def update_csv_from_df(df: pd.DataFrame) -> None:
     
     for track_file in track_files:
         _df = df[ df['track_csv_path'] == track_file ]
-        df_original = pd.read_csv(track_file)
-        original_columns = df_original.columns.tolist()
+        behavior_csv = track_file.replace('.csv', '_behavior.csv')
+        df_behavior = pd.read_csv(behavior_csv)
+        original_columns = df_behavior.columns.tolist()
+        original_columns.append('timestamp') if 'timestamp' not in original_columns else original_columns
         _df = _df[original_columns]
-        _df.to_csv(track_file, index=False)
+        _df.to_csv(behavior_csv, index=False)
+    print("Behavior labels are smoothed.")
 
 
 def get_stitched_data(
@@ -106,7 +109,7 @@ def merge_csv_tracklets(record_root: Path,
                         camera_ids: list[str]) -> pd.DataFrame:
 
     from post_processing.tools.utils import (load_valid_tracks, 
-                                                load_identity_labels_from_json)
+                                             load_identity_labels_from_json)
     
     df_behavior = load_valid_tracks(
         record_root=record_root,
@@ -244,8 +247,9 @@ def main():
         ) for date in dates]
         
         if not all([track_dir.exists() for track_dir in track_dirs]):
-            logger.warning("Track directories for camera %s on dates %s do not all exist. Skipping.", camera_id, dates)
-            continue
+            logger.warning("Track directories for camera %s on dates %s do not all exist.", camera_id, dates)
+            ### TODO -- handle missing directories better
+            # continue
         
         tracklet_manager = TrackletManager(
             track_dirs=track_dirs,
@@ -296,8 +300,6 @@ def main():
 
 
             df_results = smooth_behavior_cross_cameras(df_results, id_col='voted_track_label',)
-            
-            # update csv
             update_csv_from_df(df_results)
         except Exception as e:
             logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))
