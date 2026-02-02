@@ -43,24 +43,17 @@ from post_processing.tools.utils import (
     load_behavior_model, 
     run_behavior_on_track, 
     load_gallery_features, 
-    get_good_frame_indices,
-    select_frame_indices_by_second_best_quality
 )
 from post_processing.core.temporal_smooth import behavior_label_smooth
 
 
 
-def process_track_video(
+def process_behavior_for_track(
     track_video_file: Path,
     behavior_model: BehaviorInference | None,
-    reid_model,
-    gallery_features,
-    gallery_labels,
     batch_size: int,
-    device: str,
     logger: logging.Logger,
     overwrite_behavior: bool = True,
-    overwrite_reid: bool = True,
     out_csv_path: Path | None = None,
     sample_rate: float = 1.0,
 ) -> str | None:
@@ -87,30 +80,50 @@ def process_track_video(
     frame_indices = []  ###TODO #get_good_frame_indices(df_tracks)
         
     # Behavior classification, saved to CSV (frame level)
-    out_csv_path = csv_path if out_csv_path is None else out_csv_path
+    out_csv_path = csv_path.with_name(csv_path.stem + '_behavior.csv') if out_csv_path is None else out_csv_path
     if behavior_model is not None and out_csv_path is not None:
         ####
-
             # if behavior column already exists and not overwrite
         if Path(out_csv_path).exists() and not overwrite_behavior:
             logger.info("Behavior CSV already exists and overwrite is False: %s", out_csv_path)
-            return None
+            # load csv - get good quality frame indices
+            df_existing = pd.read_csv(out_csv_path)
+            # good_quality_indices = df_existing.index[
+            #         (df_existing["quality_label"] == 'good') &
+            #         (df_existing["behavior_label"] != '00_invalid')
+            #     ].tolist()
+            # if sample_rate == 1:
+            #     frame_indices = good_quality_indices
+            # else:
+            #     frame_indices = good_quality_indices[::int(1/sample_rate)]
+
+            ### sample from standing frames & good quality & high confidence - behavior_conf >= 0.7
+            ### because currently in gallery-set we don't have enough sleeping frames for reid matching
+            standing_indices = df_existing.index[
+                    (df_existing["behavior_label"] == '01_standing' ) &
+                    (df_existing["quality_label"] == 'good') &
+                    (df_existing["behavior_conf"].astype(float) >= 0.7)
+                ].tolist()
+            frame_indices = standing_indices
+
+            return frame_indices
+            
 
         try:
+            df_tracks_behavior = pd.DataFrame() ### empty df to hold behavior preds
             behavior_preds = run_behavior_on_track(
                 video_path=track_video_file,
                 behavior_model=behavior_model,
                 batch_size=batch_size,
             )
-            if len(behavior_preds) != len(df_tracks):
+            if len(behavior_preds) != len(df_tracks):                
                 logger.warning(
                     "Behavior predictions length %d does not match CSV rows %d for %s",
                     len(behavior_preds),
                     len(df_tracks),
                     track_video_filename,
                 )
-                return None
-            
+            frame_ids = []
             beh_preds = []
             qua_preds = []
             beh_confs = []
@@ -120,52 +133,60 @@ def process_track_video(
                 behavior_label = pred[0]
                 behavior_conf = pred[1]
                 
-                ### check if pred from 2 heads model
-                if 'good' in behavior_label or 'bad' in behavior_label:
-                    quality_label = behavior_label.split('_')[-1]
-                    behavior_label = behavior_label.replace(f"_{quality_label}", "")
-                    behavior_conf, quality_conf = behavior_conf.split('_')
+                # DEFAULT MODEL - 2 HEADS - behavior + quality
+                quality_label = behavior_label.split('_')[-1]
+                behavior_label = behavior_label.replace(f"_{quality_label}", "")
+                behavior_conf, quality_conf = behavior_conf.split('_')
 
-                else:
-                    quality_label = None
-                    quality_conf = None
-                
                 qua_preds.append(quality_label)
                 qua_confs.append(quality_conf)
                 beh_preds.append(behavior_label)
                 beh_confs.append(behavior_conf)
 
-            df_tracks["behavior_label"] = beh_preds
-            df_tracks["behavior_conf"] = beh_confs
+            df_tracks_behavior["behavior_label"] = beh_preds
+            df_tracks_behavior["behavior_conf"] = beh_confs
+            df_tracks_behavior["quality_label"] = qua_preds
+            df_tracks_behavior["quality_conf"] = qua_confs
 
-            if len(qua_preds) > 0 and len(qua_confs) > 0:
-                df_tracks["quality_label"] = qua_preds
-                df_tracks["quality_conf"] = qua_confs
-                ### TODO - update the sample logic to use quality labels
-                if sample_rate == 1:
-                    good_quality_indices = df_tracks[ df_tracks["quality_label"] == 'good' ].index
-                else:
-                    # now best quality frames - top_k
-                    good_quality_indices = set(
-                        select_frame_indices_by_second_best_quality(df_tracks, top_k=2)
-                    )
-                if len(good_quality_indices) == 0:
-                    frame_indices = set()
-                else:
-                    frame_indices = set(frame_indices).intersection(set(good_quality_indices))
+            ### if beh_conf < 0.7 -> set to 'invalid'
+            df_tracks_behavior["behavior_label"] = df_tracks_behavior.apply(
+                lambda row: row["behavior_label"] if float(row["behavior_conf"]) >= 0.7 else "00_invalid",
+                axis=1,
+            )
+            standing_indices = df_tracks_behavior.index[
+                    (df_tracks_behavior["behavior_label"] == '01_standing' ) &
+                    (df_tracks_behavior["quality_label"] == 'good') &
+                    (df_tracks_behavior["behavior_conf"].astype(float) >= 0.7)
+                ].tolist()
+            frame_indices = standing_indices
 
-            if out_csv_path is None:
-                out_csv_path = csv_path
-            df_tracks.to_csv(out_csv_path, index=False)
+            df_tracks_behavior.to_csv(out_csv_path, index=False)
             logger.info("Saved behavior predictions to %s", out_csv_path)
         except Exception as exc:
             logger.error("Error running behavior model on %s: %s", track_video_filename, exc)
-            return None
+            return frame_indices
+        
+    return frame_indices
 
 
+
+def process_reid_for_track(
+    track_video_file: Path,
+    reid_model,
+    gallery_features,
+    gallery_labels,
+    batch_size: int,
+    device: str,
+    logger: logging.Logger,
+    overwrite_reid: bool = True,
+    frame_indices: list[int] = [],
+) -> str | None:
+    """Run ReID feature extraction on a single track video."""
 
     # ReID feature extraction -> save npz; skip if processed
     npz_path = track_video_file.with_suffix(".npz")
+    track_video_filename = track_video_file.name
+    logger.info("Processing ReID for track video: %s", track_video_filename)
     try:
         if npz_path.exists() and not overwrite_reid:
             voted_identity_label = load_npz_files(npz_path).get("voted_labels", "unknown")
@@ -175,18 +196,6 @@ def process_track_video(
                 voted_identity_label,
             )
             return voted_identity_label
-        
-        # if sample_rate < 1.0:  
-        #     frame_indices = sorted(list(frame_indices))
-        #     # sample frame_indices according to sample_rate - uniformly
-        #     _frame_indices = frame_indices[:: int(1/sample_rate)]
-        #     frame_indices = set(_frame_indices)
-        #     logger.info(f"Sampled {len(frame_indices)} frames for ReID from {len(df_tracks)} total frames.")
-
-        ## only do ReID on selected frames
-        if len(frame_indices) == 0:
-            logger.warning("No good frames selected for ReID in %s", track_video_filename)
-            return None
 
         voted_identity_label = id_feature_extraction(
             video_path=track_video_file,
@@ -333,7 +342,7 @@ def main():
     )
     
     for track_file in tqdm(full_track_files, desc="Processing track files"):
-        if 'id_behavior' in str(track_file):
+        if '_behavior' in str(track_file):
             continue
 
         track_video_file = track_file.with_suffix('.mkv')
@@ -343,18 +352,25 @@ def main():
             logger.warning("No corresponding video file found for track: %s", track_file)
             continue
 
-        process_track_video(
+        frame_indices = process_behavior_for_track(
             track_video_file=track_video_file,
             behavior_model=behavior_model,
+            batch_size=config.processing.batch_size,
+            overwrite_behavior=config.processing.overwrite_behavior,
+            logger=logger,
+            sample_rate=config.processing.sample_rate,
+        )
+
+        process_reid_for_track(
+            track_video_file=track_video_file,
             reid_model=reid_model,
             gallery_features=gallery_features,
             gallery_labels=gallery_labels,
             batch_size=config.processing.batch_size,
             device=config.processing.device,
-            overwrite_behavior=config.processing.overwrite_behavior,
             overwrite_reid=config.processing.overwrite_reid,
             logger=logger,
-            sample_rate=config.processing.sample_rate,
+            frame_indices=frame_indices,
         )
     endtime = datetime.now()
     logger.info("Post-processing completed in %s", str(endtime - starttime))

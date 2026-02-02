@@ -121,57 +121,6 @@ def tlbr2fullsize(df_tracks, img_width: int, img_height: int) -> tuple[float, fl
 
 
 
-def select_frame_indices_by_second_best_quality(
-    df: pd.DataFrame,
-    time_col: str = "timestamp",
-    quality_conf_col: str = "quality_conf",
-    score_col: str = "score",
-    window_s: float = 1.0,
-    top_k: int = 1,
-) -> list[int]:
-    """
-    Pick K frames per second with best quality (fallback to score).
-    Fast: dataframe-only, no video access.
-    """
-
-    if df.empty:
-        return []
-
-    d = df.copy()
-
-    # Ensure datetime
-    if not np.issubdtype(d[time_col].dtype, np.datetime64):
-        d[time_col] = pd.to_datetime(d[time_col], errors="coerce")
-    d = d.dropna(subset=[time_col])
-    if d.empty:
-        return []
-
-    # Quality score (prefer quality_conf, fallback to det score)
-    if quality_conf_col in d.columns:
-        d["_q"] = pd.to_numeric(d[quality_conf_col], errors="coerce").fillna(0.0)
-    else:
-        d["_q"] = 0.0
-
-    if score_col in d.columns:
-        d["_q"] += pd.to_numeric(d[score_col], errors="coerce").fillna(0.0)
-
-    # 1-second bins from start
-    t0 = d[time_col].min()
-    d["_bin"] = ((d[time_col] - t0).dt.total_seconds() / window_s).astype(int)
-
-    # Best frame per bin
-    idx = (
-        d.sort_values(["_bin", "_q"], ascending=[True, False])
-         .groupby("_bin")
-         .head(top_k)
-         .sort_values(time_col)
-         .index
-         .tolist()
-    )
-
-    return idx
-
-
 def filter_by_box_quality(df_tracks,
                            bbox_ratio_lower: float = 1/3,
                            bbox_ratio_upper: float = 3.0
