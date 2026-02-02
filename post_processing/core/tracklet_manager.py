@@ -51,7 +51,9 @@ class Tracklet:
 
 
 
-def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = None) -> List[Tracklet]:
+def init_tracklets_from_online_results(track_csv: str, 
+                                       behavior_csv: Optional[Path] = None,
+                                       camera_id: str | None = None) -> List[Tracklet]:
     """
     Load a track CSV (frame_id,timestamp,bbox_top,bbox_left,bbox_bottom,bbox_right,score)
     into Tracklet objects. Uses file stem as raw_track_id/track_id.
@@ -59,7 +61,7 @@ def init_tracklets_from_online_results(track_csv: str, camera_id: str | None = N
     track_id = Path(track_csv).stem
     df = pd.read_csv(track_csv)
     if df.empty:
-        logger.warning(f"Track CSV {track_csv} is empty. Skipping.")
+        # logger.warning(f"Track CSV {track_csv} is empty. Skipping.")
         return []
     
     start_timestamp = datetime.fromisoformat(df['timestamp'].iloc[0])
@@ -149,7 +151,7 @@ def vote_identity_from_matched_labels(
     
     
     # Filter by known_labels if provided
-    if known_labels is not None:
+    if known_labels is not None and len(known_labels) > 0:
         ## find the most alike one from top1
         top1_label = vote_identity_label_by_human_prior(top1_label, known_labels)
         filtered_counts = {
@@ -496,7 +498,8 @@ class TrackletManager:
         self.invalid_zone_handler = InvalidZoneHandler(invalid_zones_dir, 
                                                        self.logger)
         self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else None
-        print("Loaded known labels for camera", self.camera_id, ":", self.known_labels)
+        if self.known_labels is not None and len(self.known_labels) > 0:
+            self.logger.info("Loaded known labels for camera %s: %s", self.camera_id, self.known_labels)
 
     def _format_time(self, timestamp) -> datetime:
         """Convert time string to datetime object.
@@ -606,7 +609,7 @@ class TrackletManager:
         track_files = []
         for track_dir in track_dirs:
             files = sorted(track_dir.glob("*.csv"))
-            files = [file for file in files if f"_id_behavior" not in file.stem]
+            files = [file for file in files if f"_behavior" not in file.stem]
             track_files.extend(files)
                     
         n_invalid = 0
@@ -628,6 +631,7 @@ class TrackletManager:
             
             tracklet = init_tracklets_from_online_results(
                 track_csv=str(track_file),
+                behavior_csv=track_file.with_name(track_file.stem + "_behavior.csv"),
                 camera_id=camera_id
             )
             
@@ -639,7 +643,7 @@ class TrackletManager:
 
             # print(f"Tracklet {track_filename} start time: {start_dt}, end time: {end_dt}")
             
-            # Check if tracklet is within time window
+            # Check if tracklet is within time window   ---- only for full night stitching
             skip_tracklet = self.validate_tracklet_timestamp(start_dt)
 
             ## skip tracklet in a short time period - less than 1 min
@@ -649,25 +653,24 @@ class TrackletManager:
                 # print(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
             
             if skip_tracklet:
-                # print(f"Skipping tracklet {track_filename}{start_dt} - outside time window [{self.start_time} to {self.end_time}]")
+                print(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
                 continue
 
-            if filter_invalids:
-                # Check bbox locations - if in invalid zone, mark invalid_flag=True
-                df = pd.read_csv(track_file)
-                invalid_flag = False
-                ### compute the mean bbox of whole tracklet  TODO: update this when we only have yolo-xyxy2 format box                    
-                if 'bbox_top2' in df.columns and 'bbox_top' not in df.columns:
-                    df = tlbr2fullsize(df, self.width, self.height)
-                    import sys; sys.exit(0)
-                box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
-                if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
-                    invalid_flag = True
-                    n_invalid += 1
-                    print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
-                    import sys; sys.exit(0)
-                ### set invalid_flag
-                tracklet[0].invalid_flag = invalid_flag
+            # if filter_invalids:  ### No need anymore -- we did it from online (check with Daniel)
+            #     # Check bbox locations - if in invalid zone, mark invalid_flag=True
+            #     df = pd.read_csv(track_file)
+            #     invalid_flag = False
+            #     ### compute the mean bbox of whole tracklet                 
+            #     if 'bbox_top2' in df.columns and 'bbox_top' not in df.columns:
+            #         df = tlbr2fullsize(df, self.width, self.height)
+            #         print("Converted bbox from yolo-xyxy2 to fullsize tlbr format for invalid zone checking.")
+            #     box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
+            #     if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
+            #         invalid_flag = True
+            #         n_invalid += 1
+            #         print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
+            #     ### set invalid_flag
+            #     tracklet[0].invalid_flag = invalid_flag
 
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
@@ -681,7 +684,7 @@ class TrackletManager:
 
                     gallery_features=self.gallery_features
                     gallery_labels=self.gallery_labels
-                    if self.known_labels is not None:
+                    if self.known_labels is not None and len(self.known_labels) > 0:
                         # get feature from known labels only
                         #indices
                         g_labels = [label for label in gallery_labels if label in self.known_labels]
@@ -1108,7 +1111,7 @@ class TrackletManager:
 
         
         # Re-ranking based on counts
-        if known_labels is not None:
+        if known_labels is not None and len(known_labels) > 0:
             if len(known_labels) == 1:
                 for sid in trackid2label_counts.keys():
                     trackid2idlabel[sid] = known_labels[0]
@@ -1121,7 +1124,7 @@ class TrackletManager:
         # self.analyze_stitching_results(trackid2idlabel=trackid2idlabel, start_time=start_time, end_time=end_time)
         
         ### final safe assign for 'invalid' labels - get stitched_id for 'invalid' labels -> assign to another valid label if only one valid label in known_labels
-        if known_labels is not None:
+        if known_labels is not None and len(known_labels) > 0:
             valid_labels = [label for label in known_labels if label != 'invalid']
             if len(valid_labels) == 1:
                 for sid in trackid2idlabel.keys():

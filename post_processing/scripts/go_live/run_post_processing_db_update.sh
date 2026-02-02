@@ -1,12 +1,10 @@
-cd /media/mu/zoo_vision/post_processing/tools
-
-
+cd ../../tools
 
 # Parse arguments
 DATE=${1:-$(date +"%Y%m%d")}
 shift
 CAMERA_IDS=("$@")
-RECORD_ROOT="/media/mu/test_tracks"
+RECORD_ROOT='/media/ElephantsWD/elephants/test/results'
 OUTPUT_DIR="${RECORD_ROOT}/demo"
 
 # Setup logging
@@ -24,11 +22,12 @@ cam1619_individuals=${1:-""}
 cam1718_individuals=${2:-""}
 shift 2
 
-DATE='20251115'  # test
+# DATE='20250202'  # test
 #### TODO -- height, width here for mkv tracking video version --- filter out invalid tracks from another room
 #### related to df-bbox-top2, bbox-left2, bbox-bottom2, bbox-right2 columns in tracks csv files
 python run_post_processing_full_night.py --date "$DATE" \
                                           --record-root "$RECORD_ROOT" \
+                                          --output_dir "$OUTPUT_DIR" \
                                           --height 600 --width 1060 \
                                           --cam1619-individuals $cam1619_individuals \
                                           --cam1718-individuals $cam1718_individuals \

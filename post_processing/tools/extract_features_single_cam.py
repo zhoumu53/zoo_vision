@@ -148,6 +148,17 @@ def process_behavior_for_track(
             df_tracks_behavior["quality_label"] = qua_preds
             df_tracks_behavior["quality_conf"] = qua_confs
 
+
+            ##### --- mismatch in length issue ---
+            if len(df_tracks_behavior) != len(df_tracks):
+                logger.warning(
+                    "Length mismatch between behavior preds (%d) and track CSV (%d). Attempting to align by timestamp.",
+                    len(df_tracks_behavior),
+                    len(df_tracks),
+                )
+                # 
+            df_tracks_behavior["timestamp"] = df_tracks["timestamp"][:len(df_tracks_behavior)].values   ### TODO not safe if lengths differ
+
             ### if beh_conf < 0.7 -> set to 'invalid'
             df_tracks_behavior["behavior_label"] = df_tracks_behavior.apply(
                 lambda row: row["behavior_label"] if float(row["behavior_conf"]) >= 0.7 else "00_invalid",

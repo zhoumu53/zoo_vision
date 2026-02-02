@@ -89,15 +89,15 @@ def tlbr2fullsize(df_tracks, img_width: int, img_height: int) -> tuple[float, fl
     df_tracks_converted = df_tracks.copy()
 
 
-    ### DEBUG 
-    import cv2
-    from pathlib import Path
-    video_path = Path('/mnt/camera_nas/ZAG-ELP-CAM-016/20250209PM/ZAG-ELP-CAM-016-20250209-180018-1739120418220-7.mp4')
-    cap = cv2.VideoCapture(str(video_path))
-    ret, frame = cap.read()
-    print(frame.shape)
-    img_width = frame.shape[1]
-    img_height = frame.shape[0]
+    # ### DEBUG 
+    # import cv2
+    # from pathlib import Path
+    # video_path = Path('/mnt/camera_nas/ZAG-ELP-CAM-016/20250209PM/ZAG-ELP-CAM-016-20250209-180018-1739120418220-7.mp4')
+    # cap = cv2.VideoCapture(str(video_path))
+    # ret, frame = cap.read()
+    # print(frame.shape)
+    # img_width = frame.shape[1]
+    # img_height = frame.shape[0]
 
     # if 'bbox_top2' in df_tracks.columns and 'bbox_top' not in df_tracks.columns:
     df_tracks['bbox_top'] = df_tracks['bbox_top2'] * img_height
@@ -105,16 +105,18 @@ def tlbr2fullsize(df_tracks, img_width: int, img_height: int) -> tuple[float, fl
     df_tracks['bbox_bottom'] = df_tracks['bbox_bottom2'] * img_height
     df_tracks['bbox_right'] = df_tracks['bbox_right2'] * img_width
 
-    if ret:
-        box = df_tracks.iloc[0]
-        print(" +++++++++++++++++++++++++++++++++++++++ ")
-        print(box)
-        x1, y1, x2, y2 = int(box['bbox_top']), int(box['bbox_left']), int(box['bbox_bottom']), int(box['bbox_right'])
-        cv2.rectangle(frame, (y1, x1), (y2, x2), (0, 255, 0), 2)  # green
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # red
-        cv2.imwrite('debug_box.jpg', frame)
-        print("debug_box.jpg")
-        import sys; sys.exit()
+    print("Converted bbox columns to full size.", df_tracks)
+
+    # if ret:
+    #     box = df_tracks.iloc[0]
+    #     print(" +++++++++++++++++++++++++++++++++++++++ ")
+    #     print(box)
+    #     x1, y1, x2, y2 = int(box['bbox_top']), int(box['bbox_left']), int(box['bbox_bottom']), int(box['bbox_right'])
+    #     cv2.rectangle(frame, (y1, x1), (y2, x2), (0, 255, 0), 2)  # green
+    #     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # red
+    #     cv2.imwrite('debug_box.jpg', frame)
+    #     print("debug_box.jpg")
+    #     import sys; sys.exit()
 
 
     return df_tracks_converted
@@ -189,11 +191,7 @@ def load_identity_labels_from_json(
         # Find the JSON file
         json_files = list(json_dir.glob(json_pattern))
         # print(f"Searching for JSON files in: {json_dir} with pattern: {json_pattern}")
-        if not json_files:
-            # Try alternative directory
-            json_dir = record_root / 'demo-' / f'zag_elp_cam_{cam_id}' / date_str
-            json_files = list(json_dir.glob(json_pattern))
-        
+
         if not json_files:
             print(f"Warning: No JSON file found for camera {cam_id} at {json_dir}")
             continue
@@ -270,6 +268,7 @@ def load_valid_tracks(record_root,
         for date in date_list:
             td = offline_track_dir(record_root, cam_id, date)
             csv_list = list_track_files(td)
+            csv_list = [f for f in csv_list if '_behavior' not in str(f)]  ### track csv only
             if cam_id not in all_track_csvs:
                 all_track_csvs[cam_id] = []
             all_track_csvs[cam_id].extend(csv_list)
@@ -279,26 +278,44 @@ def load_valid_tracks(record_root,
     for cam_id, track_files in all_track_csvs.items():
         for track_file in track_files:
             # print("Processing track file:", track_file)
-            timestamp = track_file.stem.split('_')[0].replace('T', ' ')
             date = track_file.parent.name
-            track_datetime = pd.to_datetime(f"{date} {timestamp}")
-            if track_datetime < start_datetime or track_datetime > end_datetime:
-                # print(f"Skipping track {track_datetime} outside datetime range.", start_datetime, end_datetime)
-                continue
-
-            if '_id_behavior' in str(track_file):
+            behavior_csv = track_file.with_name(track_file.stem + '_behavior.csv')
+            if not behavior_csv.exists():
                 continue
 
             track_data = extract_track_data(track_file)
             if track_data is None:
                 continue
+            behavior_data = extract_track_data(behavior_csv)
+            timestamp = track_data['timestamp'].iloc[0]
+            track_datetime = pd.to_datetime(timestamp)
+            # if track_datetime < start_datetime or track_datetime > end_datetime:
+            #     # print(f"Skipping track {track_datetime} outside datetime range.", start_datetime, end_datetime)
+            #     continue
+
+            if behavior_data is None or 'behavior_label' not in behavior_data.columns:
+                continue
+
+            # merge track_data and behavior_data on frame_id
+            ### check if length matches
+            if len(track_data) != len(behavior_data):
+                print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
+                print("TODO: continue -- now we force merge track data and behavior data for testing")
+                # continue
+            # merge on 'timestamp' column
+
+            if 'timestamp' not in behavior_data.columns:
+                ### force concat --- remove it if we fix the length mismatch issue
+                track_data = pd.concat([track_data.reset_index(drop=True), behavior_data.reset_index(drop=True)], axis=1)
+            else:
+                track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
+
             valid_count += 1
 
             track_data['track_filename'] = track_file.name.replace('.csv', '')
             track_data['track_csv_path'] = str(track_file)
             track_data['camera_id'] = cam_id
             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
-    
     # sort by timestamp
     valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
             
@@ -319,10 +336,11 @@ def extract_track_data(csv_path: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     if df.empty:
         return None
-    # filter short tracks
-    df = filter_short_tracks(df)
-    if df is None:
-        return None
+    if 'timestamp' in df.columns:
+        # filter short tracks
+        df = filter_short_tracks(df)
+        if df is None:
+            return None
     
     # if quality all bad quality_label == 'bad', return None
     if 'quality_label' in df.columns:
