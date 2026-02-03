@@ -26,7 +26,7 @@ echo "Output dir: $OUTPUT_DIR"
 
 LOG_DIR="$RECORD_ROOT/logs/feature_extraction"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/extraction_${DATE}_$(date +"%Y%m%d_%H%M%S").log"
+LOG_FILE="$LOG_DIR/extraction_night_${DATE}_log_at_$(date +"%Y%m%d_%H%M%S").log"
 
 for CAM_ID in "${CAMERA_IDS[@]}"; do
   echo "=== Extracting features for date: $DATE, camera: $CAM_ID ==="
@@ -34,6 +34,7 @@ for CAM_ID in "${CAMERA_IDS[@]}"; do
     --date "$DATE" \
     --record-root "$RECORD_ROOT" \
     --cam-id "$CAM_ID" \
+    --run-night \
     --override processing.overwrite_reid=false \
                processing.overwrite_behavior=false >> "$LOG_FILE"
 done
