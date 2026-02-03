@@ -23,7 +23,7 @@ echo "Output dir: $OUTPUT_DIR"
 # Setup logging
 LOG_DIR="${RECORD_ROOT}/logs/post_processing"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/post_processing_${DATE}_$(date +"%Y%m%d_%H%M%S").log"
+LOG_FILE="$LOG_DIR/post_processing_night_${DATE}_log_at_$(date +"%Y%m%d_%H%M%S").log"
 
 # Parse individual assignments (optional)  -- best performance if known individuals provided
 cam1619_individuals="${1:-}"
