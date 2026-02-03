@@ -91,8 +91,12 @@ CameraPipeline::CameraPipeline(const rclcpp::NodeOptions &options, int nameIndex
     : rclcpp::Node(std::format("pipeline_{}", nameIndex), options),
       cameraName_{declare_parameter<std::string>("camera_name")}, config_{config}, calibration_{cameraName_},
       cudaStream_{}, trackMatcher_{config_.rootPathImprove / "tracks" / cameraName_},
-      segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_},
-      trackCountRecorder_(cameraName_), meanFps_{30}, onImageProfileTic_{"CameraPipline::tic"} {
+      segmenter_{makeSegmenter(nameIndex, cameraName_, cudaStream_)}, locator_{calibration_}, meanFps_{30},
+      onImageProfileTic_{"CameraPipline::tic"} {
+
+  if (config_.recordTracks) {
+    trackCountRecorder_.emplace(cameraName_);
+  }
 
   rateLimiter_ = gCameraLimiters[cameraName_].get();
 
@@ -249,7 +253,9 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
   }
 
   // Record number of tracks
-  trackCountRecorder_.recordCount(sysTime, detectionMsg.detection_count);
+  if (config_.recordTracks) {
+    trackCountRecorder_->recordCount(sysTime, detectionMsg.detection_count);
+  }
 
   ///////////////////////////////////////////////////////////////////////////////////////////////
   // Localize in world
@@ -289,7 +295,7 @@ void CameraPipeline::onImage(std::shared_ptr<zoo_msgs::msg::Image12m> imageMsgPt
       }
       if (config_.recordTracks) {
         // moveTrackImagesToIdentityPath(track);
-        track.writer.close();
+        track.writer->close();
       }
       trackUpdateStats.closedTracks.clear();
     }
@@ -421,7 +427,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, cons
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
 
-    track.writer.writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx), config_.detectionImageSize);
+    track.writer->writeFrame(frameId, patchesRgb[idx], worldPositions.col(idx), config_.detectionImageSize);
   }
 }
 

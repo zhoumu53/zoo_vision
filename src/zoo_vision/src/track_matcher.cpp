@@ -13,12 +13,18 @@
 // zoo_vision. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zoo_vision/track_matcher.hpp"
+#include "zoo_vision/utils.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <ranges>
 
 namespace zoo {
 
-TrackMatcher::TrackMatcher(const std::filesystem::path &rootCameraPath) : rootCameraPath_{rootCameraPath} {}
+TrackMatcher::TrackMatcher(const std::filesystem::path &rootCameraPath) : rootCameraPath_{rootCameraPath} {
+  const auto config = getConfig();
+  recordTracks_ = config["record_tracks"].get<bool>();
+}
 
 TrackData &TrackMatcher::getTrackData(TrackId id) {
   auto it = tracks_.find(id);
@@ -60,7 +66,10 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, float32_t fps, std:
     auto it = tracks_.find(output->getTrackId());
     if (it == tracks_.end()) {
       // Not present in our table, add
-      auto newTrack = std::make_unique<TrackData>(std::move(output), now, rootCameraPath_, fps);
+      auto newTrack = std::make_unique<TrackData>(std::move(output), now);
+      if (recordTracks_) {
+        newTrack->writer.emplace(rootCameraPath_, *newTrack, fps);
+      }
       result.newTracks.push_back(newTrack.get());
       tracks_.insert({newTrack->id, std::move(newTrack)});
     } else {
