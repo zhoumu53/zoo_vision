@@ -32,8 +32,9 @@ from post_processing.tools.run_reid_feature_extraction import (
 )
 
 from post_processing.core.file_manager import (
-    list_track_files_all_cams,
+    list_track_files,
     get_track_dir,
+    get_track_files_by_timestamp,
 )
 
 from post_processing.core.behavior_inference import BehaviorInference
@@ -237,6 +238,8 @@ def parse_args() -> argparse.Namespace:
         help="Path to pipeline configuration YAML file",
     )
     parser.add_argument("--date", required=True, help="Date to process (YYYYMMDD or YYYY-MM-DD)")
+    parser.add_argument("--run-night", action="store_true", help="Whether to run night videos")
+    # parser.set_defaults(run_night=False)
     parser.add_argument("--cam-id", type=str, default=None, help="Camera ID to process (overrides config)")
     parser.add_argument("--record-root", type=Path, default=None, help="Root directory for records (overrides config)")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size for inference (overrides config)")
@@ -322,15 +325,33 @@ def main():
     
     camera_ids = [cam_id]
     
-    all_track_files = list_track_files_all_cams(
-        record_root=config.data.record_root,
-        camera_ids=camera_ids,
-        date=args.date,
-        logger=logger,
-    )
+    # if run-night --> process data from date (1800 to 0800 next day)
+    if args.run_night:
+        start_dt = pd.Timestamp(args.date + " 18:00:00")
+        next_day = (pd.Timestamp(args.date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        end_dt = pd.Timestamp(next_day + " 08:00:00")
+        try:
+            full_track_files = get_track_files_by_timestamp(
+                record_root=args.record_root,
+                camera_id=cam_id,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
+        except Exception as exc:
+            logger.error("Failed to get track files for night processing: %s", exc)
+            sys.exit(1)
+    else:
+        full_track_files = list_track_files(
+            get_track_dir(args.record_root, cam_id, args.date),
+        )
 
-    full_track_files = [tf for cam_id in camera_ids for tf in all_track_files[cam_id]]
-    logger.info("Found %d track files for post-processing.", len(full_track_files))
+    if not full_track_files or len(full_track_files) == 0:
+        logger.warning("No track files found for night processing between %s and %s for camera %s.", start_dt, end_dt, cam_id)
+        logger.warning("Please ensure that tracks are available in record_root: %s", get_track_dir(args.record_root, cam_id, args.date))
+        logger.info("Exiting post-processing.")
+        sys.exit(0)
+    else:
+        logger.info("Found %d track files for night processing between %s and %s.", len(full_track_files), start_dt, end_dt)
 
     reid_model = load_reid(
         config_path=config.models.reid_config,

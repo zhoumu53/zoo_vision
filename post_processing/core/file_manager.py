@@ -149,3 +149,44 @@ def list_track_files_all_cams(
         td = offline_track_dir(record_root, cam_id, date)
         all_track_files[cam_id] = list_track_files(td, logger=logger)
     return all_track_files
+
+
+def get_track_files_by_timestamp(
+    record_root: Path,
+    camera_id: str,
+    start_dt: pd.Timestamp,
+    end_dt: pd.Timestamp,
+) -> List[Path]:
+    """Get track files within the specified timestamp range."""
+    dates = pd.date_range(start=start_dt.normalize(), end=end_dt.normalize(), freq="D")
+    
+    files = []
+    for date in dates:
+        track_dir = get_track_dir(record_root, camera_id, date.strftime("%Y-%m-%d"))
+        if not track_dir.exists():
+            continue
+        
+        track_files = list_track_files(track_dir)
+        
+        for tf in track_files:
+            start_time_str = tf.stem.split("_")[0].split("T")[1]
+            start_time = pd.Timestamp(f"{date.strftime('%Y-%m-%d')} {start_time_str}")
+            if start_dt <= start_time <= end_dt:
+                files.append(tf)
+        
+    return files
+    
+    
+if __name__ == "__main__":
+    
+    
+    files = get_track_files_by_timestamp(
+        record_root=Path("/media/ElephantsWD/elephants/xmas/"),
+        camera_id="016",
+        start_dt=pd.Timestamp("2025-11-30 18:00:00"),
+        end_dt=pd.Timestamp("2025-12-01 08:00:00"),
+    )
+    
+    print("Found files:")
+    for f in files:
+        print(f)
