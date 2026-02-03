@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd ../../..
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# PROJECT_ROOT='/home/dherrera/git/zoo_vision'  ## TEST
+cd "$PROJECT_ROOT"
+echo "Project root: $PROJECT_ROOT"
+source "$PROJECT_ROOT/env/bin/activate"
 
 # Parse arguments
 DATE=${1:-$(date -d "yesterday" +"%Y%m%d")}   ## default to yesterday's date (last night)
+# DATE='2026-02-01'  ## TEST
 [[ $# -gt 0 ]] && shift
 
-ONLINE_CONFIG_FILE='data/config.json'
+ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
 ## LOAD RECORD ROOT FROM CONFIG FILE
 
 # Validate config exists
@@ -15,6 +21,7 @@ ONLINE_CONFIG_FILE='data/config.json'
 
 # Read values (adjust JSON paths to your file)
 RECORD_ROOT="$(jq -er '.record_root' "$ONLINE_CONFIG_FILE")"
+# RECORD_ROOT='/media/ElephantsWD/elephants/test/results'  ## TEST
 OUTPUT_DIR="$(jq -er '.output_dir // (.record_root + "/demo")' "$ONLINE_CONFIG_FILE")"
 # echo
 echo "Record root: $RECORD_ROOT"
@@ -36,7 +43,7 @@ elif [[ $# -eq 1 ]]; then
 fi
 
 ######### SAVE TRACKS TO JSON ###########
-python post_processing/tools/run_post_processing_full_night.py --date "$DATE" \
+python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --date "$DATE" \
                                           --record-root "$RECORD_ROOT" \
                                           --output_dir "$OUTPUT_DIR" \
                                           --height 600 --width 1060 \
@@ -53,7 +60,7 @@ next_day=$(date -d "$DATE +1 day" +"%Y%m%d")
 dates+=("$next_day")
 
 echo "Updating DB for dates: ${dates[*]}"
-python db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
+python $PROJECT_ROOT/db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
     --start_timestamp 18 \
     --end_timestamp 8 \
     --dates "${dates[@]}" &>> "$LOG_FILE"
