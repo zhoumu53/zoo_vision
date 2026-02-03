@@ -281,6 +281,9 @@ def main(args):
                 total=len(track_files), desc="Processing tracks", unit="track"
             )
             for track_file in pbar2(track_files):
+                # skip behavior files
+                if '_behavior' in track_file.stem:
+                    continue
 
                 individual = trackfile2labels.get(track_file.stem, None)
                 # fix typos

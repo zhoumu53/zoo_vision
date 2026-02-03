@@ -71,14 +71,17 @@ def process_behavior_for_track(
         return None
 
     df_tracks = pd.read_csv(csv_path)
+    if df_tracks.empty:
+        logger.warning("Empty CSV file for track: %s", csv_path)
+        return None
     ### only read columns needed
     columns_drop = ['behavior_label','behavior_conf','identity_label','quality_label','quality_conf']
-    # remove columns if exist
+    # remove columns if exist -- from old processing
     for col in columns_drop:
         if col in df_tracks.columns:
             df_tracks = df_tracks.drop(columns=[col])
 
-    frame_indices = []  ###TODO #get_good_frame_indices(df_tracks)
+    frame_indices = []
         
     # Behavior classification, saved to CSV (frame level)
     out_csv_path = csv_path.with_name(csv_path.stem + '_behavior.csv') if out_csv_path is None else out_csv_path
@@ -89,15 +92,7 @@ def process_behavior_for_track(
             logger.info("Behavior CSV already exists and overwrite is False: %s", out_csv_path)
             # load csv - get good quality frame indices
             df_existing = pd.read_csv(out_csv_path)
-            # good_quality_indices = df_existing.index[
-            #         (df_existing["quality_label"] == 'good') &
-            #         (df_existing["behavior_label"] != '00_invalid')
-            #     ].tolist()
-            # if sample_rate == 1:
-            #     frame_indices = good_quality_indices
-            # else:
-            #     frame_indices = good_quality_indices[::int(1/sample_rate)]
-
+            
             ### sample from standing frames & good quality & high confidence - behavior_conf >= 0.7
             ### because currently in gallery-set we don't have enough sleeping frames for reid matching
             standing_indices = df_existing.index[
@@ -322,9 +317,7 @@ def main():
     # Get camera_id from args or use first camera from config
     cam_id = args.cam_id if args.cam_id else config.cameras.ids[0]
     logger.info("Processing camera: %s", cam_id)
-    
-    camera_ids = [cam_id]
-    
+        
     # if run-night --> process data from date (1800 to 0800 next day)
     if args.run_night:
         start_dt = pd.Timestamp(args.date + " 18:00:00")
@@ -336,6 +329,7 @@ def main():
                 camera_id=cam_id,
                 start_dt=start_dt,
                 end_dt=end_dt,
+                logger=logger,
             )
         except Exception as exc:
             logger.error("Failed to get track files for night processing: %s", exc)
@@ -376,6 +370,10 @@ def main():
     for track_file in tqdm(full_track_files, desc="Processing track files"):
         if '_behavior' in str(track_file):
             continue
+        
+        ### skip - not full track files
+        if 'part_' in str(track_file):
+            continue
 
         track_video_file = track_file.with_suffix('.mkv')
         if not track_video_file.exists():
@@ -392,6 +390,10 @@ def main():
             logger=logger,
             sample_rate=config.processing.sample_rate,
         )
+        
+        ### if frame_indices is None, skip reid processing
+        if frame_indices is None:  ### empty tracks (but if frame_indices is empty list, still process -- for stitching)
+            continue
 
         process_reid_for_track(
             track_video_file=track_video_file,
@@ -402,7 +404,7 @@ def main():
             device=config.processing.device,
             overwrite_reid=config.processing.overwrite_reid,
             logger=logger,
-            frame_indices=frame_indices,
+            frame_indices=frame_indices,   ## good frame indices from behavior
         )
     endtime = datetime.now()
     logger.info("Post-processing completed in %s", str(endtime - starttime))

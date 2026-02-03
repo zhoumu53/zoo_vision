@@ -120,6 +120,9 @@ def list_track_files(track_dir: Path, logger: Optional[logging.Logger] = None) -
             logger.warning("Track directory does not exist: %s", track_dir)
         return []
     track_files = sorted(track_dir.glob("*.csv"))
+    # Filter out part files and behavior files
+    track_files = [f for f in track_files if "part_" not in f.name and "behavior.csv" not in f.name]
+    
     if logger:
         logger.info("Found %d track files in %s", len(track_files), track_dir)
     return track_files
@@ -156,6 +159,7 @@ def get_track_files_by_timestamp(
     camera_id: str,
     start_dt: pd.Timestamp,
     end_dt: pd.Timestamp,
+    logger: Optional[logging.Logger] = None,
 ) -> List[Path]:
     """Get track files within the specified timestamp range."""
     dates = pd.date_range(start=start_dt.normalize(), end=end_dt.normalize(), freq="D")
@@ -166,7 +170,7 @@ def get_track_files_by_timestamp(
         if not track_dir.exists():
             continue
         
-        track_files = list_track_files(track_dir)
+        track_files = list_track_files(track_dir, logger=logger)
         
         for tf in track_files:
             start_time_str = tf.stem.split("_")[0].split("T")[1]
