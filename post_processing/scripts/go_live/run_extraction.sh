@@ -1,40 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
 
-cd /media/mu/zoo_vision/post_processing/tools 
+cd ../../..   #### zoo_vision root
 
+DATE="${1:-$(date -d "yesterday" +%Y%m%d)}"
+[[ $# -gt 0 ]] && shift
 
-# Parse arguments
-DATE=${1:-$(date +"%Y%m%d")}   ## default to today
-shift
 CAMERA_IDS=("$@")
-# RECORD_ROOT="/media/ElephantsWD/elephants/long-term-data"
-RECORD_ROOT='/media/ElephantsWD/elephants/test/results'
-OUTPUT_DIR="${RECORD_ROOT}/demo"
+if [[ ${#CAMERA_IDS[@]} -eq 0 ]]; then
+  CAMERA_IDS=(016 017 018 019)
+fi
 
-# Setup logging
-LOG_DIR=$RECORD_ROOT/logs/test
+ONLINE_CONFIG_FILE='data/config.json'
+## LOAD RECORD ROOT FROM CONFIG FILE
+
+# Validate config exists
+[[ -f "$ONLINE_CONFIG_FILE" ]] || { echo "Config not found: $ONLINE_CONFIG_FILE" >&2; exit 2; }
+
+# Read values (adjust JSON paths to your file)
+RECORD_ROOT="$(jq -er '.record_root' "$ONLINE_CONFIG_FILE")"
+OUTPUT_DIR="$(jq -er '.output_dir // (.record_root + "/demo")' "$ONLINE_CONFIG_FILE")"
+# echo
+echo "Record root: $RECORD_ROOT"
+echo "Output dir: $OUTPUT_DIR"
+
+LOG_DIR="$RECORD_ROOT/logs/feature_extraction"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/extraction_${DATE}_$(date +"%Y%m%d_%H%M%S").log"
 
-CAMERA_IDS=(${CAMERA_IDS[@]:-016 017 018 019})
-# CAMERA_IDS=(${CAMERA_IDS[@]:-016})
-# CAM_ID="${CAMERA_IDS[0]}"
-
-##### overwrite_reid, overwrite_behavior= False: only process new tracks #####
-
-SAMPLE_RATE=1 #### SAVE EVERY FRAME FOR GOOD REID QUALITY -
-# DATE='20251115'
-
-for CAM_ID in "${CAMERA_IDS[@]}"; 
-do
-    for date in "$DATE";
-    do
-        echo "=== Extracting features for date: $date, camera: $CAM_ID ==="
-        python3 extract_features_single_cam.py --config ../core/config/configs.yaml \
-                                                --date "$date" \
-                                                --record-root "$RECORD_ROOT" \
-                                                --cam-id "$CAM_ID" \
-                                                --override processing.overwrite_reid=true \
-                                                        processing.overwrite_behavior=true &>> "$LOG_FILE"
-
-    done
+for CAM_ID in "${CAMERA_IDS[@]}"; do
+  echo "=== Extracting features for date: $DATE, camera: $CAM_ID ==="
+  python3 post_processing/tools/extract_features_single_cam.py --config post_processing/core/config/configs.yaml \
+    --date "$DATE" \
+    --record-root "$RECORD_ROOT" \
+    --cam-id "$CAM_ID" \
+    --override processing.overwrite_reid=false \
+               processing.overwrite_behavior=false >> "$LOG_FILE"
 done
