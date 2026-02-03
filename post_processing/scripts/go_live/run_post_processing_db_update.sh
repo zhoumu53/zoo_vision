@@ -1,48 +1,59 @@
-cd ../../tools
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd ../../..
 
 # Parse arguments
-DATE=${1:-$(date +"%Y%m%d")}
-shift
-CAMERA_IDS=("$@")
-RECORD_ROOT='/media/ElephantsWD/elephants/test/results'
-OUTPUT_DIR="${RECORD_ROOT}/demo"
+DATE=${1:-$(date -d "yesterday" +"%Y%m%d")}   ## default to yesterday's date (last night)
+[[ $# -gt 0 ]] && shift
+
+ONLINE_CONFIG_FILE='data/config.json'
+## LOAD RECORD ROOT FROM CONFIG FILE
+
+# Validate config exists
+[[ -f "$ONLINE_CONFIG_FILE" ]] || { echo "Config not found: $ONLINE_CONFIG_FILE" >&2; exit 2; }
+
+# Read values (adjust JSON paths to your file)
+RECORD_ROOT="$(jq -er '.record_root' "$ONLINE_CONFIG_FILE")"
+OUTPUT_DIR="$(jq -er '.output_dir // (.record_root + "/demo")' "$ONLINE_CONFIG_FILE")"
+# echo
+echo "Record root: $RECORD_ROOT"
+echo "Output dir: $OUTPUT_DIR"
 
 # Setup logging
 LOG_DIR="${RECORD_ROOT}/logs/post_processing"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/post_processing_${DATE}_$(date +"%Y%m%d_%H%M%S").log"
 
-CAMERA_IDS=(${CAMERA_IDS[@]:-016 017 018 019})
-CAM_ID="${CAMERA_IDS[0]}"
-
-#### LET IT RUN EVERY MORNING
-
 # Parse individual assignments (optional)  -- best performance if known individuals provided
-cam1619_individuals=${1:-""}
-cam1718_individuals=${2:-""}
-shift 2
+cam1619_individuals="${1:-}"
+cam1718_individuals="${2:-}"
 
-# DATE='20250202'  # test
-#### TODO -- height, width here for mkv tracking video version --- filter out invalid tracks from another room
-#### related to df-bbox-top2, bbox-left2, bbox-bottom2, bbox-right2 columns in tracks csv files
-python run_post_processing_full_night.py --date "$DATE" \
+if [[ $# -ge 2 ]]; then
+  shift 2
+elif [[ $# -eq 1 ]]; then
+  shift 1
+fi
+
+######### SAVE TRACKS TO JSON ###########
+python post_processing/tools/run_post_processing_full_night.py --date "$DATE" \
                                           --record-root "$RECORD_ROOT" \
                                           --output_dir "$OUTPUT_DIR" \
                                           --height 600 --width 1060 \
-                                          --cam1619-individuals $cam1619_individuals \
-                                          --cam1718-individuals $cam1718_individuals \
+                                          --cam1619-individuals "$cam1619_individuals" \
+                                          --cam1718-individuals "$cam1718_individuals" \
                                           --start_timestamp 18 \
                                           --end_timestamp 8 \
-                                          --run-stitching \
+                                          --run-stitching &>> "$LOG_FILE"
 
 
+##### UPDATE DB FROM TRACKS ###########
+dates=("$DATE")
+next_day=$(date -d "$DATE +1 day" +"%Y%m%d")
+dates+=("$next_day")
 
-# dates=("$DATE")
-# next_day=$(date -d "$DATE +1 day" +"%Y%m%d")
-# dates+=("$next_day")
-
-# cd /media/mu/zoo_vision/db
-# python data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
-#     --start_timestamp 18 \
-#     --end_timestamp 8 \
-#     --dates "${dates[@]}"
+echo "Updating DB for dates: ${dates[*]}"
+python db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
+    --start_timestamp 18 \
+    --end_timestamp 8 \
+    --dates "${dates[@]}" &>> "$LOG_FILE"
