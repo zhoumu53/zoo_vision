@@ -193,8 +193,8 @@ void VideoDBLoader::loadNextVideo(const std::string &cameraName, CameraData &cam
 }
 
 void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
-  image = cv::Mat3b{};
   if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
+    image = cv::Mat3b{};
     return;
   }
 
@@ -211,7 +211,8 @@ void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
   }
 
   // If we didn't get any image we are probably at the end of the video
-  if (image.empty()) {
+  if (!ok) {
+    image = cv::Mat3b{};
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF",
                          cameraData.currentVideo_->videoFile.c_str());
     cameraData.videoStartTime_.reset();
@@ -303,6 +304,7 @@ void VideoDBLoader::onTimer() {
     }
     {
       ProfileSection s{"publish"};
+      CHECK_PTR_EQ(&msg->data[0], image.data);
       cameraData.publisher_->publish(std::move(msg));
       cameraData.rateLimiter->addToQueue();
     }
