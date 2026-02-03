@@ -46,7 +46,7 @@ struct CameraPipelineConfig {
   std::filesystem::path rootPathImprove;
 
   float32_t defaultFps;
-  
+
   bool recordDetectionLoss;
   bool recordTracks;
   bool recordKeyframes;
@@ -93,7 +93,7 @@ private:
   std::unique_ptr<ISegmenter> segmenter_;
   WorldLocator locator_;
   ImageEmbedder embedder_;
-  TrackCountRecorder trackCountRecorder_;
+  std::optional<TrackCountRecorder> trackCountRecorder_;
 
   std::optional<SysTime> lastFrameTime_;
   BufferedStats meanFps_;

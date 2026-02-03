@@ -35,6 +35,12 @@ using float32_t = float;
   if (!(a != b)) {                                                                                                     \
     throw ZooVisionError(std::format("Check failed: " #a "!=" #b ", with \n  " #a "={}\n  " #b "={}", a, b));          \
   }
+#define CHECK_PTR_EQ(a, b)                                                                                             \
+  if (!(a == b)) {                                                                                                     \
+    const auto ap = reinterpret_cast<std::uintptr_t>(a);                                                               \
+    const auto bp = reinterpret_cast<std::uintptr_t>(b);                                                               \
+    throw ZooVisionError(std::format("Check failed: " #a "==" #b ", with \n  " #a "={}\n  " #b "={}", ap, bp));        \
+  }
 
 #define CHECK_NOT_NULL(a)                                                                                              \
   if (!(a != nullptr)) {                                                                                               \

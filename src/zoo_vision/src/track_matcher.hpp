@@ -60,17 +60,15 @@ struct TrackData {
   TIdentity selectedIdentity = INVALID_IDENTITY;
   TBehaviour selectedBehaviour = INVALID_BEHAVIOUR;
 
-  TrackWriter writer;
+  std::optional<TrackWriter> writer;
 
   std::vector<time_point> timestampHistory;
   std::vector<AlignedBox2f> boxHistory;
   std::vector<float32_t> scoreHistory;
 
-  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_,
-            const std::filesystem::path &rootTracksPath, float32_t fps)
+  TrackData(std::shared_ptr<byte_track::STrack> byteTrack_, time_point startTime_)
       : byteTrack{std::move(byteTrack_)}, id{static_cast<TrackId>(byteTrack->getTrackId())}, startTime{startTime_},
-        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()},
-        writer{rootTracksPath, *this, fps} {
+        lastObservation{startTime_}, box{eigenFromByteTrack(byteTrack->getRect())}, score{byteTrack->getScore()} {
     timestampHistory.push_back(startTime_);
     boxHistory.push_back(box);
     scoreHistory.push_back(score);
@@ -113,6 +111,7 @@ public:
   std::unordered_map<TrackId, std::unique_ptr<TrackData>>::const_iterator end() const { return tracks_.end(); }
 
 private:
+  bool recordTracks_;
   std::filesystem::path rootCameraPath_;
   byte_track::BYTETracker byteTracker_;
   std::unordered_map<TrackId, std::unique_ptr<TrackData>> tracks_;
