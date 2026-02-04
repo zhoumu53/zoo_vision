@@ -54,6 +54,9 @@ def load_identity_labels_from_json(
     
     # Format date string (assuming date is in format "YYYY-MM-DD")
     date_str = date
+    # add '-' to date string if not present
+    if '-' not in date_str:
+        date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     
     # Format time strings from timestamps
     start_time_str = start_datetime.strftime("%H%M%S")

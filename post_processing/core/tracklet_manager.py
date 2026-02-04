@@ -649,11 +649,12 @@ class TrackletManager:
             ## skip tracklet in a short time period - less than 1 min
             tracklet_duration = (end_dt - start_dt).total_seconds()
             if tracklet_duration < 60:
-                skip_tracklet = True
-                # print(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
+                self.logger.info(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
+                continue 
             
             if skip_tracklet:
-                print(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
+                self.logger.info(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
+                # import sys; sys.exit(0)
                 continue
 
             # if filter_invalids:  ### No need anymore -- we did it from online (check with Daniel)
@@ -1154,11 +1155,11 @@ class TrackletManager:
         
         cam_tracklets = [t for t in self.tracklets if t.camera_id == self.camera_id and t.invalid_flag==False]
         if not cam_tracklets:
-            print(
+            self.logger.info(
                 f"[bidirectional] No tracklets found for camera {self.camera_id}."
             )
             return
-        print("Total tracklets for camera", self.camera_id, ":", len(cam_tracklets))
+        self.logger.info(f"Total tracklets for camera {self.camera_id}: {len(cam_tracklets)}")
         stitch_tracklets_bidirectional_gallery_strict(
             cam_tracklets,
             max_gap_frames=max_gap_frames, 
@@ -1174,7 +1175,7 @@ class TrackletManager:
 
 
         num_ids = len(set(t.stitched_id for t in cam_tracklets))
-        print(
+        self.logger.info(
             f"[bidirectional] camera {self.camera_id}: "
             f"{len(cam_tracklets)} tracklets -> {num_ids} stitched_ids "
             f"(max_gap_frames={max_gap_frames}, local_th={local_sim_th}, "
@@ -1182,7 +1183,7 @@ class TrackletManager:
         )
 
         num_ids = len(set(t.stitched_id for t in cam_tracklets))
-        print(
+        self.logger.info(
             f"[bidirectional] camera {self.camera_id}: "
             f"{len(cam_tracklets)} tracklets -> {num_ids} stitched_ids "
             f"(max_gap_frames={max_gap_frames}, local_th={local_sim_th}, "
@@ -1204,15 +1205,15 @@ class TrackletManager:
         from collections import Counter
         
         if not hasattr(self, 'stitched_map') or not self.stitched_map:
-            print("No stitched_map available. Please run save_stitched_tracklets first.")
+            self.logger.info("No stitched_map available. Please run save_stitched_tracklets first.")
             return
         
-        print("\n" + "="*80)
-        print("STITCHING ANALYSIS RESULTS")
+        self.logger.info("\n" + "="*80)
+        self.logger.info("STITCHING ANALYSIS RESULTS")
         if start_time or end_time:
             time_filter_str = f" (Time filter: {start_time or 'start'} to {end_time or 'end'})"
-            print(time_filter_str)
-        print("="*80)
+            self.logger.info(time_filter_str)
+        self.logger.info("="*80)
         
         # Sort keys, putting "unassigned" at the end
         sorted_keys = sorted([k for k in self.stitched_map.keys() if k != "unassigned"])

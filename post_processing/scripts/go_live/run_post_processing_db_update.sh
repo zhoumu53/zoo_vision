@@ -13,7 +13,8 @@ DATE=${1:-$(date -d "yesterday" +"%Y%m%d")}   ## default to yesterday's date (la
 # DATE='2026-02-01'  ## TEST
 [[ $# -gt 0 ]] && shift
 
-ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
+# ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
+ONLINE_CONFIG_FILE="/home/dherrera/git/zoo_vision/data/config.json"
 ## LOAD RECORD ROOT FROM CONFIG FILE
 
 # Validate config exists
@@ -51,7 +52,7 @@ python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --d
                                           --cam1718-individuals "$cam1718_individuals" \
                                           --start_timestamp 18 \
                                           --end_timestamp 8 \
-                                          --run-stitching &>> "$LOG_FILE"
+                                          --run-stitching #&>> "$LOG_FILE"
 
 
 ##### UPDATE DB FROM TRACKS ###########
