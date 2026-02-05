@@ -334,17 +334,6 @@ class InvalidZoneHandler:
         # print("Checking bbox center point", center_point, "for invalid zones in camera", camera_id, "with frame size", height, "x", width)
         scaled_polygons = self.get_scaled_polygons(polygons, camera_id, height, width)
         
-        # # ### DEBUG -- plot invalid zones + box for debugging
-        # frame = self.plot_invalid_zones(np.zeros((height, width, 3), dtype=np.uint8), scaled_polygons, camera_id, height=height, width=width)
-        # # plot box on frame
-        # if frame is not None and frame.size != 0:
-        #     cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (255, 0, 0), 2)
-        #     cv2.circle(frame, center_point, 5, (0, 255, 0), -1)
-        #     cv2.imwrite(f"invalid_zone_debug_cam{camera_id}.jpg", frame)
-        #     print(f"Saved debug image with invalid zones and bbox to invalid_zone_debug_cam{camera_id}.jpg")
-            
-        # import sys; sys.exit(0)
-        
         # Check if center point is inside any polygon
         for scaled_polygon in scaled_polygons:
             result = cv2.pointPolygonTest(scaled_polygon, center_point, False)
@@ -497,7 +486,7 @@ class TrackletManager:
 
         self.invalid_zone_handler = InvalidZoneHandler(invalid_zones_dir, 
                                                        self.logger)
-        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else None
+        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else known_labels
         if self.known_labels is not None and len(self.known_labels) > 0:
             self.logger.info("Loaded known labels for camera %s: %s", self.camera_id, self.known_labels)
 
@@ -568,7 +557,46 @@ class TrackletManager:
         # Return True to skip, False to keep
         return not in_range
         
+    def vote_with_gallery_features(
+        self,
+        feature_path: Path,
+        behavior_csv: Path
+    ):
+        features, frame_ids = load_embedding(feature_path)[0:2]
+        ## load features from good-quality indices only - if all 'bad' - 'invalid'
+        voted_track_label = 'invalid'
+        if not behavior_csv.exists():
+            return voted_track_label
+        
+        df_behavior = pd.read_csv(behavior_csv)
+        # now voting based on good quality frames + high confidence behavior + no 'standing' 
+        good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
+                                            & (df_behavior['behavior_label'] == '01_standing')
+                                            & (df_behavior['behavior_label'] != '00_invalid')
+                                            & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
+        if len(good_indices) == 0:  ### all bad quality frames -- no voting
+            voted_track_label = "invalid"
+        ### feature_indices for reid voting - pick the features with good quality
+        feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
+        features = features[feature_indices]
+        ### previous voted label -- test
+        # prev_vote = load_feature_npz(tracklet[0].feature_path).get('voted_labels', 'unknown')
 
+        if len(features) != 0:
+            gallery_features=self.gallery_features
+            gallery_labels=self.gallery_labels
+            matched_labels = match_to_gallery(features, 
+                                            gallery_features, 
+                                            gallery_labels=gallery_labels)[-1]
+            
+            voted_results = vote_identity_from_matched_labels(
+                matched_labels=np.array(matched_labels),
+                known_labels= self.known_labels,
+                sample_rate=1,
+                return_details=True
+            )
+            voted_track_label = voted_results['voted_label']
+        return voted_track_label
 
     def vote_identity_label_old(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
         
@@ -618,6 +646,9 @@ class TrackletManager:
         for track_file in track_files:
 
             track_filename = track_file.stem
+            if 'part_' in track_filename:
+                # skip partial track files from online
+                continue
 
             try:
                 s_time, raw_track_id = track_filename.split("T")[1].split("_ID")
@@ -629,9 +660,10 @@ class TrackletManager:
                 # skip invalid tracks
                 continue
             
+            behavior_csv=track_file.with_name(track_file.stem + "_behavior.csv")
             tracklet = init_tracklets_from_online_results(
                 track_csv=str(track_file),
-                behavior_csv=track_file.with_name(track_file.stem + "_behavior.csv"),
+                behavior_csv=behavior_csv if behavior_csv.exists() else None,
                 camera_id=camera_id
             )
             
@@ -649,66 +681,70 @@ class TrackletManager:
             ## skip tracklet in a short time period - less than 1 min
             tracklet_duration = (end_dt - start_dt).total_seconds()
             if tracklet_duration < 60:
-                self.logger.info(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
+                # self.logger.info(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
                 continue 
             
             if skip_tracklet:
-                self.logger.info(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
-                # import sys; sys.exit(0)
+                # self.logger.info(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
                 continue
-
-            # if filter_invalids:  ### No need anymore -- we did it from online (check with Daniel)
-            #     # Check bbox locations - if in invalid zone, mark invalid_flag=True
-            #     df = pd.read_csv(track_file)
-            #     invalid_flag = False
-            #     ### compute the mean bbox of whole tracklet                 
-            #     if 'bbox_top2' in df.columns and 'bbox_top' not in df.columns:
-            #         df = tlbr2fullsize(df, self.width, self.height)
-            #         print("Converted bbox from yolo-xyxy2 to fullsize tlbr format for invalid zone checking.")
-            #     box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
-            #     if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
-            #         invalid_flag = True
-            #         n_invalid += 1
-            #         print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
-            #     ### set invalid_flag
-            #     tracklet[0].invalid_flag = invalid_flag
 
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
             tracklet[0].semi_gt_labels = self.known_labels
             
             voted_track_label = "invalid"
-            # print("tracklet[0].feature_path:", tracklet[0].feature_path)
             if tracklet[0].feature_path and tracklet[0].feature_path.exists():
                 if self.vote_with_gallery:
-                    features = load_embedding(tracklet[0].feature_path)[0]
+                    features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
+                    ## load features from good-quality indices only - if all 'bad' - 'invalid'
+                    if behavior_csv.exists():
+                        df_behavior = pd.read_csv(behavior_csv)
+                        # TODO -- now voting based on good quality frames + high confidence behavior + no 'standing' 
+                        good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
+                                                         & (df_behavior['behavior_label'] == '01_standing')
+                                                         & (df_behavior['behavior_label'] != '00_invalid')
+                                                         & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
+                        if len(good_indices) == 0:  ### all bad quality frames -- no voting
+                            voted_track_label = "invalid"
+                        ### feature_indices for reid voting - pick the features with good quality
+                        feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
+                        features = features[feature_indices]
+                        ### previous voted label -- test
+                        # prev_vote = load_feature_npz(tracklet[0].feature_path).get('voted_labels', 'unknown')
 
-                    gallery_features=self.gallery_features
-                    gallery_labels=self.gallery_labels
-                    if self.known_labels is not None and len(self.known_labels) > 0:
-                        # get feature from known labels only
-                        #indices
-                        g_labels = [label for label in gallery_labels if label in self.known_labels]
-                        g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
+                    if len(features) != 0:
+                        gallery_features=self.gallery_features
+                        gallery_labels=self.gallery_labels
+                        if self.known_labels is not None and len(self.known_labels) > 0:
+                            g_labels = [label for label in gallery_labels if label in self.known_labels]
+                            g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
 
-                    matched_labels = match_to_gallery(features, 
-                                                      gallery_features, 
-                                                      gallery_labels=gallery_labels)[-1]
+                        matched_labels = match_to_gallery(features, 
+                                                        gallery_features, 
+                                                        gallery_labels=gallery_labels)[-1]
+                        
+                        voted_results = vote_identity_from_matched_labels(
+                            matched_labels=np.array(matched_labels),
+                            known_labels= self.known_labels,
+                            sample_rate=1,
+                            return_details=True
+                        )
+                        voted_track_label = voted_results['voted_label']
                     
                 else:
                     ## type2
                     data = load_feature_npz(tracklet[0].feature_path)
                     # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
                     matched_labels = data['matched_labels']
-                    
-                voted_results = vote_identity_from_matched_labels(
-                    matched_labels=np.array(matched_labels),
-                    known_labels= self.known_labels,
-                    sample_rate=1,
-                    return_details=True
-                )
-                voted_track_label = voted_results['voted_label']
-                # print("voted_track_label:", voted_track_label)
+                        
+                    voted_results = vote_identity_from_matched_labels(
+                        matched_labels=np.array(matched_labels),
+                        known_labels= self.known_labels,
+                        sample_rate=1,
+                        return_details=True
+                    )
+                    voted_track_label = voted_results['voted_label']
+                    # print("voted_track_label:", voted_track_label)
 
                 # Convert numpy array to string if needed
                 if isinstance(voted_track_label, np.ndarray):
@@ -785,6 +821,9 @@ class TrackletManager:
             known_labels=known_labels
         )
         
+        print("trackid2idlabel", trackid2idlabel)
+        # import sys; sys.exit(0)
+        
         # Update each tracklet with stitched_label and identity_label
         for t in self.tracklets:
             if t.invalid_flag:
@@ -793,6 +832,7 @@ class TrackletManager:
             else:
                 sid = str(t.stitched_id)
                 if sid in trackid2idlabel:
+                    print("Assigning identity", trackid2idlabel[sid], "to tracklet", t.track_id)
                     identity = trackid2idlabel[sid]
                     t.stitched_label = identity
                     t.identity_label = identity
@@ -1050,6 +1090,7 @@ class TrackletManager:
 
         # Process each stitched ID
         for stitched_id, tracklets in stitched_groups.items():
+            print("Processing stitched_id:", stitched_id)
             if stitched_id == "unassigned":
                 continue
             

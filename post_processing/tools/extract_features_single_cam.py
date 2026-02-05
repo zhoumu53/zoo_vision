@@ -93,14 +93,14 @@ def process_behavior_for_track(
             # load csv - get good quality frame indices
             df_existing = pd.read_csv(out_csv_path)
             
-            ### sample from standing frames & good quality & high confidence - behavior_conf >= 0.7
-            ### because currently in gallery-set we don't have enough sleeping frames for reid matching
-            standing_indices = df_existing.index[
-                    (df_existing["behavior_label"] == '01_standing' ) &
+            ### sample from good quality frames & high confidence - behavior_conf >= 0.7
+            ### TODO -- ACTIVE REID because currently in gallery-set we don't have enough sleeping frames for reid matching
+            good_indices = df_existing.index[
+                    # (df_existing["behavior_label"] == '01_standing' ) &
                     (df_existing["quality_label"] == 'good') &
                     (df_existing["behavior_conf"].astype(float) >= 0.7)
                 ].tolist()
-            frame_indices = standing_indices
+            frame_indices = good_indices
 
             return frame_indices
             
@@ -150,12 +150,12 @@ def process_behavior_for_track(
                 lambda row: row["behavior_label"] if float(row["behavior_conf"]) >= 0.7 else "00_invalid",
                 axis=1,
             )
-            standing_indices = df_tracks_behavior.index[
-                    (df_tracks_behavior["behavior_label"] == '01_standing' ) &
+            good_indices = df_tracks_behavior.index[
+                    # (df_tracks_behavior["behavior_label"] == '01_standing' ) &
                     (df_tracks_behavior["quality_label"] == 'good') &
                     (df_tracks_behavior["behavior_conf"].astype(float) >= 0.7)
                 ].tolist()
-            frame_indices = standing_indices
+            frame_indices = good_indices
 
             df_tracks_behavior.to_csv(out_csv_path, index=False)
             logger.info("Saved behavior predictions to %s", out_csv_path)

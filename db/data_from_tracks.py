@@ -86,7 +86,7 @@ def load_identity_labels_from_json(
     
     track_file2_label = {}
     for tracklet in tracklets_data:
-        track_file2_label[tracklet['track_filename']] = tracklet.get(id_col, 'invalid')
+        track_file2_label[tracklet['track_filename']] = tracklet.get(id_col, 'Invalid')
         
     return track_file2_label
 
@@ -113,15 +113,15 @@ def get_args_parser(add_help=True):
     return parser
 
 
-def gather_all_dates(root_dir: Path) -> list[str]:
-    all_dates = set()
+def gather_all_nights(root_dir: Path) -> list[str]:
+    all_nights = set()
     for camera_dir in root_dir.glob("*"):
-        for date_dir in camera_dir.glob("*"):
-            if not date_dir.is_dir():
+        for night_dir in camera_dir.glob("*"):
+            if not night_dir.is_dir():
                 # Skip empty.csv
                 continue
-            all_dates.add(date_dir.name)
-    return list(sorted(all_dates))
+            all_nights.add(night_dir.name)
+    return list(sorted(all_nights))
 
 
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
@@ -136,6 +136,8 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
+    if individual == 'invalid':
+        individual = 'Invalid'
     individual_id = INDIVIDUALS_TO_ID[individual]
     # df_track = pd.read_csv(
     #     track_file,
@@ -240,6 +242,86 @@ def normalize_time_string(time_str: str) -> str:
     
     return time_str
 
+def list_track_files_for_night(camera_dir: Path, 
+                               date: str) -> list[Path]:
+    """List all track files for a given night (date + time range)"""
+    track_files = []
+    date_str = date
+    # add '-' to date string if not present
+    if '-' not in date_str:
+        date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    date_dir = camera_dir / date_str
+    next_date = (pd.to_datetime(date_str) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    next_date_dir = camera_dir / next_date
+    # List files from date_dir
+    
+    if date_dir.exists():
+        track_files.extend(list(date_dir.glob("*.csv")))
+    # List files from next_date_dir
+    if next_date_dir.exists():
+        track_files.extend(list(next_date_dir.glob("*.csv")))
+        
+    return track_files
+      
+
+def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Timestamp, end_timestamp: pd.Timestamp):
+    """Delete all observations and tracks for a specific night before re-inserting."""
+    
+    # Convert date string to datetime objects for the night range
+    if '-' not in date:
+        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    
+    date_dt = pd.to_datetime(date)
+    
+    # Night starts at start_time on date and ends at end_time next day
+    night_start = date_dt + pd.Timedelta(
+        hours=start_timestamp.hour,
+        minutes=start_timestamp.minute,
+        seconds=start_timestamp.second
+    )
+    
+    if end_timestamp < start_timestamp:
+        # End time is on next day
+        night_end = date_dt + pd.Timedelta(days=1) + pd.Timedelta(
+            hours=end_timestamp.hour,
+            minutes=end_timestamp.minute,
+            seconds=end_timestamp.second
+        )
+    else:
+        # End time is on same day
+        night_end = date_dt + pd.Timedelta(
+            hours=end_timestamp.hour,
+            minutes=end_timestamp.minute,
+            seconds=end_timestamp.second
+        )
+    
+    print(f"Deleting existing data for night: {night_start} to {night_end}")
+    
+    # First delete observations for tracks in this time range
+    db_cursor.execute(
+        """
+        DELETE FROM observations
+        WHERE track_id IN (
+            SELECT id FROM tracks
+            WHERE start_time >= %s AND start_time < %s
+        )
+        """,
+        (night_start, night_end)
+    )
+    deleted_observations = db_cursor.rowcount
+    
+    # Then delete the tracks themselves
+    db_cursor.execute(
+        """
+        DELETE FROM tracks
+        WHERE start_time >= %s AND start_time < %s
+        """,
+        (night_start, night_end)
+    )
+    deleted_tracks = db_cursor.rowcount
+    
+    print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
+
 
 def main(args):
     root_dir: Path = args.dir
@@ -248,7 +330,7 @@ def main(args):
     if args.dates is not None:
         all_dates = args.dates
     else:
-        all_dates = gather_all_dates(root_dir)
+        all_dates = gather_all_nights(root_dir)
     
     # Normalize and convert timestamp strings to pd.Timestamp
     start_timestamp = normalize_time_string(args.start_timestamp)
@@ -261,17 +343,25 @@ def main(args):
     db_cursor = db_connection.cursor()
 
     pbar = pbar_manager.counter(
-        total=len(all_dates), desc="Processing dates", unit="day"
+        total=len(all_dates), desc="Processing nights", unit="night"
     )
-
+    
+    ### upload data from one night (date)
     for date in pbar(all_dates):
-        # Randomly select which individuals are where
-        # camera_to_individuals = assign_individuals_to_cameras()
+        ## date format if YYYYMMDD -> YYYY-MM-DD
+        if '-' not in date:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        
+        # DELETE existing data for this night BEFORE inserting new data -- to avoid duplicates when re-running the script
+        delete_existing_data_for_night(db_cursor, date, start_timestamp, end_timestamp)
+        db_connection.commit()
+        
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
-            # possible_individuals = camera_to_individuals[camera]
-            track_files = list((camera_dir / date).glob("*.csv"))
+            ### all track files for this night (date 18h - next day 8h)
+            track_files = list_track_files_for_night(camera_dir, date)
 
+            ### one night data are saved in one json file
             trackfile2labels = load_identity_labels_from_json(
                 record_root=root_dir.parent,
                 cam_id=camera.split('_')[-1],
@@ -279,13 +369,12 @@ def main(args):
                 start_datetime=start_timestamp,
                 end_datetime=end_timestamp,
             )
-
             pbar2 = pbar_manager.counter(
                 total=len(track_files), desc="Processing tracks", unit="track"
             )
             for track_file in pbar2(track_files):
-                # skip behavior files
-                if '_behavior' in track_file.stem:
+                # skip behavior files, and part_ files
+                if '_behavior' in track_file.stem or 'part_' in track_file.stem:
                     continue
 
                 individual = trackfile2labels.get(track_file.stem, None)

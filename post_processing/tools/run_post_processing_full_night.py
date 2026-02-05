@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Dict
 
 import pandas as pd
-
+import numpy as np
+from post_processing.utils import *
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tqdm import tqdm
@@ -54,7 +55,7 @@ def update_csv_from_df(df: pd.DataFrame) -> None:
         original_columns = df_behavior.columns.tolist()
         original_columns.append('timestamp') if 'timestamp' not in original_columns else original_columns
         _df = _df[original_columns]
-        _df.to_csv(behavior_csv, index=False)
+        _df.to_csv(behavior_csv.replace('.csv', '_smoothed.csv'), index=False)
     print("Behavior labels are smoothed.")
 
 
@@ -161,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default='/media/ElephantsWD/elephants/xmas/demo', 
                         help="Output directory for post-processed results.")
     parser.add_argument("--run-stitching", action="store_true", help="Whether to run tracklet stitching.")
-    parser.set_defaults(run_stitching=False)
+    parser.set_defaults(run_stitching=True)
     
     parser.add_argument("--cross-camera-matching", action="store_true", help="Whether to run cross-camera ID matching.")
     parser.set_defaults(cross_camera_matching=True)
@@ -228,6 +229,7 @@ def main():
     # stitching per camera
 
     final_camera_tracklets = {}
+    vote_known_individuals_dict = {}
 
     for camera_id in camera_ids:
 
@@ -236,9 +238,41 @@ def main():
             known_individuals = cam1619_individuals
         elif camera_id in ['017', '018']:
             known_individuals = cam1718_individuals
+        
+        ### TODO - check cam1619_individuals, cam1718_individuals
+        known_individuals = None if len(known_individuals) == 0 or known_individuals==[[]] else known_individuals
+        ### if known_individuals is empty --> 1) check from database, 2) check from data between 15h30-17h30 (daytime - better visibility - better ID)
+        if known_individuals is None:
+            track_dir = get_track_dir(
+                record_root=args.record_root,
+                cam_id=camera_id,
+                date=dates[0],   ## from the first day of the night
+            )
+            known_individuals = vote_known_individuals(
+                track_dir=track_dir,
+                date=dates[0],
+                start_time='153000',
+                end_time='173000',
+                gallery_features=gallery_features,
+                gallery_labels=gallery_labels
+            )
+            vote_known_individuals_dict[camera_id] = known_individuals
+        # print(f"Known individuals for camera {camera_id}: {known_individuals}")
 
+    # Aggregate votes across camera pairs considering social groups
+    camera_individuals = assign_known_individuals_to_cameras(
+        vote_results_dict=vote_known_individuals_dict,
+        camera_pairs={
+            "ohne": ["016", "019"],
+            "mit": ["017", "018"],
+        }
+    )
+
+    for camera_id in camera_ids:
         print("\n" + "=" * 80)
         print("record root:", args.record_root)
+        known_individuals = camera_individuals.get(camera_id, None)
+        print(f"Known individuals for camera {camera_id}: {known_individuals}")
                             
         track_dirs = [get_track_dir(
             record_root=args.record_root,
@@ -275,35 +309,33 @@ def main():
 
         final_camera_tracklets[camera_id] = (tracklet_results, save_path)
 
-
     ### TODO - cross-camera calibration and stitching - OPTIMIZE THE CODE - not ready yet
 
     
-    ## TODO - optimize the cross-camera id matching code
-    cam_pairs = [
-        ['016', '019'],
-        ['018', '017']]
+    # ## TODO - optimize the cross-camera id matching code
+    # cam_pairs = [
+    #     ['016', '019'],
+    #     ['018', '017']]
     
-    print("\n" + "=" * 80)
-    print("Starting CROSS-CAMERA ID MATCHING")
-    print("=" * 80)
-    for camera_ids in cam_pairs:
-        # cross-camera behavior matching. -- update behavior labels based on two cameras
+    # print("\n" + "=" * 80)
+    # print("Starting CROSS-CAMERA ID MATCHING")
+    # print("=" * 80)
+    # for camera_ids in cam_pairs:
+    #     # cross-camera behavior matching. -- update behavior labels based on two cameras
 
-        try:
-            df_results = merge_csv_tracklets(
-                record_root= args.record_root,
-                start_datetime= pd.Timestamp(start_datetime),
-                end_datetime= pd.Timestamp(end_datetime),
-                camera_ids= camera_ids
-            )
+    #     try:
+    #         df_results = merge_csv_tracklets(
+    #             record_root= args.record_root,
+    #             start_datetime= pd.Timestamp(start_datetime),
+    #             end_datetime= pd.Timestamp(end_datetime),
+    #             camera_ids= camera_ids
+    #         )
 
-
-            df_results = smooth_behavior_cross_cameras(df_results, id_col='voted_track_label',)
-            update_csv_from_df(df_results)
-        except Exception as e:
-            logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))
-            continue
+    #         df_results = smooth_behavior_cross_cameras(df_results, id_col='voted_track_label',)
+    #         update_csv_from_df(df_results)
+    #     except Exception as e:
+    #         logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))
+    #         continue
 
 
 

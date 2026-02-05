@@ -198,6 +198,7 @@ def id_feature_extraction(
 
     save_path = video_path.with_suffix(".npz")
 
+    ### TODO -- voting with good frames - but keep features
     features, frame_ids, avg_embedding = extract_reid_features_from_video(
             video_path=video_path,
             reid_model=reid_model,

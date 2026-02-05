@@ -287,28 +287,25 @@ def load_valid_tracks(record_root,
             if track_data is None:
                 continue
             behavior_data = extract_track_data(behavior_csv)
-            timestamp = track_data['timestamp'].iloc[0]
-            track_datetime = pd.to_datetime(timestamp)
-            # if track_datetime < start_datetime or track_datetime > end_datetime:
-            #     # print(f"Skipping track {track_datetime} outside datetime range.", start_datetime, end_datetime)
-            #     continue
-
             if behavior_data is None or 'behavior_label' not in behavior_data.columns:
                 continue
 
-            # merge track_data and behavior_data on frame_id
+            # merge track_data and behavior_data on timestamp
             ### check if length matches
             if len(track_data) != len(behavior_data):
                 print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
-                print("TODO: continue -- now we force merge track data and behavior data for testing")
-                # continue
-            # merge on 'timestamp' column
+                print(f"track_data from {track_file}:", len(track_data))
+                print(f"behavior_data from {behavior_csv}:", len(behavior_data))
+                video_loader = VideoLoader(str(track_file.with_suffix('.mp4')), verbose=False)
+                if not video_loader.ok():
+                    print(f"Could not open video for length check: {track_file.with_suffix('.mp4')}")
+                    continue
+                total_frames = len(list(video_loader))
+                print(f"video from {track_file.with_suffix('.mp4')}", total_frames)
+                print(len(track_data), len(behavior_data), total_frames)
+                continue
 
-            if 'timestamp' not in behavior_data.columns:
-                ### force concat --- remove it if we fix the length mismatch issue
-                track_data = pd.concat([track_data.reset_index(drop=True), behavior_data.reset_index(drop=True)], axis=1)
-            else:
-                track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
+            track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
 
             valid_count += 1
 
