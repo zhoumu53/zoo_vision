@@ -126,7 +126,7 @@ def gather_all_nights(root_dir: Path) -> list[str]:
 
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
-    behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
+    behavior_file = track_file.with_name(track_file.stem + "_behavior_smoothed.csv")
     if not behavior_file.exists():
         return df_track
     df_behavior = pd.read_csv(behavior_file)

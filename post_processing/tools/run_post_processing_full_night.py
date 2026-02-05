@@ -42,7 +42,7 @@ from post_processing.tools.utils import normalize_time_string
 from post_processing.core.tracklet_manager import TrackletManager, track_csv2identity
 from post_processing.tools.utils import setup_logger, load_gallery_features
 from datetime import datetime, timedelta
-from post_processing.core.temporal_smooth import smooth_behavior_cross_cameras
+from post_processing.core.temporal_smooth import *
 
 def update_csv_from_df(df: pd.DataFrame) -> None:
     
@@ -118,7 +118,24 @@ def merge_csv_tracklets(record_root: Path,
         end_datetime=end_datetime,
         camera_ids=camera_ids,
     )
+    
+    ### temporal smooth per camera, per track_filename
+    df_behavior_smoothed_list = []
+    for camera_id in camera_ids:
+        df_camera = df_behavior[ df_behavior['camera_id'] == camera_id ]
+        track_filenames = df_camera['track_filename'].unique().tolist()
+        for track_filename in track_filenames:
+            df_track = df_camera[ df_camera['track_filename'] == track_filename ]
 
+            df_track_smoothed = behavior_label_smooth(
+                df_track,
+                beh_col='behavior_label',
+                out_col = "behavior_label",
+            )
+                    
+            df_behavior_smoothed_list.append(df_track_smoothed)
+    df_behavior = pd.concat(df_behavior_smoothed_list, ignore_index=True)
+    
     df_label_predictions = load_identity_labels_from_json(
         record_root=Path(record_root),
         camera_ids=camera_ids,
@@ -180,6 +197,7 @@ def main():
     
     # Load file manager and get input file path
     camera_ids = args.camera_ids
+    camera_ids = ['017', '018']
     output_dir= Path(args.output_dir)
     cam1619_individuals = args.cam1619_individuals
     cam1718_individuals = args.cam1718_individuals
@@ -231,111 +249,113 @@ def main():
     final_camera_tracklets = {}
     vote_known_individuals_dict = {}
 
-    for camera_id in camera_ids:
+    # for camera_id in camera_ids:
 
-        known_individuals = None
-        if camera_id in ['016', '019']:
-            known_individuals = cam1619_individuals
-        elif camera_id in ['017', '018']:
-            known_individuals = cam1718_individuals
+    #     known_individuals = None
+    #     if camera_id in ['016', '019']:
+    #         known_individuals = cam1619_individuals
+    #     elif camera_id in ['017', '018']:
+    #         known_individuals = cam1718_individuals
         
-        ### TODO - check cam1619_individuals, cam1718_individuals
-        known_individuals = None if len(known_individuals) == 0 or known_individuals==[[]] else known_individuals
-        ### if known_individuals is empty --> 1) check from database, 2) check from data between 15h30-17h30 (daytime - better visibility - better ID)
-        if known_individuals is None:
-            track_dir = get_track_dir(
-                record_root=args.record_root,
-                cam_id=camera_id,
-                date=dates[0],   ## from the first day of the night
-            )
-            known_individuals = vote_known_individuals(
-                track_dir=track_dir,
-                date=dates[0],
-                start_time='153000',
-                end_time='173000',
-                gallery_features=gallery_features,
-                gallery_labels=gallery_labels
-            )
-            vote_known_individuals_dict[camera_id] = known_individuals
-        # print(f"Known individuals for camera {camera_id}: {known_individuals}")
+    #     ### TODO - check cam1619_individuals, cam1718_individuals
+    #     known_individuals = None if len(known_individuals) == 0 or known_individuals==[[]] else known_individuals
+    #     ### if known_individuals is empty --> 1) check from database, 2) check from data between 15h30-17h30 (daytime - better visibility - better ID)
+    #     if known_individuals is None:
+    #         track_dir = get_track_dir(
+    #             record_root=args.record_root,
+    #             cam_id=camera_id,
+    #             date=dates[0],   ## from the first day of the night
+    #         )
+    #         known_individuals = vote_known_individuals(
+    #             track_dir=track_dir,
+    #             date=dates[0],
+    #             start_time='153000',
+    #             end_time='173000',
+    #             gallery_features=gallery_features,
+    #             gallery_labels=gallery_labels
+    #         )
+    #         vote_known_individuals_dict[camera_id] = known_individuals
+    #     # print(f"Known individuals for camera {camera_id}: {known_individuals}")
 
-    # Aggregate votes across camera pairs considering social groups
-    camera_individuals = assign_known_individuals_to_cameras(
-        vote_results_dict=vote_known_individuals_dict,
-        camera_pairs={
-            "ohne": ["016", "019"],
-            "mit": ["017", "018"],
-        }
-    )
+    # # Aggregate votes across camera pairs considering social groups
+    # camera_individuals = assign_known_individuals_to_cameras(
+    #     vote_results_dict=vote_known_individuals_dict,
+    #     camera_pairs={
+    #         "ohne": ["016", "019"],
+    #         "mit": ["017", "018"],
+    #     }
+    # )
 
-    for camera_id in camera_ids:
-        print("\n" + "=" * 80)
-        print("record root:", args.record_root)
-        known_individuals = camera_individuals.get(camera_id, None)
-        print(f"Known individuals for camera {camera_id}: {known_individuals}")
+    # for camera_id in camera_ids:
+    #     print("\n" + "=" * 80)
+    #     print("record root:", args.record_root)
+    #     known_individuals = camera_individuals.get(camera_id, None)
+    #     print(f"Known individuals for camera {camera_id}: {known_individuals}")
                             
-        track_dirs = [get_track_dir(
-            record_root=args.record_root,
-            cam_id=camera_id,
-            date=date,
-        ) for date in dates]
+    #     track_dirs = [get_track_dir(
+    #         record_root=args.record_root,
+    #         cam_id=camera_id,
+    #         date=date,
+    #     ) for date in dates]
         
-        if not all([track_dir.exists() for track_dir in track_dirs]):
-            logger.warning("Track directories for camera %s on dates %s do not all exist.", camera_id, dates)
-            ### TODO -- handle missing directories better
-            # continue
+    #     if not all([track_dir.exists() for track_dir in track_dirs]):
+    #         logger.warning("Track directories for camera %s on dates %s do not all exist.", camera_id, dates)
+    #         ### TODO -- handle missing directories better
+    #         # continue
         
-        tracklet_manager = TrackletManager(
-            track_dirs=track_dirs,
-            camera_id=camera_id,
-            num_identities=len(known_individuals) if known_individuals else 2,  # max identities
-            logger=logger,
-            start_time=start_datetime,
-            end_time=end_datetime,
-            height=args.height,
-            width=args.width,
-            gallery_features=gallery_features,
-            gallery_labels=gallery_labels,
-            known_labels=known_individuals,
-        )
+    #     tracklet_manager = TrackletManager(
+    #         track_dirs=track_dirs,
+    #         camera_id=camera_id,
+    #         num_identities=len(known_individuals) if known_individuals else 2,  # max identities
+    #         logger=logger,
+    #         start_time=start_datetime,
+    #         end_time=end_datetime,
+    #         height=args.height,
+    #         width=args.width,
+    #         gallery_features=gallery_features,
+    #         gallery_labels=gallery_labels,
+    #         known_labels=known_individuals,
+    #     )
         
-        tracklet_results, save_path = get_stitched_data(
-                track_dirs=track_dirs,
-                tracklet_manager=tracklet_manager,
-                camera_id=camera_id,
-                output_dir= Path(output_dir),
-                run_stitching=args.run_stitching,
-            )
-
-        final_camera_tracklets[camera_id] = (tracklet_results, save_path)
-
-    ### TODO - cross-camera calibration and stitching - OPTIMIZE THE CODE - not ready yet
-
-    
-    # ## TODO - optimize the cross-camera id matching code
-    # cam_pairs = [
-    #     ['016', '019'],
-    #     ['018', '017']]
-    
-    # print("\n" + "=" * 80)
-    # print("Starting CROSS-CAMERA ID MATCHING")
-    # print("=" * 80)
-    # for camera_ids in cam_pairs:
-    #     # cross-camera behavior matching. -- update behavior labels based on two cameras
-
-    #     try:
-    #         df_results = merge_csv_tracklets(
-    #             record_root= args.record_root,
-    #             start_datetime= pd.Timestamp(start_datetime),
-    #             end_datetime= pd.Timestamp(end_datetime),
-    #             camera_ids= camera_ids
+    #     tracklet_results, save_path = get_stitched_data(
+    #             track_dirs=track_dirs,
+    #             tracklet_manager=tracklet_manager,
+    #             camera_id=camera_id,
+    #             output_dir= Path(output_dir),
+    #             run_stitching=args.run_stitching,
     #         )
 
-    #         df_results = smooth_behavior_cross_cameras(df_results, id_col='voted_track_label',)
-    #         update_csv_from_df(df_results)
-    #     except Exception as e:
-    #         logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))
-    #         continue
+    #     final_camera_tracklets[camera_id] = (tracklet_results, save_path)
+
+    
+    ## TODO - optimize the cross-camera id matching code
+    cam_pairs = [
+        # ['016', '019'],
+        ['018', '017']]
+    
+    print("\n" + "=" * 80)
+    print("Starting CROSS-CAMERA ID MATCHING")
+    print("=" * 80)
+    for camera_ids in cam_pairs:
+        # cross-camera behavior matching. -- update behavior labels based on two cameras
+
+        # try:
+            df_results = merge_csv_tracklets(
+                record_root= args.record_root,
+                start_datetime= pd.Timestamp(start_datetime),
+                end_datetime= pd.Timestamp(end_datetime),
+                camera_ids= camera_ids
+            )
+            
+            columns=['timestamp','camera_id','stitched_label','behavior_label','behavior_conf','quality_label','quality_conf','track_csv_path']
+            df_results[columns].to_csv('/media/mu/zoo_vision/post_processing/scripts/df{}_{}.csv'.format(camera_ids[0], camera_ids[1]), index=False)
+            df_results = smooth_behavior_cross_cameras(df_results, id_col='stitched_label',)
+            df_results[columns].to_csv('/media/mu/zoo_vision/post_processing/scripts/df{}_{}_smoothed.csv'.format(camera_ids[0], camera_ids[1]), index=False)
+            update_csv_from_df(df_results)
+        
+        # except Exception as e:
+        #     logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))
+        #     continue
 
 
 

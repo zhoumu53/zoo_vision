@@ -282,27 +282,24 @@ def load_valid_tracks(record_root,
             behavior_csv = track_file.with_name(track_file.stem + '_behavior.csv')
             if not behavior_csv.exists():
                 continue
+            
+            # filter out the tracks that are outside the time range (start_datetime, end_datetime) based on the timestamp in the filename
 
             track_data = extract_track_data(track_file)
             if track_data is None:
                 continue
+            ### check if track is within the time range
+            track_start_time = track_data['timestamp'].min()
+            if track_start_time < start_datetime or track_start_time > end_datetime:
+                continue
+            
             behavior_data = extract_track_data(behavior_csv)
             if behavior_data is None or 'behavior_label' not in behavior_data.columns:
                 continue
 
-            # merge track_data and behavior_data on timestamp
             ### check if length matches
             if len(track_data) != len(behavior_data):
                 print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
-                print(f"track_data from {track_file}:", len(track_data))
-                print(f"behavior_data from {behavior_csv}:", len(behavior_data))
-                video_loader = VideoLoader(str(track_file.with_suffix('.mp4')), verbose=False)
-                if not video_loader.ok():
-                    print(f"Could not open video for length check: {track_file.with_suffix('.mp4')}")
-                    continue
-                total_frames = len(list(video_loader))
-                print(f"video from {track_file.with_suffix('.mp4')}", total_frames)
-                print(len(track_data), len(behavior_data), total_frames)
                 continue
 
             track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
