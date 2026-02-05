@@ -853,7 +853,8 @@ class TrackletManager:
         1. Temporal overlap (frames at same timestamp)
         2. Same voted_label (impossible - one elephant can't be in two places)
         
-        Solution: Keep the stitched_id with more evidence, mark the other as 'invalid' voted_label.
+        Solution: Keep the stitched_id with more evidence, mark the other as 'invalid' voted_label. 
+        ### TODO -- still may be not perfect if stitched_id got wrong -- optimize
         """
         import pandas as pd
         

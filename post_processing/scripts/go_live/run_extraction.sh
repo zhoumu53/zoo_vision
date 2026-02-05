@@ -3,13 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-# PROJECT_ROOT='/home/dherrera/git/zoo_vision'  ##  TEST
 cd "$PROJECT_ROOT"
 echo "Project root: $PROJECT_ROOT"
 source "$PROJECT_ROOT/env/bin/activate"
 
 DATE="${1:-$(date -d "yesterday" +%Y%m%d)}"
-# DATE='2026-02-01'  ## TEST
 [[ $# -gt 0 ]] && shift
 
 CAMERA_IDS=("$@")
@@ -25,9 +23,7 @@ ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
 
 # Read values (adjust JSON paths to your file)
 RECORD_ROOT="$(jq -er '.record_root' "$ONLINE_CONFIG_FILE")"
-# RECORD_ROOT='/media/ElephantsWD/elephants/test/results'  ## TEST
 OUTPUT_DIR="$(jq -er '.output_dir // (.record_root + "/demo")' "$ONLINE_CONFIG_FILE")"
-# echo
 echo "Record root: $RECORD_ROOT"
 echo "Output dir: $OUTPUT_DIR"
 
