@@ -368,6 +368,7 @@ def main(args):
                 date = date,
                 start_datetime=start_timestamp,
                 end_datetime=end_timestamp,
+                id_col="stitched_label",
             )
             pbar2 = pbar_manager.counter(
                 total=len(track_files), desc="Processing tracks", unit="track"

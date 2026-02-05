@@ -16,6 +16,7 @@ from post_processing.tools.reranking import assign_identities_from_trackid2label
 import json
 from collections import Counter
 from post_processing.tools.utils import tlbr2fullsize
+import itertools
 
 seed = 42
 np.random.seed(seed)
@@ -804,15 +805,21 @@ class TrackletManager:
         
         self.logger.info(f"Updated smoothed labels for tracklets")
                     
-
     def get_stitched_tracklets(self):
         """
         Update tracklets with stitched_label and identity_label directly.
-        No more separate maps - all labels are stored in tracklet objects.
+        Includes temporal conflict resolution to fix overlapping tracklets.
         """
         known_labels = self.known_labels
         
-        # Vote on identity labels for each stitched_id
+        # STEP 1: Fix temporal conflicts in stitched_id assignments
+        self.logger.info("="*60)
+        self.logger.info("STEP 1: Resolving temporal conflicts in stitched IDs")
+        self._resolve_temporal_conflicts_from_csv()
+        
+        # STEP 2: Vote on identity labels for each stitched_id
+        self.logger.info("="*60)
+        self.logger.info("STEP 2: Voting on identity labels for each stitched_id")
         start_time = None
         end_time = None
         trackid2idlabel = self.vote_tracklet_identity_labels(
@@ -820,11 +827,10 @@ class TrackletManager:
             end_time=end_time, 
             known_labels=known_labels
         )
-        
-        print("trackid2idlabel", trackid2idlabel)
-        # import sys; sys.exit(0)
-        
-        # Update each tracklet with stitched_label and identity_label
+                
+        # STEP 3: Update each tracklet with final labels
+        self.logger.info("="*60)
+        self.logger.info("STEP 3: Assigning final identity labels to tracklets")
         for t in self.tracklets:
             if t.invalid_flag:
                 t.stitched_label = "unassigned"
@@ -832,7 +838,6 @@ class TrackletManager:
             else:
                 sid = str(t.stitched_id)
                 if sid in trackid2idlabel:
-                    print("Assigning identity", trackid2idlabel[sid], "to tracklet", t.track_id)
                     identity = trackid2idlabel[sid]
                     t.stitched_label = identity
                     t.identity_label = identity
@@ -842,6 +847,97 @@ class TrackletManager:
         
         self.logger.info(f"Updated {len(self.tracklets)} tracklets with identity labels")
 
+    def _resolve_temporal_conflicts_from_csv(self):
+        """
+        Detect and fix conflicts where different stitched_ids have:
+        1. Temporal overlap (frames at same timestamp)
+        2. Same voted_label (impossible - one elephant can't be in two places)
+        
+        Solution: Keep the stitched_id with more evidence, mark the other as 'invalid' voted_label.
+        """
+        import pandas as pd
+        
+        # STEP 1: Load all frame data
+        frames_list = []
+        
+        for t in self.tracklets:
+            if t.invalid_flag or t.stitched_id is None or not t.track_csv_path:
+                continue
+            
+            df = pd.read_csv(t.track_csv_path)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['stitched_id'] = t.stitched_id
+            df['voted_label'] = t.voted_track_label
+            
+            frames_list.append(df[['timestamp', 'stitched_id', 'voted_label']])
+        
+        if not frames_list:
+            return
+        
+        # STEP 2: Merge and sort
+        all_frames = pd.concat(frames_list, ignore_index=True)
+        all_frames = all_frames.sort_values('timestamp').reset_index(drop=True)
+        
+        # STEP 3: Detect conflicts - same label at same time from different stitched_ids
+        conflicts = []
+        window_size = pd.Timedelta(seconds=1)
+        
+        for i in range(len(all_frames)):
+            current_time = all_frames.loc[i, 'timestamp']
+            current_label = all_frames.loc[i, 'voted_label']
+            
+            if current_label == 'invalid':
+                continue
+            
+            window_mask = (all_frames['timestamp'] >= current_time) & \
+                        (all_frames['timestamp'] <= current_time + window_size)
+            window_frames = all_frames[window_mask]
+            
+            # Find frames with SAME voted_label but DIFFERENT stitched_ids
+            same_label = window_frames[window_frames['voted_label'] == current_label]
+            unique_sids = same_label['stitched_id'].unique()
+            
+            if len(unique_sids) > 1:
+                conflicts.append({
+                    'timestamp': current_time,
+                    'label': current_label,
+                    'stitched_ids': unique_sids.tolist()
+                })
+        
+        if not conflicts:
+            self.logger.info("✓ No label conflicts found")
+            return
+        
+        self.logger.warning(f"✗ Found conflicts: same label in different stitched_ids at same time")
+        
+        # STEP 4: Resolve - count votes per stitched_id, keep the one with most evidence
+        from collections import Counter
+        
+        for conflict in conflicts:
+            label = conflict['label']
+            sids = conflict['stitched_ids']
+            
+            # Count how many tracklets voted this label for each stitched_id
+            vote_counts = {}
+            for sid in sids:
+                count = sum(1 for t in self.tracklets 
+                        if t.stitched_id == sid and t.voted_track_label == label)
+                vote_counts[sid] = count
+            
+            # Keep the stitched_id with most votes, invalidate others
+            winner_sid = max(vote_counts, key=vote_counts.get)
+            
+            for sid in sids:
+                if sid != winner_sid:
+                    # Mark this stitched_id's voted_label as 'invalid'
+                    for t in self.tracklets:
+                        if t.stitched_id == sid and t.voted_track_label == label:
+                            t.voted_track_label = 'invalid'
+                            self.logger.info(
+                                f"Invalidated {t.raw_track_id} (sid={sid}): "
+                                f"label '{label}' conflicts with sid={winner_sid}"
+                            )
+    
     def save_stitched_tracklets(self, tracklets, output_dir: Path):
         """
         Save tracklets as a list of dictionaries to JSON.
@@ -866,13 +962,13 @@ class TrackletManager:
         tracklets_data = []
         for t in tracklets:
             tracklets_data.append({
-                "track_id": t.track_id,
+                "track_id": int(t.track_id) if isinstance(t.track_id, (np.integer, np.int64)) else t.track_id,
                 "raw_track_id": t.raw_track_id,
                 "track_filename": t.track_filename,
                 "track_csv_path": str(t.track_csv_path) if t.track_csv_path else "",
                 "track_video_path": str(t.track_video_path) if t.track_video_path else "",
                 "camera_id": t.camera_id,
-                "stitched_id": t.stitched_id,
+                "stitched_id": int(t.stitched_id) if t.stitched_id is not None and isinstance(t.stitched_id, (np.integer, np.int64)) else t.stitched_id,
                 "stitched_label": t.stitched_label,
                 "identity_label": t.identity_label,
                 "smoothed_label": t.smoothed_label,
@@ -881,8 +977,6 @@ class TrackletManager:
                 "invalid_flag": t.invalid_flag,
                 "start_timestamp": t.start_timestamp.isoformat() if isinstance(t.start_timestamp, datetime) else "",
                 "end_timestamp": t.end_timestamp.isoformat() if isinstance(t.end_timestamp, datetime) else "",
-                "start_frame_id": t.start_frame_id,
-                "end_frame_id": t.end_frame_id,
                 "feature_path": str(t.feature_path) if t.feature_path else "",
             })
         
@@ -893,7 +987,7 @@ class TrackletManager:
             self.logger.info("Saved %d tracklets to %s", len(tracklets_data), save_path)
         
         return save_path
-        
+    
     def load_stitched_tracklets_from_dir(self, dir: Path = None) -> List[Tracklet]:
         """Load stitched tracklets from a JSON file and return as Tracklet objects."""
         
