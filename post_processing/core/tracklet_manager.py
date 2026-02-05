@@ -16,6 +16,7 @@ from post_processing.tools.reranking import assign_identities_from_trackid2label
 import json
 from collections import Counter
 from post_processing.tools.utils import tlbr2fullsize
+import itertools
 
 seed = 42
 np.random.seed(seed)
@@ -334,17 +335,6 @@ class InvalidZoneHandler:
         # print("Checking bbox center point", center_point, "for invalid zones in camera", camera_id, "with frame size", height, "x", width)
         scaled_polygons = self.get_scaled_polygons(polygons, camera_id, height, width)
         
-        # # ### DEBUG -- plot invalid zones + box for debugging
-        # frame = self.plot_invalid_zones(np.zeros((height, width, 3), dtype=np.uint8), scaled_polygons, camera_id, height=height, width=width)
-        # # plot box on frame
-        # if frame is not None and frame.size != 0:
-        #     cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (255, 0, 0), 2)
-        #     cv2.circle(frame, center_point, 5, (0, 255, 0), -1)
-        #     cv2.imwrite(f"invalid_zone_debug_cam{camera_id}.jpg", frame)
-        #     print(f"Saved debug image with invalid zones and bbox to invalid_zone_debug_cam{camera_id}.jpg")
-            
-        # import sys; sys.exit(0)
-        
         # Check if center point is inside any polygon
         for scaled_polygon in scaled_polygons:
             result = cv2.pointPolygonTest(scaled_polygon, center_point, False)
@@ -497,7 +487,7 @@ class TrackletManager:
 
         self.invalid_zone_handler = InvalidZoneHandler(invalid_zones_dir, 
                                                        self.logger)
-        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else None
+        self.known_labels = load_semi_gt_ids(date=self.start_time.date(), camera_id=self.camera_id) if not known_labels else known_labels
         if self.known_labels is not None and len(self.known_labels) > 0:
             self.logger.info("Loaded known labels for camera %s: %s", self.camera_id, self.known_labels)
 
@@ -568,7 +558,46 @@ class TrackletManager:
         # Return True to skip, False to keep
         return not in_range
         
+    def vote_with_gallery_features(
+        self,
+        feature_path: Path,
+        behavior_csv: Path
+    ):
+        features, frame_ids = load_embedding(feature_path)[0:2]
+        ## load features from good-quality indices only - if all 'bad' - 'invalid'
+        voted_track_label = 'invalid'
+        if not behavior_csv.exists():
+            return voted_track_label
+        
+        df_behavior = pd.read_csv(behavior_csv)
+        # now voting based on good quality frames + high confidence behavior + no 'standing' 
+        good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
+                                            & (df_behavior['behavior_label'] == '01_standing')
+                                            & (df_behavior['behavior_label'] != '00_invalid')
+                                            & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
+        if len(good_indices) == 0:  ### all bad quality frames -- no voting
+            voted_track_label = "invalid"
+        ### feature_indices for reid voting - pick the features with good quality
+        feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
+        features = features[feature_indices]
+        ### previous voted label -- test
+        # prev_vote = load_feature_npz(tracklet[0].feature_path).get('voted_labels', 'unknown')
 
+        if len(features) != 0:
+            gallery_features=self.gallery_features
+            gallery_labels=self.gallery_labels
+            matched_labels = match_to_gallery(features, 
+                                            gallery_features, 
+                                            gallery_labels=gallery_labels)[-1]
+            
+            voted_results = vote_identity_from_matched_labels(
+                matched_labels=np.array(matched_labels),
+                known_labels= self.known_labels,
+                sample_rate=1,
+                return_details=True
+            )
+            voted_track_label = voted_results['voted_label']
+        return voted_track_label
 
     def vote_identity_label_old(self, features, avg_embedding, gallery_features, gallery_labels, known_labels=None) -> str:
         
@@ -618,6 +647,9 @@ class TrackletManager:
         for track_file in track_files:
 
             track_filename = track_file.stem
+            if 'part_' in track_filename:
+                # skip partial track files from online
+                continue
 
             try:
                 s_time, raw_track_id = track_filename.split("T")[1].split("_ID")
@@ -629,9 +661,10 @@ class TrackletManager:
                 # skip invalid tracks
                 continue
             
+            behavior_csv=track_file.with_name(track_file.stem + "_behavior.csv")
             tracklet = init_tracklets_from_online_results(
                 track_csv=str(track_file),
-                behavior_csv=track_file.with_name(track_file.stem + "_behavior.csv"),
+                behavior_csv=behavior_csv if behavior_csv.exists() else None,
                 camera_id=camera_id
             )
             
@@ -649,66 +682,70 @@ class TrackletManager:
             ## skip tracklet in a short time period - less than 1 min
             tracklet_duration = (end_dt - start_dt).total_seconds()
             if tracklet_duration < 60:
-                self.logger.info(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
+                # self.logger.info(f"Skipping tracklet {track_filename} - duration {tracklet_duration} seconds is less than 60 seconds.")
                 continue 
             
             if skip_tracklet:
-                self.logger.info(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
-                # import sys; sys.exit(0)
+                # self.logger.info(f"Skipping tracklet {track_filename} {start_dt} - outside time window [{self.start_time} to {self.end_time}]")
                 continue
-
-            # if filter_invalids:  ### No need anymore -- we did it from online (check with Daniel)
-            #     # Check bbox locations - if in invalid zone, mark invalid_flag=True
-            #     df = pd.read_csv(track_file)
-            #     invalid_flag = False
-            #     ### compute the mean bbox of whole tracklet                 
-            #     if 'bbox_top2' in df.columns and 'bbox_top' not in df.columns:
-            #         df = tlbr2fullsize(df, self.width, self.height)
-            #         print("Converted bbox from yolo-xyxy2 to fullsize tlbr format for invalid zone checking.")
-            #     box_mean = df[['bbox_top', 'bbox_left', 'bbox_bottom', 'bbox_right']].mean().tolist()
-            #     if self.invalid_zone_handler.is_in_invalid_zone(box_mean, camera_id, self.height, self.width):
-            #         invalid_flag = True
-            #         n_invalid += 1
-            #         print(f"Tracklet {track_filename} marked as invalid (starts in invalid zone)")
-            #     ### set invalid_flag
-            #     tracklet[0].invalid_flag = invalid_flag
 
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
             tracklet[0].semi_gt_labels = self.known_labels
             
             voted_track_label = "invalid"
-            # print("tracklet[0].feature_path:", tracklet[0].feature_path)
             if tracklet[0].feature_path and tracklet[0].feature_path.exists():
                 if self.vote_with_gallery:
-                    features = load_embedding(tracklet[0].feature_path)[0]
+                    features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
+                    ## load features from good-quality indices only - if all 'bad' - 'invalid'
+                    if behavior_csv.exists():
+                        df_behavior = pd.read_csv(behavior_csv)
+                        # TODO -- now voting based on good quality frames + high confidence behavior + no 'standing' 
+                        good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
+                                                         & (df_behavior['behavior_label'] == '01_standing')
+                                                         & (df_behavior['behavior_label'] != '00_invalid')
+                                                         & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
+                        if len(good_indices) == 0:  ### all bad quality frames -- no voting
+                            voted_track_label = "invalid"
+                        ### feature_indices for reid voting - pick the features with good quality
+                        feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
+                        features = features[feature_indices]
+                        ### previous voted label -- test
+                        # prev_vote = load_feature_npz(tracklet[0].feature_path).get('voted_labels', 'unknown')
 
-                    gallery_features=self.gallery_features
-                    gallery_labels=self.gallery_labels
-                    if self.known_labels is not None and len(self.known_labels) > 0:
-                        # get feature from known labels only
-                        #indices
-                        g_labels = [label for label in gallery_labels if label in self.known_labels]
-                        g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
+                    if len(features) != 0:
+                        gallery_features=self.gallery_features
+                        gallery_labels=self.gallery_labels
+                        if self.known_labels is not None and len(self.known_labels) > 0:
+                            g_labels = [label for label in gallery_labels if label in self.known_labels]
+                            g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
 
-                    matched_labels = match_to_gallery(features, 
-                                                      gallery_features, 
-                                                      gallery_labels=gallery_labels)[-1]
+                        matched_labels = match_to_gallery(features, 
+                                                        gallery_features, 
+                                                        gallery_labels=gallery_labels)[-1]
+                        
+                        voted_results = vote_identity_from_matched_labels(
+                            matched_labels=np.array(matched_labels),
+                            known_labels= self.known_labels,
+                            sample_rate=1,
+                            return_details=True
+                        )
+                        voted_track_label = voted_results['voted_label']
                     
                 else:
                     ## type2
                     data = load_feature_npz(tracklet[0].feature_path)
                     # print("matched_labels", data['matched_labels'],  data['voted_labels'], len(data['features']))
                     matched_labels = data['matched_labels']
-                    
-                voted_results = vote_identity_from_matched_labels(
-                    matched_labels=np.array(matched_labels),
-                    known_labels= self.known_labels,
-                    sample_rate=1,
-                    return_details=True
-                )
-                voted_track_label = voted_results['voted_label']
-                # print("voted_track_label:", voted_track_label)
+                        
+                    voted_results = vote_identity_from_matched_labels(
+                        matched_labels=np.array(matched_labels),
+                        known_labels= self.known_labels,
+                        sample_rate=1,
+                        return_details=True
+                    )
+                    voted_track_label = voted_results['voted_label']
+                    # print("voted_track_label:", voted_track_label)
 
                 # Convert numpy array to string if needed
                 if isinstance(voted_track_label, np.ndarray):
@@ -768,15 +805,21 @@ class TrackletManager:
         
         self.logger.info(f"Updated smoothed labels for tracklets")
                     
-
     def get_stitched_tracklets(self):
         """
         Update tracklets with stitched_label and identity_label directly.
-        No more separate maps - all labels are stored in tracklet objects.
+        Includes temporal conflict resolution to fix overlapping tracklets.
         """
         known_labels = self.known_labels
         
-        # Vote on identity labels for each stitched_id
+        # STEP 1: Fix temporal conflicts in stitched_id assignments
+        self.logger.info("="*60)
+        self.logger.info("STEP 1: Resolving temporal conflicts in stitched IDs")
+        self._resolve_temporal_conflicts_from_csv()
+        
+        # STEP 2: Vote on identity labels for each stitched_id
+        self.logger.info("="*60)
+        self.logger.info("STEP 2: Voting on identity labels for each stitched_id")
         start_time = None
         end_time = None
         trackid2idlabel = self.vote_tracklet_identity_labels(
@@ -784,8 +827,10 @@ class TrackletManager:
             end_time=end_time, 
             known_labels=known_labels
         )
-        
-        # Update each tracklet with stitched_label and identity_label
+                
+        # STEP 3: Update each tracklet with final labels
+        self.logger.info("="*60)
+        self.logger.info("STEP 3: Assigning final identity labels to tracklets")
         for t in self.tracklets:
             if t.invalid_flag:
                 t.stitched_label = "unassigned"
@@ -802,6 +847,98 @@ class TrackletManager:
         
         self.logger.info(f"Updated {len(self.tracklets)} tracklets with identity labels")
 
+    def _resolve_temporal_conflicts_from_csv(self):
+        """
+        Detect and fix conflicts where different stitched_ids have:
+        1. Temporal overlap (frames at same timestamp)
+        2. Same voted_label (impossible - one elephant can't be in two places)
+        
+        Solution: Keep the stitched_id with more evidence, mark the other as 'invalid' voted_label. 
+        ### TODO -- still may be not perfect if stitched_id got wrong -- optimize
+        """
+        import pandas as pd
+        
+        # STEP 1: Load all frame data
+        frames_list = []
+        
+        for t in self.tracklets:
+            if t.invalid_flag or t.stitched_id is None or not t.track_csv_path:
+                continue
+            
+            df = pd.read_csv(t.track_csv_path)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['stitched_id'] = t.stitched_id
+            df['voted_label'] = t.voted_track_label
+            
+            frames_list.append(df[['timestamp', 'stitched_id', 'voted_label']])
+        
+        if not frames_list:
+            return
+        
+        # STEP 2: Merge and sort
+        all_frames = pd.concat(frames_list, ignore_index=True)
+        all_frames = all_frames.sort_values('timestamp').reset_index(drop=True)
+        
+        # STEP 3: Detect conflicts - same label at same time from different stitched_ids
+        conflicts = []
+        window_size = pd.Timedelta(seconds=1)
+        
+        for i in range(len(all_frames)):
+            current_time = all_frames.loc[i, 'timestamp']
+            current_label = all_frames.loc[i, 'voted_label']
+            
+            if current_label == 'invalid':
+                continue
+            
+            window_mask = (all_frames['timestamp'] >= current_time) & \
+                        (all_frames['timestamp'] <= current_time + window_size)
+            window_frames = all_frames[window_mask]
+            
+            # Find frames with SAME voted_label but DIFFERENT stitched_ids
+            same_label = window_frames[window_frames['voted_label'] == current_label]
+            unique_sids = same_label['stitched_id'].unique()
+            
+            if len(unique_sids) > 1:
+                conflicts.append({
+                    'timestamp': current_time,
+                    'label': current_label,
+                    'stitched_ids': unique_sids.tolist()
+                })
+        
+        if not conflicts:
+            self.logger.info("✓ No label conflicts found")
+            return
+        
+        self.logger.warning(f"✗ Found conflicts: same label in different stitched_ids at same time")
+        
+        # STEP 4: Resolve - count votes per stitched_id, keep the one with most evidence
+        from collections import Counter
+        
+        for conflict in conflicts:
+            label = conflict['label']
+            sids = conflict['stitched_ids']
+            
+            # Count how many tracklets voted this label for each stitched_id
+            vote_counts = {}
+            for sid in sids:
+                count = sum(1 for t in self.tracklets 
+                        if t.stitched_id == sid and t.voted_track_label == label)
+                vote_counts[sid] = count
+            
+            # Keep the stitched_id with most votes, invalidate others
+            winner_sid = max(vote_counts, key=vote_counts.get)
+            
+            for sid in sids:
+                if sid != winner_sid:
+                    # Mark this stitched_id's voted_label as 'invalid'
+                    for t in self.tracklets:
+                        if t.stitched_id == sid and t.voted_track_label == label:
+                            t.voted_track_label = 'invalid'
+                            self.logger.info(
+                                f"Invalidated {t.raw_track_id} (sid={sid}): "
+                                f"label '{label}' conflicts with sid={winner_sid}"
+                            )
+    
     def save_stitched_tracklets(self, tracklets, output_dir: Path):
         """
         Save tracklets as a list of dictionaries to JSON.
@@ -826,13 +963,13 @@ class TrackletManager:
         tracklets_data = []
         for t in tracklets:
             tracklets_data.append({
-                "track_id": t.track_id,
+                "track_id": int(t.track_id) if isinstance(t.track_id, (np.integer, np.int64)) else t.track_id,
                 "raw_track_id": t.raw_track_id,
                 "track_filename": t.track_filename,
                 "track_csv_path": str(t.track_csv_path) if t.track_csv_path else "",
                 "track_video_path": str(t.track_video_path) if t.track_video_path else "",
                 "camera_id": t.camera_id,
-                "stitched_id": t.stitched_id,
+                "stitched_id": int(t.stitched_id) if t.stitched_id is not None and isinstance(t.stitched_id, (np.integer, np.int64)) else t.stitched_id,
                 "stitched_label": t.stitched_label,
                 "identity_label": t.identity_label,
                 "smoothed_label": t.smoothed_label,
@@ -841,8 +978,6 @@ class TrackletManager:
                 "invalid_flag": t.invalid_flag,
                 "start_timestamp": t.start_timestamp.isoformat() if isinstance(t.start_timestamp, datetime) else "",
                 "end_timestamp": t.end_timestamp.isoformat() if isinstance(t.end_timestamp, datetime) else "",
-                "start_frame_id": t.start_frame_id,
-                "end_frame_id": t.end_frame_id,
                 "feature_path": str(t.feature_path) if t.feature_path else "",
             })
         
@@ -853,7 +988,7 @@ class TrackletManager:
             self.logger.info("Saved %d tracklets to %s", len(tracklets_data), save_path)
         
         return save_path
-        
+    
     def load_stitched_tracklets_from_dir(self, dir: Path = None) -> List[Tracklet]:
         """Load stitched tracklets from a JSON file and return as Tracklet objects."""
         
@@ -1050,6 +1185,7 @@ class TrackletManager:
 
         # Process each stitched ID
         for stitched_id, tracklets in stitched_groups.items():
+            print("Processing stitched_id:", stitched_id)
             if stitched_id == "unassigned":
                 continue
             

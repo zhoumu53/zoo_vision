@@ -33,8 +33,10 @@ INDIV_ALIASES: Dict[str, List[str]] = {
 # Shorthands that imply multiple individuals
 MULTI_ALIASES: Dict[str, List[str]] = {
     "indis": ["Indi", "Chandra"],
-    # You told earlier: "Panangs" => Panang & Farha (NOT Zali unless you confirm)
     "panangs": ["Panang", "Farha"],
+    'Panangs': ['Panang', 'Farha'],  # keep capitalization variant
+    "Fahras": ["Farha", "Panang"],  # typo variant
+    
 
 }
 
@@ -269,6 +271,10 @@ def parse_keeper_xlsx(cfg: ParseConfig) -> pd.DataFrame:
     """
     df = pd.read_excel(cfg.xlsx_path, sheet_name=cfg.sheet_name, dtype=str, engine="openpyxl").fillna("")
 
+    if 'Übermittlungszeit' in df.columns:
+        # rename to columns = ['date', 'location']
+        df = df.rename(columns={'Übermittlungszeit': cfg.date_col, 'Standort Elefanten über Nacht': cfg.location_col})
+
     if cfg.date_col not in df.columns:
         raise KeyError(f"Missing date column {cfg.date_col!r}. Found: {list(df.columns)}")
     if cfg.location_col not in df.columns:
@@ -476,13 +482,13 @@ def assert_zero_in_mit_or_ohne(
 # ============================================================
 if __name__ == "__main__":
     cfg = ParseConfig(
-        xlsx_path="/home/mu/Downloads/keeper_info.xlsx",
+        xlsx_path="/home/mu/Downloads/keeper_info_2026-01-19.xlsx",
         sheet_name=0,
         date_col="date",
         location_col="location",
         dayfirst=True,
-        output_csv="/media/mu/zoo_vision/data/elephants_sandbox.csv",
-        output_xlsx="/media/mu/zoo_vision/data/elephants_sandbox.xlsx",
+        output_csv="/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox_2026-01-19.csv",
+        output_xlsx="/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox_2026-01-19.xlsx",
     )
 
     parsed = parse_keeper_xlsx(cfg)
@@ -503,4 +509,4 @@ if __name__ == "__main__":
         date_col="date",
         raise_on_fail=False,  # set True if you want pipeline to stop
     )
-    print("\nWrote:", cfg.output_csv, "and", cfg.output_xlsx)
+    print("\nWrote:", cfg.output_csv)

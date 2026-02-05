@@ -93,20 +93,21 @@ def process_behavior_for_track(
             # load csv - get good quality frame indices
             df_existing = pd.read_csv(out_csv_path)
             
-            ### sample from standing frames & good quality & high confidence - behavior_conf >= 0.7
-            ### because currently in gallery-set we don't have enough sleeping frames for reid matching
-            standing_indices = df_existing.index[
-                    (df_existing["behavior_label"] == '01_standing' ) &
+            ### sample from good quality frames & high confidence - behavior_conf >= 0.7
+            ### TODO -- ACTIVE REID because currently in gallery-set we don't have enough sleeping frames for reid matching
+            good_indices = df_existing.index[
+                    # (df_existing["behavior_label"] == '01_standing' ) &
                     (df_existing["quality_label"] == 'good') &
                     (df_existing["behavior_conf"].astype(float) >= 0.7)
                 ].tolist()
-            frame_indices = standing_indices
+            frame_indices = good_indices
 
             return frame_indices
             
 
         try:
-            df_tracks_behavior = pd.DataFrame() ### empty df to hold behavior preds
+            ### only keep column ['timestamp'] initially -- timestamp mismatch issue fixed -- so copy full df_tracks
+            df_tracks_behavior = df_tracks[['timestamp']].copy()
             behavior_preds = run_behavior_on_track(
                 video_path=track_video_file,
                 behavior_model=behavior_model,
@@ -114,7 +115,7 @@ def process_behavior_for_track(
             )
             if len(behavior_preds) != len(df_tracks):                
                 logger.warning(
-                    "Behavior predictions length %d does not match CSV rows %d for %s",
+                    "Behavior predictions length %d does not match CSV rows %d for %s, skipping behavior processing.",
                     len(behavior_preds),
                     len(df_tracks),
                     track_video_filename,
@@ -144,28 +145,17 @@ def process_behavior_for_track(
             df_tracks_behavior["quality_label"] = qua_preds
             df_tracks_behavior["quality_conf"] = qua_confs
 
-
-            ##### --- mismatch in length issue ---
-            if len(df_tracks_behavior) != len(df_tracks):
-                logger.warning(
-                    "Length mismatch between behavior preds (%d) and track CSV (%d). Attempting to align by timestamp.",
-                    len(df_tracks_behavior),
-                    len(df_tracks),
-                )
-                # 
-            df_tracks_behavior["timestamp"] = df_tracks["timestamp"][:len(df_tracks_behavior)].values   ### TODO not safe if lengths differ
-
             ### if beh_conf < 0.7 -> set to 'invalid'
             df_tracks_behavior["behavior_label"] = df_tracks_behavior.apply(
                 lambda row: row["behavior_label"] if float(row["behavior_conf"]) >= 0.7 else "00_invalid",
                 axis=1,
             )
-            standing_indices = df_tracks_behavior.index[
-                    (df_tracks_behavior["behavior_label"] == '01_standing' ) &
+            good_indices = df_tracks_behavior.index[
+                    # (df_tracks_behavior["behavior_label"] == '01_standing' ) &
                     (df_tracks_behavior["quality_label"] == 'good') &
                     (df_tracks_behavior["behavior_conf"].astype(float) >= 0.7)
                 ].tolist()
-            frame_indices = standing_indices
+            frame_indices = good_indices
 
             df_tracks_behavior.to_csv(out_csv_path, index=False)
             logger.info("Saved behavior predictions to %s", out_csv_path)
@@ -318,9 +308,9 @@ def main():
     cam_id = args.cam_id if args.cam_id else config.cameras.ids[0]
     logger.info("Processing camera: %s", cam_id)
         
-    # if run-night --> process data from date (1800 to 0800 next day)
-    if args.run_night:
-        start_dt = pd.Timestamp(args.date + " 18:00:00")
+    # if run-night --> process data from date (1500 to 0800 next day)
+    if args.run_night:        
+        start_dt = pd.Timestamp(args.date + " 15:00:00")
         next_day = (pd.Timestamp(args.date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         end_dt = pd.Timestamp(next_day + " 08:00:00")
         try:
