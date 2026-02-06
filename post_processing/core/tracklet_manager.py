@@ -151,8 +151,8 @@ def vote_identity_from_matched_labels(
     top1_label = top1[0][0] if top1 else None
     
     
-    # Filter by known_labels if provided
-    if known_labels is not None and len(known_labels) > 0:
+    # Filter by known_labels if provided -- and has more than 1 known label
+    if known_labels is not None and len(known_labels) > 1:
         ## find the most alike one from top1
         top1_label = vote_identity_label_by_human_prior(top1_label, known_labels)
         filtered_counts = {
@@ -1185,7 +1185,6 @@ class TrackletManager:
 
         # Process each stitched ID
         for stitched_id, tracklets in stitched_groups.items():
-            print("Processing stitched_id:", stitched_id)
             if stitched_id == "unassigned":
                 continue
             

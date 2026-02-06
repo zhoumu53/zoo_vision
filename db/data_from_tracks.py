@@ -110,6 +110,10 @@ def get_args_parser(add_help=True):
     parser.add_argument(
         "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", required=True
     )
+    parser.add_argument(
+        "--delete_existing-day", action='store_true', help="Delete existing data for the night before inserting new data"
+    )
+    parser.set_defaults(delete_existing_day=False)
     return parser
 
 
@@ -128,8 +132,13 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
     behavior_file = track_file.with_name(track_file.stem + "_behavior_smoothed.csv")
     if not behavior_file.exists():
-        return df_track
+        ### earlier version - we save labels to '_behavior_smoothed' csv, 
+        ### if not exist, to load from '_behavior' csv - new version, with 'behavior_label' which are smoothed, 
+        ### and original labels in 'behavior_label_raw'
+        behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     df_behavior = pd.read_csv(behavior_file)
+    if df_behavior.empty:
+        return df_track
     df_merged = pd.merge(df_track, df_behavior, on='timestamp', how='left')
     return df_merged
 
@@ -139,18 +148,17 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     if individual == 'invalid':
         individual = 'Invalid'
     individual_id = INDIVIDUALS_TO_ID[individual]
-    # df_track = pd.read_csv(
-    #     track_file,
-    #     parse_dates=["timestamp"],
-    # )
     df_track = merge_track_behavior(track_file)
     row_count = len(df_track)
     if row_count == 0:
         return
     
-    ### filter out bad quality frames if any
+    ### filter out bad quality frames if any, or low confidence frames
     if 'quality_label' in df_track.columns:
-        df_track = df_track[df_track['quality_label'] == 'good']
+        df_track = df_track[ 
+                            (df_track['quality_label'] == 'good')
+                            & (df_track['behavior_conf'].astype(float) >= 0.7)
+                            ]
         row_count = len(df_track)
         if row_count == 0:
             return
@@ -323,6 +331,49 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
     print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
 
 
+def delete_existing_data_for_day(db_cursor, date: str):
+    """
+    Delete all observations and tracks for a specific calendar day (00:00 -> next day 00:00)
+    based on tracks.start_time.
+    
+    date: 'YYYYMMDD' or 'YYYY-MM-DD'
+    """
+    # Normalize date string
+    if '-' not in date:
+        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    
+    date_dt = pd.to_datetime(date)
+
+    day_start = date_dt.normalize()                  # 00:00:00
+    day_end = day_start + pd.Timedelta(days=1)       # next day 00:00:00
+
+    print(f"Deleting existing data for day: {day_start} to {day_end}")
+
+    # Delete observations linked to tracks in this day
+    db_cursor.execute(
+        """
+        DELETE FROM observations
+        WHERE track_id IN (
+            SELECT id FROM tracks
+            WHERE start_time >= %s AND start_time < %s
+        )
+        """,
+        (day_start, day_end)
+    )
+    deleted_observations = db_cursor.rowcount
+
+    # Delete tracks in this day
+    db_cursor.execute(
+        """
+        DELETE FROM tracks
+        WHERE start_time >= %s AND start_time < %s
+        """,
+        (day_start, day_end)
+    )
+    deleted_tracks = db_cursor.rowcount
+
+    print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
+
 def main(args):
     root_dir: Path = args.dir
     # First gather all dates
@@ -339,7 +390,11 @@ def main(args):
     start_timestamp = pd.to_datetime(start_timestamp, format="%H%M%S")
     end_timestamp = pd.to_datetime(end_timestamp, format="%H%M%S")
 
-    db_connection = psycopg2.connect("dbname=zoo_vision user=dherrera")
+    # db_connection = psycopg2.connect("dbname=zoo_vision user=dherrera")
+    db_connection = psycopg2.connect(
+        dbname="zoo_vision",
+        user="mu",
+    )
     db_cursor = db_connection.cursor()
 
     pbar = pbar_manager.counter(
@@ -353,11 +408,15 @@ def main(args):
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
         
         # DELETE existing data for this night BEFORE inserting new data -- to avoid duplicates when re-running the script
-        delete_existing_data_for_night(db_cursor, date, start_timestamp, end_timestamp)
+        if args.delete_existing_day:
+            delete_existing_data_for_day(db_cursor, date)
         db_connection.commit()
         
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
+            ### only upload cam 16, 19
+            # if camera not in ['zag_elp_cam_016', 'zag_elp_cam_019']:
+            #     continue
             ### all track files for this night (date 18h - next day 8h)
             track_files = list_track_files_for_night(camera_dir, date)
 

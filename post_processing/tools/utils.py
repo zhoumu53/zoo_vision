@@ -363,7 +363,9 @@ def filter_short_tracks(df: pd.DataFrame,
     if df.empty:
         return df
     
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'],
+                                    format="%Y-%m-%d %H:%M:%S.%f",
+                                    errors="coerce")
     start_timestamp = df['timestamp'].min()
     end_timestamp = df['timestamp'].max()
     duration = (end_timestamp - start_timestamp).total_seconds() / 60.0
