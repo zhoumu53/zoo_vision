@@ -119,23 +119,6 @@ def merge_csv_tracklets(record_root: Path,
         camera_ids=camera_ids,
     )
     
-    ### temporal smooth per camera, per track_filename
-    df_behavior_smoothed_list = []
-    for camera_id in camera_ids:
-        df_camera = df_behavior[ df_behavior['camera_id'] == camera_id ]
-        track_filenames = df_camera['track_filename'].unique().tolist()
-        for track_filename in track_filenames:
-            df_track = df_camera[ df_camera['track_filename'] == track_filename ]
-
-            df_track_smoothed = behavior_label_smooth(
-                df_track,
-                beh_col='behavior_label',
-                out_col = "behavior_label",
-            )
-                    
-            df_behavior_smoothed_list.append(df_track_smoothed)
-    df_behavior = pd.concat(df_behavior_smoothed_list, ignore_index=True)
-    
     df_label_predictions = load_identity_labels_from_json(
         record_root=Path(record_root),
         camera_ids=camera_ids,
@@ -331,10 +314,12 @@ def main():
     cam_pairs = [
         ['016', '019'],
         ['018', '017']
-        ]
+    ]
+    
+    ### TODO - id-matching across cameras in the same room
     
     print("\n" + "=" * 80)
-    print("Starting CROSS-CAMERA ID MATCHING")
+    print("Starting CROSS-CAMERA BEHAVIOR MATCHING")
     print("=" * 80)
     for camera_ids in cam_pairs:
         try:
@@ -344,8 +329,6 @@ def main():
                 end_datetime= pd.Timestamp(end_datetime),
                 camera_ids= camera_ids
             )
-            
-            columns=['timestamp','camera_id','stitched_label','behavior_label','behavior_conf','quality_label','quality_conf','track_csv_path']
             df_results = smooth_behavior_cross_cameras(df_results, id_col='stitched_label')
             update_csv_from_df(df_results)
         

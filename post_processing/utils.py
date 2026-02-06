@@ -21,7 +21,9 @@ for path in (PROJECT_ROOT, POSE_REID_ROOT):
 
 
 GT_IMAGES_DIR = '/media/ElephantsWD/elephants/reid_gt_cleaned_data'
-SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/elephants_sandbox.csv'
+# SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox.csv'
+SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox_2026-01-19.csv'
+
 
 ROOM_PAIRS = {
     "ohne": ["016", "019"],
@@ -159,7 +161,7 @@ def load_semi_gt_ids(sandbox_gt_path: Path = Path(SEMI_GT_ID_CSV),
                      date: str = '', 
                      camera_id: str = '') -> List[str]:
     try:
-        df = load_sandbox_gts()
+        df = load_sandbox_gts(sandbox_gt_path=sandbox_gt_path)
         df = df[df['date'] == pd.to_datetime(date).date()]
         room = CAMERA_TO_ROOM[camera_id]
         df = df[df['room'] == room]
@@ -172,7 +174,7 @@ def load_semi_gt_ids(sandbox_gt_path: Path = Path(SEMI_GT_ID_CSV),
 def get_dates_with_semi_gt(sandbox_gt_path: Path = Path(SEMI_GT_ID_CSV),
                            processed_dir: Path = Path('/media/ElephantsWD/elephants/xmas/tracks/zag_elp_cam_016')) -> List[str]:
     
-    df = load_sandbox_gts()
+    df = load_sandbox_gts(sandbox_gt_path=sandbox_gt_path)
     gt_dates = [date.strftime('%Y-%m-%d') for date in df['date'].unique().tolist()]
     
     # list all folder under processed_dir
