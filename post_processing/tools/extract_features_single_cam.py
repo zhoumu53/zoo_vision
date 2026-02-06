@@ -93,6 +93,24 @@ def process_behavior_for_track(
             # load csv - get good quality frame indices
             df_existing = pd.read_csv(out_csv_path)
             
+            ### check if '_raw' column exists - if yes, use 'behavior_label' for behavior_label, if not, use 'behavior_label_raw' for behavior_label
+            if 'behavior_label_raw' not in df_existing.columns:
+                ## temporal smooth -- for behavior labels 
+                df_track_smoothed = behavior_label_smooth(
+                    df_existing,
+                    beh_col='behavior_label',
+                    out_col = "behavior_label_smoothed",
+                )
+                ## rename behavior_label_smoothed to behavior_label, behavior_label to behavior_label_raw
+                df_track_smoothed = df_track_smoothed.rename(
+                    columns={
+                        'behavior_label': 'behavior_label_raw',
+                        'behavior_label_smoothed': 'behavior_label',
+                    }
+                )
+                ### save back to csv
+                df_track_smoothed.to_csv(out_csv_path, index=False)
+            
             ### sample from good quality frames & high confidence - behavior_conf >= 0.7
             ### TODO -- ACTIVE REID because currently in gallery-set we don't have enough sleeping frames for reid matching
             good_indices = df_existing.index[
@@ -156,6 +174,21 @@ def process_behavior_for_track(
                     (df_tracks_behavior["behavior_conf"].astype(float) >= 0.7)
                 ].tolist()
             frame_indices = good_indices
+            
+            ## temporal smooth -- for behavior labels 
+            df_track_smoothed = behavior_label_smooth(
+                df_tracks_behavior,
+                beh_col='behavior_label',
+                out_col = "behavior_label_smoothed",
+            )
+            ## rename behavior_label_smoothed to behavior_label, behavior_label to behavior_label_raw
+            df_track_smoothed = df_track_smoothed.rename(
+                columns={
+                    'behavior_label': 'behavior_label_raw',
+                    'behavior_label_smoothed': 'behavior_label',
+                }
+            )
+            df_tracks_behavior = df_track_smoothed
 
             df_tracks_behavior.to_csv(out_csv_path, index=False)
             logger.info("Saved behavior predictions to %s", out_csv_path)
@@ -396,6 +429,7 @@ def main():
             logger=logger,
             frame_indices=frame_indices,   ## good frame indices from behavior
         )
+  
     endtime = datetime.now()
     logger.info("Post-processing completed in %s", str(endtime - starttime))
 
