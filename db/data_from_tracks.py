@@ -147,6 +147,8 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
     if individual == 'invalid':
         individual = 'Invalid'
+    if individual not in INDIVIDUALS_TO_ID:  ## 'unassigned'
+        return
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)
     row_count = len(df_track)

@@ -246,6 +246,7 @@ def load_valid_tracks(record_root,
                       camera_ids,
                       start_datetime: pd.Timestamp,
                       end_datetime: pd.Timestamp,
+                      behavior_csv_suffix: str = '_behavior.csv'
                      ) -> pd.DataFrame:
     
     from post_processing.core.file_manager import (
@@ -268,7 +269,7 @@ def load_valid_tracks(record_root,
         for date in date_list:
             td = offline_track_dir(record_root, cam_id, date)
             csv_list = list_track_files(td)
-            csv_list = [f for f in csv_list if '_behavior' not in str(f)]  ### track csv only
+            csv_list = [f for f in csv_list if behavior_csv_suffix not in str(f)]  ### track csv only
             if cam_id not in all_track_csvs:
                 all_track_csvs[cam_id] = []
             all_track_csvs[cam_id].extend(csv_list)
@@ -279,7 +280,7 @@ def load_valid_tracks(record_root,
         for track_file in track_files:
             # print("Processing track file:", track_file)
             date = track_file.parent.name
-            behavior_csv = track_file.with_name(track_file.stem + '_behavior.csv')
+            behavior_csv = track_file.with_name(track_file.stem + behavior_csv_suffix)
             if not behavior_csv.exists():
                 continue
             
@@ -298,9 +299,9 @@ def load_valid_tracks(record_root,
                 continue
 
             ### check if length matches
-            if len(track_data) != len(behavior_data):
-                print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
-                continue
+            # if len(track_data) != len(behavior_data):
+                # print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
+                # continue
 
             track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
 

@@ -4,14 +4,15 @@ import pandas as pd
 import os
 import glob
 
-from post_processing.utils import ID2NAMES, CAMERA_TO_ROOM, load_semi_gt_ids
-
+from post_processing.utils import ID2NAMES, CAMERA_TO_ROOM, SEMI_GT_ID_CSV, load_semi_gt_ids
+from pathlib import Path
 
 
 
 
 
 def get_semi_gts_on_tracks(processed_dir = '/media/ElephantsWD/elephants/xmas/tracks/',
+                           sandbox_gt_path=Path(SEMI_GT_ID_CSV),
                            output = '/media/mu/zoo_vision/data/semi_gts/semi_gt_analysis.csv'):
     
 
@@ -44,7 +45,9 @@ def get_semi_gts_on_tracks(processed_dir = '/media/ElephantsWD/elephants/xmas/tr
             n_tracks = len(track_csvs)
             
             cam_id = cam.split('_')[-1]
-            gts = load_semi_gt_ids(date=date, camera_id=cam_id)
+            gts = load_semi_gt_ids(sandbox_gt_path=sandbox_gt_path,
+                date=date, 
+                camera_id=cam_id)
 
             data['camera'].append(cam)
             data['date'].append(date)
@@ -102,7 +105,9 @@ def build_paired_summary(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # normalize / parse
-    df["date"] = pd.to_datetime(df["date"], errors="raise").dt.date.astype(str)
+    df["date"] = df["date"].astype(str).str.slice(0, 10)
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="raise").dt.date.astype(str)
+    # df["date"] = pd.to_datetime(df["date"], errors="raise").dt.date.astype(str)
     df["IDs_list"] = df["IDs"].apply(_parse_ids)
     df["IDs"] = df["IDs_list"].apply(lambda xs: ",".join(xs) if xs else "")
 
@@ -192,6 +197,7 @@ def get_valid_dates_with_semi_gt(df):
     print(f"Found {len(valid_dates)} valid dates with semi GTs and more than 10 tracks per camera.")
 
     print("Valid dates:", valid_dates)
+    return df_valid
 
 
 PAIR = {
@@ -207,11 +213,11 @@ def main():
     
     df = get_semi_gts_on_tracks()
     print("df", df)
-    # df_to_process = get_valid_dates_with_semi_gt(df)
-    # print("df_to_process", df_to_process)
-    # df = df[df['IDs'].map(lambda x: x != '[]')]
+    df_to_process = get_valid_dates_with_semi_gt(df)
+    print("df_to_process", df_to_process)
+    df = df[df['IDs'].map(lambda x: x != '[]')]
     summary = build_paired_summary(df)
-    summary.to_csv("paired_summary.csv", index=False)
+    summary.to_csv("/media/mu/zoo_vision/data/semi_gts/paired_summary.csv", index=False)
     print(summary)
 
 if __name__ == "__main__":

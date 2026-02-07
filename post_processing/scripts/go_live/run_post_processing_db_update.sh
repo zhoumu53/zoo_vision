@@ -6,13 +6,16 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 echo "Project root: $PROJECT_ROOT"
+
 source "$PROJECT_ROOT/env/bin/activate"
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # Parse arguments
 DATE=${1:-$(date -d "yesterday" +"%Y%m%d")}   ## default to yesterday's date (last night)
 [[ $# -gt 0 ]] && shift
 
-ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
+# ONLINE_CONFIG_FILE="$PROJECT_ROOT/data/config.json"
+ONLINE_CONFIG_FILE='/home/dherrera/git/zoo_vision/data/config.json'
 ## LOAD RECORD ROOT FROM CONFIG FILE
 
 # Validate config exists
@@ -28,7 +31,8 @@ echo "Output dir: $OUTPUT_DIR"
 # Setup logging
 LOG_DIR="${RECORD_ROOT}/logs/post_processing/${DATE}"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/post_processing_log_at_$(date +"%Y%m%d_%H%M%S").log"
+LOG_FILE="$LOG_DIR/log_$(date +"%Y%m%d_%H%M%S").log"
+echo "Logging to: $LOG_FILE"
 
 # Parse individual assignments (optional)  -- best performance if known individuals provided
 cam1619_individuals="${1:-}"
@@ -51,7 +55,7 @@ python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --d
                                           --end_timestamp 8 \
                                           --run-stitching &>> "$LOG_FILE"
 
-
+echo "Feature extraction and stitching completed for date: $DATE"
 ##### UPDATE DB FROM TRACKS ###########
 dates=("$DATE")
 next_day=$(date -d "$DATE +1 day" +"%Y%m%d")
@@ -63,5 +67,4 @@ python $PROJECT_ROOT/db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
     --start_timestamp 18 \
     --end_timestamp 8 \
     --dates "${dates[@]}" &>> "$LOG_FILE"
-
-echo "Updating DB -- Done!"
+echo "DB update completed for dates: ${dates[*]}"
