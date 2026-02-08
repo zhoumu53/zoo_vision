@@ -1,32 +1,28 @@
-from datetime import datetime, time
+from video_db import load_and_update_db, VideoDB
+
+from datetime import datetime
 import pandas as pd
 from pathlib import Path
 import logging
 import numpy as np
-import bisect
 from dataclasses import dataclass
 import cv2
-import dateutil
 import pytz
 
 logger = logging.getLogger(__name__)
 
 
-def parse_timestamp(timestamp_str: str) -> datetime:
-    timestamp = dateutil.parser.parse(timestamp_str)
-
+def parse_timestamp(timestamp_str: datetime) -> datetime:
     # Assume date is in swiss timezone if no timezone is given
     tz = pytz.timezone("Europe/Zurich")
-    timestamp = tz.localize(timestamp, is_dst=False)
+    timestamp = tz.localize(timestamp_str, is_dst=False)
     return timestamp
 
 
-async def find_camera_image(
-    video_db, video_root: Path, camera: str, timestamp: datetime
-) -> np.ndarray | None:
-    camera_db = video_db["cameras"][camera]
-    for video_name, start_time_str, end_time_str in zip(
-        camera_db["videos"], camera_db["start_times"], camera_db["end_times"]
+async def find_camera_image(camera: str, timestamp: datetime) -> np.ndarray | None:
+    camera_db = load_and_update_db().cameras[camera]
+    for video_path, start_time_str, end_time_str in zip(
+        camera_db.filenames, camera_db.start_times, camera_db.end_times
     ):
         start_time = parse_timestamp(start_time_str)
         if start_time > timestamp:
@@ -45,7 +41,6 @@ async def find_camera_image(
 
         # Load video
         cvCapture = cv2.VideoCapture()
-        video_path = video_root / video_name
         if not cvCapture.open(video_path):
             logger.warning(f"Could not load video from disk: {video_path}")
             return None

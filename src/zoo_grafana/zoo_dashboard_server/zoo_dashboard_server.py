@@ -10,9 +10,11 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 from project_root import PROJECT_ROOT
 from track_search import *
 from camera_images import find_camera_image
-from track_heatmap import make_map_heatmap, IDENTITY_BY_NAME
-from dataclasses import asdict
+from track_heatmap import make_map_heatmap
+from project_config import get_config
 
+import traceback
+from dataclasses import asdict
 import io
 import json
 import base64
@@ -63,14 +65,6 @@ def encode_base64(byte_arr: io.BytesIO) -> str:
 @ttl_cache(maxsize=128, ttl=30 * 60)
 def read_track_ranges_cached(path: Path) -> DayData:
     return read_track_ranges(path)
-
-
-@ttl_cache(maxsize=1, ttl=30 * 60)
-def get_config():
-    config_path = PROJECT_ROOT / "data" / "config.json"
-    with config_path.open() as f:
-        config = json.load(f)
-    return config
 
 
 def parse_timestamp(timestamp_str: str) -> datetime:
@@ -125,9 +119,9 @@ async def stream_or_cancel_json(task: asyncio.Task[str]):
                 if task in done:
                     try:
                         content = await task
-                    except Exception as e:
+                    except Exception:
                         # TODO: this should return a 505 Internal Error response but we cannot change it now
-                        content = app.json.dumps({"error": str(e)})
+                        content = app.json.dumps({"error": traceback.format_exc()})
                     yield content
                     break
                 else:
@@ -198,23 +192,8 @@ async def test_track_image_get(query_args: TrackImagesParams):
 # Camera images
 
 
-@ttl_cache(ttl=30 * 60)
-def get_video_db():
-    config = get_config()
-    video_db_file = Path(config["video_db"])
-    with video_db_file.open() as fd:
-        video_db = json.load(fd)
-    return video_db
-
-
 async def camera_image(camera: str, timestamp: datetime):
-    config = get_config()
-    if "video_root" in config and config["video_root"] != "":
-        video_root = Path(config["video_root"])
-    else:
-        video_root = Path(config["video_db"]).parent
-
-    image = await find_camera_image(get_video_db(), video_root, camera, timestamp)
+    image = await find_camera_image(camera, timestamp)
     if image is None:
         with open("static/no_image.jpg", "rb") as f:
             raw_bytes = io.BytesIO(f.read())
@@ -291,7 +270,7 @@ async def heamap_world_get(query_args: HeatmapParams):
         try:
             identity = [int(query_args.identity)]
         except:
-            identity = [IDENTITY_BY_NAME[query_args.identity.lower()]]
+            identity = [INDIVIDUAL_ID_FROM_NAME[query_args.identity.lower()]]
 
     bytes = make_map_heatmap(
         start_timestamp=start_timestamp,

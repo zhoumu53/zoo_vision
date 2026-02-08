@@ -28,6 +28,8 @@ INDIVIDUAL_FROM_ID = {
     4: "Panang",
     5: "Thai",
 }
+INDIVIDUAL_ID_FROM_NAME = {name.lower(): id for id, name in INDIVIDUAL_FROM_ID.items()}
+
 COLOR_FROM_INDIVIDUAL_ID = {
     0: "#777777",
     1: "#73BF69",

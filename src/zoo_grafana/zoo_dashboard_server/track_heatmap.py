@@ -1,4 +1,7 @@
 from project_root import PROJECT_ROOT
+from track_search import INDIVIDUAL_FROM_ID
+from src.zoo_grafana.zoo_dashboard_server.project_config import get_config
+
 from datetime import datetime
 import logging
 import numpy as np
@@ -11,15 +14,6 @@ import matplotlib.pyplot as plt
 import json
 from cachetools.func import ttl_cache
 
-IDENTITY_BY_NAME = {
-    "invalid": 0,
-    "chandra": 1,
-    "indi": 2,
-    "farha": 3,
-    "panang": 4,
-    "thai": 5,
-}
-
 
 @ttl_cache(ttl=30 * 60)
 def get_submap():
@@ -29,10 +23,7 @@ def get_submap():
     SUBMAP_HEIGHT = 900
     SUBMAP_SCALE = 0.25
 
-    # Load config
-    config_file = PROJECT_ROOT / "data/config.json"
-    with config_file.open() as f:
-        config = json.load(f)
+    config = get_config()
 
     im_map = cv2.imread(str(PROJECT_ROOT / "data/kkep_floorplan.png"))
     im_submap = im_map[
@@ -65,8 +56,7 @@ def get_submap():
 
 def _identities_to_title(identity_ids: list[int] | None):
     if identity_ids:
-        name_by_id = {i: n.title() for (n, i) in IDENTITY_BY_NAME.items()}
-        return ", ".join([name_by_id[id] for id in identity_ids])
+        return ", ".join([INDIVIDUAL_FROM_ID[id] for id in identity_ids])
     else:
         return "All individuals"
 
