@@ -1,19 +1,24 @@
 from project_root import PROJECT_ROOT
-from datetime import datetime, time
-import pandas as pd
-from pathlib import Path
+from datetime import datetime
 import logging
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from dataclasses import dataclass
 import psycopg2
 import cv2
-import asyncio
+from io import BytesIO
 from typing import Any
-from tempfile import TemporaryDirectory
 import matplotlib.pyplot as plt
 import json
 from cachetools.func import ttl_cache
+
+IDENTITY_BY_NAME = {
+    "invalid": 0,
+    "chandra": 1,
+    "indi": 2,
+    "farha": 3,
+    "panang": 4,
+    "thai": 5,
+}
 
 
 @ttl_cache(ttl=30 * 60)
@@ -56,6 +61,14 @@ def get_submap():
         @ T_map_from_world2
     )
     return im_submap, T_submap_from_world2
+
+
+def _identities_to_title(identity_ids: list[int] | None):
+    if identity_ids:
+        name_by_id = {i: n.title() for (n, i) in IDENTITY_BY_NAME.items()}
+        return ", ".join([name_by_id[id] for id in identity_ids])
+    else:
+        return "All individuals"
 
 
 def make_map_heatmap(
@@ -132,11 +145,17 @@ WHERE cte.observation_count > 1
     ax.imshow(im_submap)
     ax.imshow(im_heat, alpha=0.5, cmap="jet")
     ax.set_axis_off()
+    ax.text(
+        5.5,
+        5.5,
+        _identities_to_title(identity_ids),
+        va="top",
+        color="white",
+        backgroundcolor="gray",
+    )
 
-    # fig.colorbar(im,format="")
-    with TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "heatmap.png"
-        fig.savefig(str(tmp_path), bbox_inches="tight", pad_inches=0)
-        im_bytes = tmp_path.read_bytes()
+    stream = BytesIO()
+    fig.savefig(stream, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
 
-    return im_bytes
+    return stream.getvalue()

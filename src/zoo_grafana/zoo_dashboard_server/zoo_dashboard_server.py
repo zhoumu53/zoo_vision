@@ -10,7 +10,7 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 from project_root import PROJECT_ROOT
 from track_search import *
 from camera_images import find_camera_image
-from track_heatmap import make_map_heatmap
+from track_heatmap import make_map_heatmap, IDENTITY_BY_NAME
 from dataclasses import asdict
 
 import io
@@ -277,7 +277,7 @@ def create_app(*args) -> Quart:
 class HeatmapParams:
     start_timestamp: str = DEFAULT_TIMESTAMP
     end_timestamp: str = DEFAULT_END_TIMESTAMP
-    identity_id: int | None = None
+    identity: str | None = None
 
 
 @app.route("/heatmaps/world", methods=["GET"])
@@ -286,10 +286,17 @@ async def heamap_world_get(query_args: HeatmapParams):
     start_timestamp = parse_timestamp(query_args.start_timestamp)
     end_timestamp = parse_timestamp(query_args.end_timestamp)
 
+    identity = None
+    if query_args.identity:
+        try:
+            identity = [int(query_args.identity)]
+        except:
+            identity = [IDENTITY_BY_NAME[query_args.identity.lower()]]
+
     bytes = make_map_heatmap(
         start_timestamp=start_timestamp,
         end_timestamp=end_timestamp,
-        identity_ids=[query_args.identity_id] if query_args.identity_id else None,
+        identity_ids=identity,
     )
 
     return await send_file(io.BytesIO(bytes), mimetype="image/png")
