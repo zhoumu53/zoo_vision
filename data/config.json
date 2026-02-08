@@ -91,7 +91,7 @@
     "max_seconds_per_recording": 1800
   },
   "video_root": "/mnt/camera_nas",
-  "record_root": "/media/ElephantsWD/elephants/xmas",
+  "record_root": "/media/ElephantsWD/elephants/test_dan/results",
   "record_detection_loss": false,
   "record_keyframes": false,
   "record_tracks": true,
