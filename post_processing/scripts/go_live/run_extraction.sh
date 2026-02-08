@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 echo "Project root: $PROJECT_ROOT"
 source "$PROJECT_ROOT/env/bin/activate"
@@ -27,9 +28,9 @@ OUTPUT_DIR="$(jq -er '.output_dir // (.record_root + "/demo")' "$ONLINE_CONFIG_F
 echo "Record root: $RECORD_ROOT"
 echo "Output dir: $OUTPUT_DIR"
 
-LOG_DIR="$RECORD_ROOT/logs/feature_extraction"
+LOG_DIR="$RECORD_ROOT/logs/feature_extraction/${DATE}"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/extraction_night_${DATE}_log_at_$(date +"%Y%m%d_%H%M%S").log"
+LOG_FILE="$LOG_DIR/extraction_log_at_$(date +"%Y%m%d_%H%M%S").log"
 
 for CAM_ID in "${CAMERA_IDS[@]}"; do
   echo "=== Extracting features for date: $DATE, camera: $CAM_ID ==="
