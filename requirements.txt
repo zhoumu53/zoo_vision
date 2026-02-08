@@ -65,4 +65,5 @@ cvat-cli
 # Dashboard server
 quart
 quart-cors
+quart-schema
 hypercorn

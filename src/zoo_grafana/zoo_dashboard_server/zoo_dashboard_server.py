@@ -18,6 +18,7 @@ import base64
 from PIL import Image
 from quart import Quart, request, send_file, Response
 from quart_cors import cors
+from quart_schema import validate_request, validate_querystring, QuartSchema
 from cachetools.func import ttl_cache
 from datetime import datetime, timedelta
 import dateutil
@@ -35,6 +36,7 @@ config = {
 app = Quart(__name__)
 app.config.from_mapping(config)
 cors(app)
+QuartSchema(app)
 
 ################################################
 # Image utils
@@ -139,10 +141,17 @@ async def stream_or_cancel_json(task: asyncio.Task[str]):
         task.cancel()
 
 
+@dataclass
+class TrackImagesParams:
+    camera: str = DEFAULT_CAMERA
+    timestamp: str = DEFAULT_TIMESTAMP
+
+
 @app.route("/track_images", methods=["GET"])
-async def track_images_get():
-    camera = request.args.get("camera", "zag_elp_cam_016")
-    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+@validate_querystring(TrackImagesParams)
+async def track_images_get(query_args: TrackImagesParams):
+    camera = query_args.camera
+    timestamp = parse_timestamp(query_args.timestamp)
 
     async def impl():
         detections = await track_images(camera, timestamp)
@@ -169,17 +178,18 @@ async def track_images_get():
 
 
 @app.route("/test_track_image", methods=["GET"])
-async def test_track_image_get():
-    camera = request.args.get("camera", "zag_elp_cam_016")
-    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+@validate_querystring(TrackImagesParams)
+async def test_track_image_get(query_args: TrackImagesParams):
+    camera = query_args.camera
+    timestamp = parse_timestamp(query_args.timestamp)
     detections = await track_images(camera, timestamp)
 
     if len(detections) == 0:
-        return send_file("static/no_image.jpg")
+        return await send_file("static/no_image.jpg")
 
     # Compress and return
     raw_bytes = compress_jpeg(Image.fromarray(detections[0].image))
-    return send_file(raw_bytes, mimetype="image/jpg")
+    return await send_file(raw_bytes, mimetype="image/jpg")
 
 
 ################################################
@@ -218,10 +228,17 @@ async def camera_image(camera: str, timestamp: datetime):
     )
 
 
+@dataclass
+class CameraImageParams:
+    camera: str = DEFAULT_CAMERA
+    timestamp: str = DEFAULT_TIMESTAMP
+
+
 @app.route("/camera_image", methods=["GET"])
-async def camera_image_get():
-    camera = request.args.get("camera", DEFAULT_CAMERA)
-    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+@validate_querystring(CameraImageParams)
+async def camera_image_get(query_args: CameraImageParams):
+    camera = query_args.camera
+    timestamp = parse_timestamp(query_args.timestamp)
 
     task = asyncio.create_task(camera_image(camera, timestamp))
 
@@ -230,15 +247,16 @@ async def camera_image_get():
 
 
 @app.route("/test_camera_image", methods=["GET"])
-async def test_camera_image_get():
-    camera = request.args.get("camera", DEFAULT_CAMERA)
-    timestamp = parse_timestamp(request.args.get("timestamp", DEFAULT_TIMESTAMP))
+@validate_querystring(CameraImageParams)
+async def test_camera_image_get(query_args: CameraImageParams):
+    camera = query_args.camera
+    timestamp = parse_timestamp(query_args.timestamp)
     json_str = await camera_image(camera, timestamp)
 
     json_data = json.loads(json_str)
     image_base64 = json_data["image"][len(JPEG_PREFIX) :]
     image_jpg = base64.decodebytes(image_base64.encode("ascii"))
-    return send_file(io.BytesIO(image_jpg), mimetype="image/jpg")
+    return await send_file(io.BytesIO(image_jpg), mimetype="image/jpg")
 
 
 def create_app(*args) -> Quart:
