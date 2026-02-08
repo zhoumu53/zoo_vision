@@ -10,6 +10,7 @@ flask --app zoo_dashboard_server run --host 0.0.0.0 --debug
 from project_root import PROJECT_ROOT
 from track_search import *
 from camera_images import find_camera_image
+from track_heatmap import make_map_heatmap
 from dataclasses import asdict
 
 import io
@@ -26,6 +27,7 @@ import asyncio
 
 DEFAULT_CAMERA = "zag_elp_cam_016"
 DEFAULT_TIMESTAMP = "2025-02-09T20:56:00"
+DEFAULT_END_TIMESTAMP = "2025-02-10T20:56:00"
 
 JPEG_PREFIX = "data:image/jpeg;base64,"
 
@@ -257,6 +259,40 @@ async def test_camera_image_get(query_args: CameraImageParams):
     image_base64 = json_data["image"][len(JPEG_PREFIX) :]
     image_jpg = base64.decodebytes(image_base64.encode("ascii"))
     return await send_file(io.BytesIO(image_jpg), mimetype="image/jpg")
+
+
+def create_app(*args) -> Quart:
+    """
+    Used to call from command line:
+        waitress-serve --port 5000 --call zoo_dashboard_server:create_app
+    """
+    return app
+
+
+################################################
+# World heatmap images
+
+
+@dataclass
+class HeatmapParams:
+    start_timestamp: str = DEFAULT_TIMESTAMP
+    end_timestamp: str = DEFAULT_END_TIMESTAMP
+    identity_id: int | None = None
+
+
+@app.route("/heatmaps/world", methods=["GET"])
+@validate_querystring(HeatmapParams)
+async def heamap_world_get(query_args: HeatmapParams):
+    start_timestamp = parse_timestamp(query_args.start_timestamp)
+    end_timestamp = parse_timestamp(query_args.end_timestamp)
+
+    bytes = make_map_heatmap(
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        identity_ids=[query_args.identity_id] if query_args.identity_id else None,
+    )
+
+    return await send_file(io.BytesIO(bytes), mimetype="image/png")
 
 
 def create_app(*args) -> Quart:
