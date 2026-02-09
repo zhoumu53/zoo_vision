@@ -179,6 +179,7 @@ log/**
 models
 
 data/**/*.mp4
+data/all_nas_videos.json
 # Rerun things
 **/*.rbl
 **/*.rrd

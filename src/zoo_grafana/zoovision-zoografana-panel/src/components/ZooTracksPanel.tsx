@@ -8,6 +8,7 @@ const NO_IMAGE_JPG = require('../img/no_image.jpg');
 
 const DEFAULT_TIMESTAMP = "2025-11-15 19:08:22.308000000";
 const CAMERAS = ["zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_016", "zag_elp_cam_019"];
+const IDENTITIES = [["Indi", "Chandra"], ["Farha", "Panang"], ["Thai"]];
 
 interface Props extends PanelProps<ZooTracksOptions> { }
 
@@ -122,6 +123,10 @@ function buildCameraImageUrl(track_images_server: string, cameraName: string, ti
   return `${track_images_server}/camera_image?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
+function buildWorldHeatmapUrl(track_images_server: string, start: string, end: string, identity: string): string {
+  return `${track_images_server}/heatmaps/world?start_timestamp=${start}&end_timestamp=${end}&identity=${identity}`;
+}
+
 async function fetchTrackImages(url: string, abortSignal: any, setCurrentTimestamp: any, setState: (state: any) => void) {
   let new_state = {};
   let server_timestamp = "";
@@ -193,7 +198,7 @@ async function changeTimestamp(track_images_server: string, controllerRef: any, 
   }
 }
 
-export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id }) => {
+export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id, replaceVariables }) => {
   const styles = useStyles2(getStyles);
 
   const controllerRef = useRef<AbortController>();
@@ -306,15 +311,23 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           <th colSpan={2}><h2>Sand box ohne</h2></th>
         </tr>
         <tr>
-          {CAMERAS.map((cameraName) => <td>{cameraName}</td>)}
+          {CAMERAS.map((cameraName) => <td key={cameraName}>{cameraName}</td>)}
         </tr>
         <tr>
-          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
+          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
         </tr>
         <tr>
-          {CAMERAS.map((_, index) => <td className={cx(styles.verticalCell)}>{makeCameraImages(index)}</td>)}
+          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.verticalCell)}>{makeCameraImages(index)}</td>)}
         </tr>
       </table>
+
+      <h2>Occupancy heatmaps</h2>
+      {IDENTITIES.map((social_group, _) => <>{
+        social_group.map((identity, _) =>
+          <img src={buildWorldHeatmapUrl(options.track_images_server, replaceVariables("${__from:date:iso}"), replaceVariables("${__to:date:iso}"), identity)} />
+        )
+      }
+      </>)}
     </div >
   );
 };
