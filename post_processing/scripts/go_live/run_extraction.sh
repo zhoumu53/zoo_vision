@@ -7,13 +7,19 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 
 source "$PROJECT_ROOT/env/bin/activate"
-export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 echo "Starting feature extraction and stitching process..."
 echo "Project root: $PROJECT_ROOT"
 
-DATE="${1:-$(date -d "yesterday" +%Y%m%d)}"
-[[ $# -gt 0 ]] && shift
+#### 
+NIGHT_CUTOFF=12
+HOUR=$(date +%H)
+if (( HOUR < NIGHT_CUTOFF )); then
+  DATE=$(date -d "yesterday" +%Y%m%d)
+else
+  DATE=$(date +%Y%m%d)
+fi
+echo "Processing NIGHT=$DATE (Now: $(date))"
 
 CAMERA_IDS=("$@")
 if [[ ${#CAMERA_IDS[@]} -eq 0 ]]; then

@@ -8,7 +8,6 @@ cd "$PROJECT_ROOT"
 echo "Project root: $PROJECT_ROOT"
 
 source "$PROJECT_ROOT/env/bin/activate"
-export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # Parse arguments
 DATE=${1:-$(date -d "yesterday" +"%Y%m%d")}   ## default to yesterday's date (last night)
