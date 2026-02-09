@@ -145,9 +145,7 @@ def update_dir(db: VideoDB, dir: Path):
 
         if path.is_dir():
             update_dir(db, path)
-            return
-
-        if path.suffix == ".mp4":
+        elif path.suffix == ".mp4":
             update_file(db, path)
 
 
@@ -162,7 +160,11 @@ def update_file(db: VideoDB, path: Path):
         return
 
     # Need to update!
-    info = parse_video_name(path)
+    try:
+        info = parse_video_name(path)
+    except Exception as e:
+        logger.error(f"Error parsing {str(path)}, error: {e}")
+        return
     camera_data = db.cameras[info.camera]
     camera_data.filenames.append(path)
     camera_data.start_times.append(info.start_time)
@@ -188,7 +190,7 @@ def update_db(db: VideoDB):
         )
 
     # Normalize names
-    dir_dict = {str(name).replace("-", "_").lower(): name for name in dirs}
+    dir_dict = {str(name.name).replace("-", "_").lower(): name for name in dirs}
 
     # Search for new files
     # Two options: either it is the NAS and the first level is the camera names, or we need to to a glob
@@ -201,10 +203,9 @@ def update_db(db: VideoDB):
                 logger.error(f"Camera {name} not found in {str(video_root)}")
                 continue
 
-            camera_path = video_root / dir_dict[name]
-            update_dir(db, camera_path)
+            update_dir(db, dir_dict[name])
     else:
-        logger.info("Did not find camera names in top directory, globbing for mp4s")
+        logger.info(f"Did not find camera names in top directory {str(video_root)}, globbing for mp4s")
         for file in video_root.glob("**/*.mp4"):
             update_file(db, file)
 
