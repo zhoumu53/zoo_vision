@@ -6,6 +6,7 @@ from post_processing.tools.videoloader import VideoLoader
 from post_processing.core.behavior_inference import BehaviorInference
 import pandas as pd
 import numpy as np
+import json
 
 def setup_logger(level: str) -> logging.Logger:
     logging.basicConfig(
@@ -150,7 +151,7 @@ def get_good_frame_indices(df_tracks, ) -> list[int]:
 
 def load_tracklets_dataframe(json_path: Path) -> pd.DataFrame:
     """Load tracklet data from a JSON file."""
-    import json
+    
     with open(json_path, 'r') as f:
         data = json.load(f)
 
@@ -174,7 +175,6 @@ def load_identity_labels_from_json(
         DataFrame with columns: track_filename, stitched_label, voted_track_label, 
                                 smoothed_label, identity_label
     """
-    import json
     
     # Format datetime for JSON filename
     start_time_str = start_datetime.strftime("%Y%m%d_%H%M%S")
@@ -221,6 +221,110 @@ def load_identity_labels_from_json(
     
     df_labels = pd.DataFrame(all_labels)
     return df_labels
+
+
+def load_tracklet_json_for_camera(
+    record_root: Path,
+    cam_id: str,
+    start_datetime: pd.Timestamp,
+    end_datetime: pd.Timestamp,
+) -> tuple[Path, list]:
+    """
+    Load tracklet JSON file for a specific camera.
+    
+    Parameters
+    ----------
+    record_root : Path
+        Root directory for records
+    cam_id : str
+        Camera ID (e.g., '016', '017')
+    start_datetime : pd.Timestamp
+        Start datetime
+    end_datetime : pd.Timestamp
+        End datetime
+        
+    Returns
+    -------
+    tuple[Path, list]
+        (json_path, tracklets_data) where tracklets_data is list of tracklet dicts
+        
+    Raises
+    ------
+    FileNotFoundError
+        If JSON file not found
+    """
+    
+    start_time_str = start_datetime.strftime("%Y%m%d_%H%M%S")
+    end_time_str = end_datetime.strftime("%Y%m%d_%H%M%S")
+    date_str = start_datetime.strftime("%Y-%m-%d")
+    
+    json_dir = record_root / 'demo' / f'zag_elp_cam_{cam_id}' / date_str
+    json_pattern = f'stitched_tracklets_cam{cam_id}_{start_time_str}_{end_time_str}.json'
+    
+    json_files = list(json_dir.glob(json_pattern))
+    
+    if not json_files:
+        raise FileNotFoundError(f"No JSON file found for camera {cam_id} at {json_dir} with pattern {json_pattern}")
+    
+    json_path = json_files[0]
+    
+    with open(json_path, 'r') as f:
+        tracklets_data = json.load(f)
+    
+    return json_path, tracklets_data
+
+
+def update_tracklet_json_identity_labels(
+    json_path: Path,
+    tracklets_data: list,
+    track_to_label: dict[str, str],
+    logger: logging.Logger = None
+) -> Path:
+    """
+    Update identity labels in tracklet JSON data and save to file.
+    
+    Parameters
+    ----------
+    json_path : Path
+        Path to the JSON file to update
+    tracklets_data : list
+        List of tracklet dictionaries loaded from JSON
+    track_to_label : dict[str, str]
+        Mapping of track_filename to new identity_label
+    logger : logging.Logger
+        Optional logger
+        
+    Returns
+    -------
+    Path
+        Path to the updated JSON file
+    """
+    
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    updated_count = 0
+    
+    for tracklet in tracklets_data:
+        track_filename = tracklet.get('track_filename', '')
+        
+        if track_filename in track_to_label:
+            new_label = track_to_label[track_filename]
+            old_label = tracklet.get('identity_label', 'unknown')
+            
+            tracklet['identity_label'] = new_label
+            
+            if old_label != new_label:
+                updated_count += 1
+                logger.debug(f"  {track_filename}: {old_label} → {new_label}")
+    
+    # Save updated JSON
+    with open(json_path, 'w') as f:
+        json.dump(tracklets_data, f, indent=2)
+    
+    logger.info(f"✓ Updated {updated_count} identity labels in {json_path.name}")
+    
+    return json_path
 
 
 

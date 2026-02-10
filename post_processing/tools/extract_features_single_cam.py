@@ -356,19 +356,19 @@ def main():
             )
         except Exception as exc:
             logger.error("Failed to get track files for night processing: %s", exc)
-            sys.exit(1)
+            return 1
     else:
         full_track_files = list_track_files(
             get_track_dir(args.record_root, cam_id, args.date),
         )
 
     if not full_track_files or len(full_track_files) == 0:
-        logger.warning("No track files found for night processing between %s and %s for camera %s.", start_dt, end_dt, cam_id)
+        logger.warning("No track files found for night processing for camera %s.", cam_id)
         logger.warning("Please ensure that tracks are available in record_root: %s", get_track_dir(args.record_root, cam_id, args.date))
         logger.info("Exiting post-processing.")
-        sys.exit(0)
+        return 1
     else:
-        logger.info("Found %d track files for night processing between %s and %s.", len(full_track_files), start_dt, end_dt)
+        logger.info("Found %d track files for night processing.", len(full_track_files))
 
     reid_model = load_reid(
         config_path=config.models.reid_config,

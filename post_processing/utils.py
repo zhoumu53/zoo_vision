@@ -218,8 +218,7 @@ def vote_known_individuals(track_dir: Path,
             # now voting based on good quality frames + high confidence behavior + no 'standing' 
             good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
                                                 & (df_behavior['behavior_label'] == '01_standing')
-                                                & (df_behavior['behavior_label'] != '00_invalid')
-                                                & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
+                                                & (df_behavior['behavior_conf'].astype(float) >= 0.9)].tolist()
             if len(good_indices) == 0:  ### all bad quality frames -- no voting
                 voted_track_label = "invalid"
             ### feature_indices for reid voting - pick the features with good quality
@@ -246,6 +245,8 @@ def vote_known_individuals_per_camera_pair(
     """
     Aggregate voting results across camera pairs considering social groups.
     Returns only the TOP 1 social group per camera pair.
+    Ensures no group is assigned to multiple rooms - in case of conflict, 
+    the room with higher votes gets the group, others get top-2.
     
     Args:
         vote_results_dict: Dict mapping camera_id to pd.Series (or list) of vote counts
@@ -267,7 +268,8 @@ def vote_known_individuals_per_camera_pair(
         for individual in individuals:
             individual_to_group[individual] = group_id
     
-    room_individuals = {}
+    # Store group rankings and votes for each room
+    room_group_rankings = {}
     
     for room_name, cam_ids in camera_pairs.items():
         # Aggregate votes across all cameras in this room
@@ -297,7 +299,7 @@ def vote_known_individuals_per_camera_pair(
                 aggregated_votes[individual] += count
         
         if not aggregated_votes:
-            room_individuals[room_name] = []
+            room_group_rankings[room_name] = []
             continue
         
         # Group individuals by their social group
@@ -310,29 +312,92 @@ def vote_known_individuals_per_camera_pair(
                 group_votes[group_id].append((individual, count))
         
         if not group_votes:
-            room_individuals[room_name] = []
+            room_group_rankings[room_name] = []
             continue
         
-        # Calculate total votes per social group
+        # Calculate total votes per social group and rank them
         group_total_votes = {
             group_id: sum(count for _, count in members)
             for group_id, members in group_votes.items()
         }
         
-        # Select ONLY the top 1 group with highest votes
-        top_group_id = max(group_total_votes.items(), key=lambda x: x[1])[0]
-        
-        # Get all individuals from the top group, sorted by votes (descending)
-        top_group_members = sorted(
-            group_votes[top_group_id],
-            key=lambda x: x[1],
+        # Sort groups by votes (descending) to get rankings
+        sorted_groups = sorted(
+            group_total_votes.items(), 
+            key=lambda x: x[1], 
             reverse=True
         )
         
-        # Return all individuals from the top group
-        selected_individuals = [individual for individual, _ in top_group_members]
+        # Store rankings: list of (group_id, total_votes, members)
+        room_group_rankings[room_name] = [
+            (group_id, votes, group_votes[group_id])
+            for group_id, votes in sorted_groups
+        ]
+    
+    # Now assign groups to rooms, resolving conflicts
+    room_individuals = {}
+    assigned_groups = set()
+    
+    # First pass: assign top groups, tracking conflicts
+    room_assignments = {}  # room_name -> (group_id, total_votes)
+    
+    for room_name, rankings in room_group_rankings.items():
+        if not rankings:
+            room_assignments[room_name] = (None, 0)
+        else:
+            top_group_id, top_votes, _ = rankings[0]
+            room_assignments[room_name] = (top_group_id, top_votes)
+    
+    # Detect and resolve conflicts
+    for room_name, (group_id, votes) in room_assignments.items():
+        if group_id is None:
+            room_individuals[room_name] = []
+            continue
         
-        room_individuals[room_name] = selected_individuals
+        # Check if this group is assigned to another room
+        conflict_rooms = [
+            (r, v) for r, (g, v) in room_assignments.items()
+            if g == group_id and r != room_name
+        ]
+        
+        if conflict_rooms:
+            # There's a conflict - compare votes
+            all_competing = [(room_name, votes)] + conflict_rooms
+            winner_room = max(all_competing, key=lambda x: x[1])[0]
+            
+            if winner_room == room_name and group_id not in assigned_groups:
+                # This room wins the group - return ALL members of this social group
+                assigned_groups.add(group_id)
+                room_individuals[room_name] = SOCIAL_GROUPS[group_id]
+            else:
+                # This room loses - try top-2, top-3, etc.
+                rankings = room_group_rankings[room_name]
+                selected_group_members = []
+                for group_id_alt, _, members in rankings:
+                    if group_id_alt not in assigned_groups:
+                        assigned_groups.add(group_id_alt)
+                        # Return ALL members of this social group
+                        selected_group_members = SOCIAL_GROUPS[group_id_alt]
+                        break
+                room_individuals[room_name] = selected_group_members
+        else:
+            # No conflict - assign top group
+            if group_id not in assigned_groups:
+                assigned_groups.add(group_id)
+                # Return ALL members of this social group
+                room_individuals[room_name] = SOCIAL_GROUPS[group_id]
+            else:
+                # Group already assigned elsewhere - get next best
+                rankings = room_group_rankings[room_name]
+                selected_group_members = []
+                for group_id_alt, _, members in rankings:
+                    if group_id_alt not in assigned_groups:
+                        assigned_groups.add(group_id_alt)
+                        # Return ALL members of this social group
+                        selected_group_members = SOCIAL_GROUPS[group_id_alt]
+                        break
+                room_individuals[room_name] = selected_group_members
+                
     
     return room_individuals
 
@@ -357,6 +422,12 @@ def assign_known_individuals_to_cameras(
         vote_results_dict, 
         camera_pairs
     )
+    
+    print("vote_results_dict", vote_results_dict)
+    
+    print("Top individuals per room based on voting:")
+    for room, individuals in room_individuals.items():
+        print(f"Room {room}: {individuals}")
     
     # Assign individuals to each camera based on room
     camera_individuals = {}

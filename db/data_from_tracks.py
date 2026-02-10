@@ -416,10 +416,6 @@ def main(args):
         
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
-            ### only upload cam 16, 19
-            # if camera not in ['zag_elp_cam_016', 'zag_elp_cam_019']:
-            #     continue
-            ### all track files for this night (date 18h - next day 8h)
             track_files = list_track_files_for_night(camera_dir, date)
 
             ### one night data are saved in one json file
