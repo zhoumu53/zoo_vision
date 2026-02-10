@@ -250,9 +250,9 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, width, heig
       if (timestamp_ms == null) {
         return;
       }
-      // The event timestamp is always in browser timezone, convert to utc
-      const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      let timestampUtc_s = timestampToUtc(timestamp_ms / 1000, browserTimeZone)
+      // The event timestamp is always in server timezone, convert to utc
+      // const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      let timestampUtc_s = timestampToUtc(timestamp_ms / 1000, "Europe/Zurich")
       changeTimestamp(options.track_images_server, controllerRef, timestampUtc_s, setCurrentTimestamp, trackImages, trackImagesSetState, cameraImages, cameraImagesSetState);
     });
 
