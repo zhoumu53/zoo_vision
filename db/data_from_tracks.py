@@ -133,19 +133,35 @@ def gather_all_nights(root_dir: Path) -> list[str]:
     return list(sorted(all_nights))
 
 
+def filter_bad_tracks(df_track: pd.DataFrame) -> pd.DataFrame:
+    # filter out short tracks, less than 100 frames or less than 1.5 minutes
+    start_time = df_track["timestamp"].iloc[0]
+    end_time = df_track["timestamp"].iloc[-1]
+    duration = pd.to_datetime(end_time) - pd.to_datetime(start_time)
+    if len(df_track) < 100 or duration.total_seconds() < 90:
+        return pd.DataFrame()
+    # if 70% bad quality frames, or low confidence frames, also filter out the track
+    if 'quality_label' in df_track.columns:
+        # '00_invalid'
+        bad_quality_frames = ((df_track['quality_label'] == 'bad') | (df_track['behavior_label_raw'] == '00_invalid')).sum()
+        if bad_quality_frames / len(df_track) > 0.7:
+            return pd.DataFrame()
+    return df_track
+
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
+    if df_track.empty:
+        return pd.DataFrame()
     behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     if not behavior_file.exists():
-        ### earlier version - we save labels to '_behavior_smoothed' csv, 
-        ### if not exist, to load from '_behavior' csv - new version, with 'behavior_label' which are smoothed, 
-        ### and original labels in 'behavior_label_raw'
-        return pd.DataFrame() 
-    
+        return pd.DataFrame()
     df_behavior = pd.read_csv(behavior_file)
     if df_behavior.empty:
-        return df_track
+        return pd.DataFrame()
     df_merged = pd.merge(df_track, df_behavior, on='timestamp', how='left')
+    df_merged = filter_bad_tracks(df_merged)        
+    if df_merged.empty:
+        return pd.DataFrame()
     return df_merged
 
 
@@ -161,8 +177,8 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     
     ### filter out bad quality frames if any, or low confidence frames
     if 'quality_label' in df_track.columns:
-        df_track = df_track[ 
-                            (df_track['quality_label'] == 'good')
+        df_track = df_track[ (df_track['behavior_label_raw'] != '00_invalid')
+                            & (df_track['quality_label'] == 'good')
                             & (df_track['behavior_conf'].astype(float) >= 0.7)
                             ]
         row_count = len(df_track)

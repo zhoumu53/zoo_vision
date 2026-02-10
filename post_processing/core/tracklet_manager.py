@@ -617,7 +617,8 @@ class TrackletManager:
     def load_tracklets_for_camera(self, 
                                   track_dirs: list[Path], 
                                   camera_id: str | None = None, 
-                                  filter_invalids: bool = True) -> None:
+                                  filter_invalids: bool = True,
+                                  run_reid: bool = False) -> None:
 
         camera_id = camera_id or self.camera_id            
         # track_files = sorted(track_dir.glob("*.csv"))
@@ -679,8 +680,9 @@ class TrackletManager:
             tracklet[0].track_csv_path = track_file
             tracklet[0].semi_gt_labels = self.known_labels
             
-            voted_track_label = "invalid"
-            if tracklet[0].feature_path and tracklet[0].feature_path.exists():
+            voted_track_label = ""
+            ### now no matching -- do it when cross-camera stitching
+            if tracklet[0].feature_path and tracklet[0].feature_path.exists() and run_reid:
                 if self.vote_with_gallery:
                     features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
                     ## load features from good-quality indices only - if all 'bad' - 'invalid'
@@ -791,7 +793,7 @@ class TrackletManager:
         
         self.logger.info(f"Updated smoothed labels for tracklets")
                     
-    def get_stitched_tracklets(self):
+    def assign_stitched_label(self):
         """
         Update tracklets with stitched_label and identity_label directly.
         Includes temporal conflict resolution to fix overlapping tracklets.

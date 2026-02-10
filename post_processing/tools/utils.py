@@ -209,6 +209,7 @@ def load_identity_labels_from_json(
                 'track_filename': tracklet.get('track_filename', ''),
                 'track_csv_path': tracklet.get('track_csv_path', ''),
                 'camera_id': tracklet.get('camera_id', cam_id),
+                'stitched_id': tracklet.get('stitched_id', 'invalid'),
                 'stitched_label': tracklet.get('stitched_label', 'invalid'),
                 'voted_track_label': tracklet.get('voted_track_label', 'invalid'),
                 'smoothed_label': tracklet.get('smoothed_label', 'invalid'),
@@ -307,6 +308,10 @@ def update_tracklet_json_identity_labels(
     
     for tracklet in tracklets_data:
         track_filename = tracklet.get('track_filename', '')
+        track_npz_path = tracklet.get('track_csv_path', '').replace('.csv', '.npz')
+        # chck if track_npz_path exists, if not, skip
+        if not Path(track_npz_path).exists():
+            continue
         
         if track_filename in track_to_label:
             new_label = track_to_label[track_filename]

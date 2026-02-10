@@ -423,11 +423,11 @@ def assign_known_individuals_to_cameras(
         camera_pairs
     )
     
-    print("vote_results_dict", vote_results_dict)
+    # print("vote_results_dict", vote_results_dict)
     
-    print("Top individuals per room based on voting:")
-    for room, individuals in room_individuals.items():
-        print(f"Room {room}: {individuals}")
+    # print("Top individuals per room based on voting:")
+    # for room, individuals in room_individuals.items():
+    #     print(f"Room {room}: {individuals}")
     
     # Assign individuals to each camera based on room
     camera_individuals = {}
