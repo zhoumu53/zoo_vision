@@ -128,12 +128,25 @@ WHERE cte.observation_count > 1
             continue
         im_heat[v, u] += 1
 
-    im_heat = gaussian_filter(im_heat, 2.5, mode="nearest")
+    # Use log() so the static poses don't dominate the heatmap
+    im_heat_log = np.log(im_heat + 0.0000001)
+    im_heat_log = gaussian_filter(im_heat_log, 2.5, mode="nearest")
+
+    # Add alpha but with sqrt() so we still get contrast for low values
+    alpha = np.full(im_heat.shape, 0.5)
+    alpha = im_heat_log
+    alpha -= alpha.min()
+    alpha_max = alpha.max()
+    if alpha_max == 0:
+        alpha = 0
+    else:
+        alpha *= 1 / alpha.max()
+    alpha = np.sqrt(alpha)
 
     ax: plt.Axes
     fig, ax = plt.subplots(1, 1)
     ax.imshow(im_submap)
-    ax.imshow(im_heat, alpha=0.5, cmap="jet")
+    ax.imshow(im_heat_log, alpha=alpha, cmap="jet")
     ax.set_axis_off()
     ax.text(
         5.5,
