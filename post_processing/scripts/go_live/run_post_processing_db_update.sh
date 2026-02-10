@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 echo "Project root: $PROJECT_ROOT"
 
@@ -57,8 +56,6 @@ python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --d
 echo "Feature extraction and stitching completed for date: $DATE"
 ##### UPDATE DB FROM TRACKS ###########
 dates=("$DATE")
-next_day=$(date -d "$DATE +1 day" +"%Y%m%d")
-dates+=("$next_day")
 
 LOG_FILE="$LOG_DIR/db_log_at_$(date +"%Y%m%d_%H%M%S").log"
 echo "Updating DB for dates: ${dates[*]}"
