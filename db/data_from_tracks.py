@@ -86,6 +86,8 @@ def load_identity_labels_from_json(
     
     track_file2_label = {}
     for tracklet in tracklets_data:
+        if tracklet['invalid_flag']:
+            continue
         track_file2_label[tracklet['track_filename']] = tracklet.get(id_col, 'Invalid')
         
     return track_file2_label
@@ -111,9 +113,12 @@ def get_args_parser(add_help=True):
         "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", required=True
     )
     parser.add_argument(
-        "--delete_existing-day", action='store_true', help="Delete existing data for the night before inserting new data"
+        "--id_col", type=str, default="stitched_label", help="Column name in JSON for identity labels (default: 'stitched_label')"
     )
-    parser.set_defaults(delete_existing_day=False)
+    parser.add_argument(
+        "--delete-existing-night", action='store_true', help="Delete existing data for the night before inserting new data"
+    )
+    parser.set_defaults(delete_existing_night=True)
     return parser
 
 
@@ -130,12 +135,13 @@ def gather_all_nights(root_dir: Path) -> list[str]:
 
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
-    behavior_file = track_file.with_name(track_file.stem + "_behavior_smoothed.csv")
+    behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     if not behavior_file.exists():
         ### earlier version - we save labels to '_behavior_smoothed' csv, 
         ### if not exist, to load from '_behavior' csv - new version, with 'behavior_label' which are smoothed, 
         ### and original labels in 'behavior_label_raw'
-        behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
+        return pd.DataFrame() 
+    
     df_behavior = pd.read_csv(behavior_file)
     if df_behavior.empty:
         return df_track
@@ -145,10 +151,8 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
-    if individual == 'invalid':
+    if individual == 'confused' or individual == 'invalid':
         individual = 'Invalid'
-    if individual not in INDIVIDUALS_TO_ID:  ## 'unassigned'
-        return
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)
     row_count = len(df_track)
@@ -333,49 +337,6 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
     print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
 
 
-def delete_existing_data_for_day(db_cursor, date: str):
-    """
-    Delete all observations and tracks for a specific calendar day (00:00 -> next day 00:00)
-    based on tracks.start_time.
-    
-    date: 'YYYYMMDD' or 'YYYY-MM-DD'
-    """
-    # Normalize date string
-    if '-' not in date:
-        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-    
-    date_dt = pd.to_datetime(date)
-
-    day_start = date_dt.normalize()                  # 00:00:00
-    day_end = day_start + pd.Timedelta(days=1)       # next day 00:00:00
-
-    print(f"Deleting existing data for day: {day_start} to {day_end}")
-
-    # Delete observations linked to tracks in this day
-    db_cursor.execute(
-        """
-        DELETE FROM observations
-        WHERE track_id IN (
-            SELECT id FROM tracks
-            WHERE start_time >= %s AND start_time < %s
-        )
-        """,
-        (day_start, day_end)
-    )
-    deleted_observations = db_cursor.rowcount
-
-    # Delete tracks in this day
-    db_cursor.execute(
-        """
-        DELETE FROM tracks
-        WHERE start_time >= %s AND start_time < %s
-        """,
-        (day_start, day_end)
-    )
-    deleted_tracks = db_cursor.rowcount
-
-    print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
-
 def main(args):
     root_dir: Path = args.dir
     # First gather all dates
@@ -409,9 +370,9 @@ def main(args):
         if '-' not in date:
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
         
-        # DELETE existing data for this night BEFORE inserting new data -- to avoid duplicates when re-running the script
-        if args.delete_existing_day:
-            delete_existing_data_for_day(db_cursor, date)
+        # DELETE existing data for this night BEFORE inserting new data to avoid duplicates
+        if args.delete_existing_night:
+            delete_existing_data_for_night(db_cursor, date, start_timestamp, end_timestamp)
         db_connection.commit()
         
         for camera_dir in root_dir.glob("*"):
@@ -425,7 +386,7 @@ def main(args):
                 date = date,
                 start_datetime=start_timestamp,
                 end_datetime=end_timestamp,
-                id_col="stitched_label",
+                id_col= args.id_col,
             )
             pbar2 = pbar_manager.counter(
                 total=len(track_files), desc="Processing tracks", unit="track"
