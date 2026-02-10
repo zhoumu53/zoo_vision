@@ -1,5 +1,7 @@
 --------------------------------------------------------------
 -- Config
+ALTER DATABASE zoo_vision SET timezone TO 'Europe/Zurich';
+
 CREATE TABLE cameras (
     id              int PRIMARY KEY,
     name            text NOT NULL
@@ -45,8 +47,8 @@ INSERT INTO behaviours(id, name)
 CREATE TABLE tracks (
     id              int PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     camera_id		int NOT NULL REFERENCES cameras,
-    start_time      timestamp NOT NULL,
-    end_time        timestamp NULL,  	-- Only valid after track is closed
+    start_time      timestamptz NOT NULL,
+    end_time        timestamptz NULL,  	-- Only valid after track is closed
     frame_count     int NULL,			-- Only valid after track is closed
     identity_id     int NULL REFERENCES identities, -- ...  track is closed
 	track_filename  text NULL
@@ -61,7 +63,7 @@ CREATE TABLE identity_probs (
 
 CREATE TABLE observations (
     track_id        int NOT NULL REFERENCES tracks,
-    time            timestamp NOT NULL,
+    time            timestamptz NOT NULL,
     location        point NOT NULL,
     behaviour_id	int NOT NULL REFERENCES behaviours,
     PRIMARY KEY (track_id, time)
@@ -73,7 +75,7 @@ CREATE INDEX ON observations (time);
 -- Processed
 CREATE TABLE summary_per_behaviour (
 	identity_id     int NOT NULL REFERENCES identities,
-	time            timestamp NOT NULL, -- Aggregated to minutes
+	time            timestamptz NOT NULL, -- Aggregated to minutes
 	is_standing     bool NOT NULL,    
 	is_on_left_side bool NULL,
 	PRIMARY KEY (identity_id, time)
@@ -81,7 +83,7 @@ CREATE TABLE summary_per_behaviour (
 
 CREATE TABLE summary_per_visibility (
 	identity_id     int NOT NULL REFERENCES identities,
-	time            timestamp NOT NULL, -- Aggregated to seconds
+	time            timestamptz NOT NULL, -- Aggregated to seconds
 	location        point NULL,
 	PRIMARY KEY (identity_id, time)
 );
@@ -92,6 +94,7 @@ CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
 GRANT INSERT ON tracks,observations,summary_per_behaviour,summary_per_visibility TO zoo_vision;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO zoo_vision;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public to zoo_vision;
 
 CREATE USER grafanareader WITH PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO grafanareader;

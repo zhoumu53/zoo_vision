@@ -3,6 +3,7 @@ import { PanelProps, DataHoverEvent } from '@grafana/data';
 import { ZooTracksOptions } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
+const { DateTime } = require("luxon");
 
 const NO_IMAGE_JPG = require('../img/no_image.jpg');
 
@@ -105,21 +106,34 @@ const getStyles = () => {
     `,
     verticalCell: css`
       vertical-align: top;
+      max-width: 10%;
+    `,
+    heatmapImg: css`
+      width: 20%;
+      border-style: solid;
+      border-width: thin;
+      border-color: gray;
     `
   };
 };
 
-function buildTrackImagesUrl(track_images_server: string, cameraName: string, timestamp_ms: number): string {
-  const timestamp_s = timestamp_ms / 1000;
-  const utcOffset_s = new Date().getTimezoneOffset() * 60;
-  const timestampUtc_s = timestamp_s + utcOffset_s;
+
+export function getOffsetFromIANATimezone_min(ianaTimezone: string): number {
+  const dt = DateTime.now().setZone(ianaTimezone)
+  return dt.offset
+}
+
+function timestampToUtc(timestamp_s: number, timeZone: string): number {
+  const utcOffset_s = getOffsetFromIANATimezone_min(timeZone) * 60;
+  const timestampUtc_s = timestamp_s - utcOffset_s;
+  return timestampUtc_s;
+}
+
+function buildTrackImagesUrl(track_images_server: string, cameraName: string, timestampUtc_s: number): string {
   return `${track_images_server}/track_images?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
-function buildCameraImageUrl(track_images_server: string, cameraName: string, timestamp_ms: number): string {
-  const timestamp_s = timestamp_ms / 1000;
-  const utcOffset_s = new Date().getTimezoneOffset() * 60;
-  const timestampUtc_s = timestamp_s + utcOffset_s;
+function buildCameraImageUrl(track_images_server: string, cameraName: string, timestampUtc_s: number): string {
   return `${track_images_server}/camera_image?camera=${cameraName}&timestamp=${timestampUtc_s}`;
 }
 
@@ -176,7 +190,7 @@ async function fetchCameraImages(url: string, abortSignal: any, setState: (state
   setState(new_state);
 }
 
-async function changeTimestamp(track_images_server: string, controllerRef: any, timestamp_ms: number, setCurrentTimestamp: any, trackImagesState: TracksState[], trackImagesSetState: any[], cameraImagesState: CameraImageState[], cameraImagesSetState: any[]) {
+async function changeTimestamp(track_images_server: string, controllerRef: any, timestamp_utc_s: number, setCurrentTimestamp: any, trackImagesState: TracksState[], trackImagesSetState: any[], cameraImagesState: CameraImageState[], cameraImagesSetState: any[]) {
   if (controllerRef.current) {
     controllerRef.current.abort();
   }
@@ -187,22 +201,23 @@ async function changeTimestamp(track_images_server: string, controllerRef: any, 
     // Mark as loading first
     trackImagesState[index].isLoading = true;
     trackImagesSetState[index](trackImagesState[index]);
-    const tracksUrl = buildTrackImagesUrl(track_images_server, CAMERAS[index], timestamp_ms);
+    const tracksUrl = buildTrackImagesUrl(track_images_server, CAMERAS[index], timestamp_utc_s);
     fetchTrackImages(tracksUrl, abortSignal, setCurrentTimestamp, trackImagesSetState[index]);
 
     // Mark as loading first
     cameraImagesState[index].isLoading = true;
     cameraImagesSetState[index](cameraImagesState[index]);
-    let cameraUrl = buildCameraImageUrl(track_images_server, CAMERAS[index], timestamp_ms);
+    let cameraUrl = buildCameraImageUrl(track_images_server, CAMERAS[index], timestamp_utc_s);
     fetchCameraImages(cameraUrl, abortSignal, cameraImagesSetState[index]);
   }
 }
 
-export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width, height, fieldConfig, id, replaceVariables }) => {
+export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, width, height, replaceVariables }) => {
   const styles = useStyles2(getStyles);
 
   const controllerRef = useRef<AbortController>();
 
+  // State variables
   const [currentTimestamp, setCurrentTimestamp] = useState<string>("DEFAULT");
   const emptyTrackState = { isLoading: false, detections: [] }
   const [trackImages0, trackImagesSetState0] = useState<TracksState>(emptyTrackState);
@@ -222,8 +237,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
 
   if (currentTimestamp === "DEFAULT") {
     setCurrentTimestamp("");
-    const time = Date.parse(DEFAULT_TIMESTAMP);
-    changeTimestamp(options.track_images_server, controllerRef, time, setCurrentTimestamp, trackImages, trackImagesSetState, cameraImages, cameraImagesSetState);
+    const time_s = timestampToUtc(Date.parse(DEFAULT_TIMESTAMP) / 1000, "Europe/Zurich");
+    changeTimestamp(options.track_images_server, controllerRef, time_s, setCurrentTimestamp, trackImages, trackImagesSetState, cameraImages, cameraImagesSetState);
   }
 
   useEffect(() => {
@@ -235,7 +250,10 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
       if (timestamp_ms == null) {
         return;
       }
-      changeTimestamp(options.track_images_server, controllerRef, timestamp_ms, setCurrentTimestamp, trackImages, trackImagesSetState, cameraImages, cameraImagesSetState);
+      // The event timestamp is always in browser timezone, convert to utc
+      const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      let timestampUtc_s = timestampToUtc(timestamp_ms / 1000, browserTimeZone)
+      changeTimestamp(options.track_images_server, controllerRef, timestampUtc_s, setCurrentTimestamp, trackImages, trackImagesSetState, cameraImages, cameraImagesSetState);
     });
 
     return () => {
@@ -311,7 +329,7 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
           <th colSpan={2}><h2>Sand box ohne</h2></th>
         </tr>
         <tr>
-          {CAMERAS.map((cameraName) => <td key={cameraName}>{cameraName}</td>)}
+          {CAMERAS.map((cameraName) => <td key={cameraName} className={cx(styles.verticalCell)}>{cameraName}</td>)}
         </tr>
         <tr>
           {CAMERAS.map((_, index) => <td key={index} className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
@@ -323,8 +341,8 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, data, width
 
       <h2>Occupancy heatmaps</h2>
       {IDENTITIES.map((social_group, _) => <>{
-        social_group.map((identity, _) =>
-          <img src={buildWorldHeatmapUrl(options.track_images_server, replaceVariables("${__from:date:iso}"), replaceVariables("${__to:date:iso}"), identity)} />
+        social_group.map((identity, idx) =>
+          <img key={idx} className={cx(styles.heatmapImg)} src={buildWorldHeatmapUrl(options.track_images_server, replaceVariables("${__from:date:iso}"), replaceVariables("${__to:date:iso}"), identity)} />
         )
       }
       </>)}
