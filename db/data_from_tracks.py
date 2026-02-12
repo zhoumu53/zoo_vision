@@ -118,7 +118,7 @@ def get_args_parser(add_help=True):
     parser.add_argument(
         "--delete-existing-night", action='store_true', help="Delete existing data for the night before inserting new data"
     )
-    parser.set_defaults(delete_existing_night=True)
+    parser.set_defaults(delete_existing_night=False)
     return parser
 
 
@@ -141,24 +141,45 @@ def filter_bad_tracks(df_track: pd.DataFrame) -> pd.DataFrame:
     if len(df_track) < 100 or duration.total_seconds() < 90:
         return pd.DataFrame()
     # if 70% bad quality frames, or low confidence frames, also filter out the track
+    if 'behavior_label_raw' in df_track.columns:
+        old_behavior_label = 'behavior_label_raw'
+    elif 'behavior_label_old' in df_track.columns:
+        old_behavior_label = 'behavior_label_old'
+    else:
+        old_behavior_label = 'behavior_label'
+                            
     if 'quality_label' in df_track.columns:
         # '00_invalid'
-        bad_quality_frames = ((df_track['quality_label'] == 'bad') | (df_track['behavior_label_raw'] == '00_invalid')).sum()
+        bad_quality_frames = ((df_track['quality_label'] == 'bad') | (df_track[old_behavior_label] == '00_invalid')).sum()
         if bad_quality_frames / len(df_track) > 0.7:
             return pd.DataFrame()
     return df_track
+
+
+def norm_timestamp(df) -> pd.DataFrame:
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"],
+        format="mixed",
+        errors="coerce"
+    )
+    df["timestamp"] = df["timestamp"].dt.floor("ms")
+    return df
+        
 
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
     if df_track.empty:
         return pd.DataFrame()
+    columns = ['frame_id', 'timestamp', 'score', 'world_x', 'world_y']
     behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     if not behavior_file.exists():
         return pd.DataFrame()
     df_behavior = pd.read_csv(behavior_file)
     if df_behavior.empty:
         return pd.DataFrame()
-    df_merged = pd.merge(df_track, df_behavior, on='timestamp', how='left')
+    df_track = norm_timestamp(df_track)
+    df_behavior = norm_timestamp(df_behavior)
+    df_merged = pd.merge(df_track[columns], df_behavior, on='timestamp', how='left')
     df_merged = filter_bad_tracks(df_merged)        
     if df_merged.empty:
         return pd.DataFrame()
@@ -167,7 +188,7 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
-    if individual == 'confused' or individual == 'invalid':
+    if individual == 'confused' or individual == 'invalid' or individual == '':
         individual = 'Invalid'
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)
@@ -177,7 +198,13 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     
     ### filter out bad quality frames if any, or low confidence frames
     if 'quality_label' in df_track.columns:
-        df_track = df_track[ (df_track['behavior_label_raw'] != '00_invalid')
+        if 'behavior_label_raw' in df_track.columns:
+            old_behavior_label = 'behavior_label_raw'
+        elif 'behavior_label_old' in df_track.columns:
+            old_behavior_label = 'behavior_label_old'
+        else:
+            old_behavior_label = 'behavior_label'
+        df_track = df_track[ (df_track[old_behavior_label] != '00_invalid')
                             & (df_track['quality_label'] == 'good')
                             & (df_track['behavior_conf'].astype(float) >= 0.7)
                             ]
