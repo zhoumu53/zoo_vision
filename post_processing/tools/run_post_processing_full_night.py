@@ -82,6 +82,7 @@ def get_stitched_data(
     camera_id: str,
     output_dir: Path = Path("/media/ElephantsWD/elephants/xmas/demo"),
     run_stitching:  bool = True,
+    merged_gallery_path: Optional[Path] = None,
 ):
     """Stitch tracklets for a single camera/time window and assign IDs."""
 
@@ -96,7 +97,8 @@ def get_stitched_data(
     
 
     tracklet_manager.load_tracklets_for_camera(track_dirs=track_dirs, 
-                                               camera_id=camera_id)
+                                               camera_id=camera_id,
+                                               merged_gallery_path=merged_gallery_path)
 
     tracklet_manager.stitch_tracklets_bidirectional(
         max_gap_frames=600,
@@ -292,6 +294,7 @@ def main():
             "mit": ["017", "018"],
         }
     )
+    print("Final known individuals assigned to cameras:", camera_individuals)
     
     if args.run_stitching:
 
@@ -324,12 +327,20 @@ def main():
                 known_labels=known_individuals,
             )
             
+            if args.gallery_path is not None:
+                merged_gallery_npz_path = args.gallery_path.replace('train_iid', 'merged_train_iid')
+            else:
+                merged_gallery_npz_path = (
+                    args.checkpoint.parent / "pred_features" / "merged_train_iid" / "pytorch_result_e.npz"
+                )
+            
             tracklet_results, save_path = get_stitched_data(
                     track_dirs=track_dirs,
                     tracklet_manager=tracklet_manager,
                     camera_id=camera_id,
                     output_dir= Path(output_dir),
                     run_stitching=args.run_stitching,
+                    merged_gallery_path=merged_gallery_npz_path if merged_gallery_npz_path.exists() else None,
                 )
 
             final_camera_tracklets[camera_id] = (tracklet_results, save_path)
@@ -356,34 +367,33 @@ def main():
                     gallery_npz_path = (
                         args.checkpoint.parent / "pred_features" / "train_iid" / "pytorch_result_e.npz"
                     )
+                    
+                print("known_individuals", known_individuals)
 
                 # ── Cross-camera track-level matching ──
-                track_to_xcid, summary_df = run_cross_camera_matching_v2(
+                track_to_xcid, summary_df, bout_summary_df = run_cross_camera_matching_v2(
                     record_root=args.record_root,
                     camera_ids=camera_ids,
                     start_datetime=pd.Timestamp(start_datetime),
                     end_datetime=pd.Timestamp(end_datetime),
-                    distance_threshold=2.0,
-                    bin_seconds=1.0,
-                    min_matched_bins=5,
+                    # distance_threshold=2.0,
+                    # bin_seconds=1.0,
+                    # min_matched_bins=5,
                     known_individuals=known_individuals,
                     gallery_path=gallery_npz_path,
                     logger=logger,
                 )
 
-                # ── Summary / report ──
-                summarize_cross_cam_match(
-                    summary_df=summary_df,
-                    camera_ids=camera_ids,
-                    logger=logger,
-                )
-
-                # Save summary
-                pair_tag = f"cam{'_'.join(camera_ids)}"
-                if not summary_df.empty:
-                    summary_out = output_dir / f"cross_cam_summary_{pair_tag}_{dates[0]}.csv"
-                    summary_df.to_csv(summary_out, index=False)
-                    logger.info("Summary saved to %s", summary_out)
+                # save bout
+                bout_summary_out = output_dir / 'night_bout_summary' / f'{dates[0]}' / f"{'_'.join(known_individuals) if known_individuals else 'unknown'}_{'_'.join(camera_ids)}.csv"
+                bout_summary_out.parent.mkdir(parents=True, exist_ok=True)
+                if 'behavior_label_raw' in bout_summary_df.columns:
+                    # Filter out invalid behavior labels before saving
+                    bout_summary_df = bout_summary_df[bout_summary_df['behavior_label_raw'] != '00_invalid']
+                elif 'behavior_label_old' in bout_summary_df.columns:
+                    bout_summary_df = bout_summary_df[bout_summary_df['behavior_label_old'] != '00_invalid']
+                bout_summary_df.to_csv(bout_summary_out, index=False)
+                logger.info("Bout summary saved to %s", bout_summary_out)
 
             except Exception as e:
                 logger.error("Error during cross-camera ID matching for cameras %s: %s", camera_ids, str(e))

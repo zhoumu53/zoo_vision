@@ -188,7 +188,7 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
-    if individual == 'confused' or individual == 'invalid' or individual == '':
+    if individual == 'confused' or individual == 'invalid' or individual == '' or individual == 'unknown':
         individual = 'Invalid'
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)

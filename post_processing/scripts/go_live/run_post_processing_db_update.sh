@@ -51,6 +51,7 @@ python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --d
                                           --cam1718-individuals "$cam1718_individuals" \
                                           --start_timestamp 18 \
                                           --end_timestamp 8 \
+                                          --cross-camera-matching \
                                           --run-stitching &>> "$LOG_FILE"
 
 echo "Feature extraction and stitching completed for date: $DATE"
@@ -58,9 +59,10 @@ echo "Feature extraction and stitching completed for date: $DATE"
 dates=("$DATE")
 
 LOG_FILE="$LOG_DIR/db_log_at_$(date +"%Y%m%d_%H%M%S").log"
-echo "Updating DB for dates: ${dates[*]}"
+echo "Updating DB for dates: ${dates[*]} - logging to: $LOG_FILE"
 python $PROJECT_ROOT/db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
     --start_timestamp 18 \
     --end_timestamp 8 \
+    --id_col 'identity_label' \
     --dates "${dates[@]}" &>> "$LOG_FILE"
 echo "DB update completed for dates: ${dates[*]}"

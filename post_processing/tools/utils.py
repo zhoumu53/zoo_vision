@@ -421,7 +421,8 @@ def load_valid_tracks(record_root,
             track_data['camera_id'] = cam_id
             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
     # sort by timestamp
-    valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
+    if not valid_track_df.empty:
+        valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
             
     return valid_track_df
 

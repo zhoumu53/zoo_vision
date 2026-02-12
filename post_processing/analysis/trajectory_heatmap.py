@@ -372,9 +372,9 @@ def merge_csv_tracklets(record_root: Path,
         start_datetime=start_datetime,
         end_datetime=end_datetime,
         camera_ids=camera_ids,
-        behavior_csv_suffix='_behavior_smoothed.csv'
+        behavior_csv_suffix='_behavior.csv'
     )
-    
+        
     df_label_predictions = load_identity_labels_from_json(
         record_root=Path(record_root),
         camera_ids=camera_ids,
@@ -440,7 +440,15 @@ def main(args):
     record_root = args.record_root
     dates = args.dates
     if dates is None:
-        dates = ['2026-02-04', '2026-02-05', '2026-02-06', '2026-02-07', '2026-02-08']
+        dates = [
+                '2026-02-03', 
+                 '2026-02-04', 
+                 '2026-02-05', 
+                 '2026-02-06', 
+                 '2026-02-07', 
+                 '2026-02-08',
+                 '2026-02-09',
+                 '2026-02-10']
     
     # Normalize and convert timestamp strings to pd.Timestamp
     start_timestamp = normalize_time_string(args.start_timestamp)
@@ -462,18 +470,18 @@ def main(args):
                         record_root= args.record_root,
                         start_datetime= pd.Timestamp(date + " " + start_timestamp.strftime("%H:%M:%S")),
                         end_datetime= pd.Timestamp(next_date + " " + end_timestamp.strftime("%H:%M:%S")),
-                        id_col= 'stitched_label',
+                        id_col= 'identity_label',
                         camera_ids= cam_pair,
                     )
             ## test
             # df_results = pd.read_csv('/media/mu/zoo_vision/post_processing/analysis/trajs/2026-02-04/csvs/camera_016_019_label_Thai.csv')
             
             cfg = PlotConfig(gap_minutes=5.0)
-            out_dir = Path('/media/mu/zoo_vision/post_processing/analysis/trajs') / date
+            out_dir = Path(f'{args.record_root}/trajs') / date
             out_dir.mkdir(parents=True, exist_ok=True)
 
             #### Per-individual
-            for label, group in df_results.groupby('stitched_label'):
+            for label, group in df_results.groupby('identity_label'):
                 if str(label).strip().lower() == 'invalid':
                     continue
 

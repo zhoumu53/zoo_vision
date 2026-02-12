@@ -71,20 +71,23 @@ def init_tracklets_from_online_results(track_csv: str,
     end_frame_id = int(df['frame_id'].iloc[-1])
     track_filename = Path(track_csv).stem
 
-    ## load identity label from npz if exists
-    voted_track_label = "unknown"
-  
+    ## load identity label from npz if exists    
+    feature_path = Path(track_csv).with_suffix(".npz")
+    if not feature_path.exists():
+        return []
+    voted_track_label = ""
+      
     t = Tracklet(track_id=track_id, 
                  raw_track_id=track_id, 
                  camera_id=camera_id or "",
                  start_timestamp=start_timestamp,
                  end_timestamp=end_timestamp,
-                 feature_path=Path(track_csv).with_suffix(".npz"),
+                 feature_path=feature_path,
                  start_frame_id=start_frame_id,
                  end_frame_id=end_frame_id,
                  track_filename=track_filename,
                  track_csv_path=Path(track_csv),
-                 voted_track_label=voted_track_label
+                 voted_track_label=""
                  )
     
     return [t]
@@ -618,7 +621,8 @@ class TrackletManager:
                                   track_dirs: list[Path], 
                                   camera_id: str | None = None, 
                                   filter_invalids: bool = True,
-                                  run_reid: bool = False) -> None:
+                                  run_reid: bool = False,
+                                  merged_gallery_path: Path | None = None) -> None:
 
         camera_id = camera_id or self.camera_id            
         # track_files = sorted(track_dir.glob("*.csv"))
@@ -660,8 +664,6 @@ class TrackletManager:
 
             start_dt = tracklet[0].start_timestamp       # datetime
             end_dt   = tracklet[0].end_timestamp         # datetime
-
-            # print(f"Tracklet {track_filename} start time: {start_dt}, end time: {end_dt}")
             
             # Check if tracklet is within time window   ---- only for full night stitching
             skip_tracklet = self.validate_tracklet_timestamp(start_dt)
@@ -679,22 +681,53 @@ class TrackletManager:
             tracklet[0].track_filename = track_filename
             tracklet[0].track_csv_path = track_file
             tracklet[0].semi_gt_labels = self.known_labels
-            
+
             voted_track_label = ""
+            #### filter tracklets based on features (if not elephants - skip, based on similarity to gallery features)
+            # if npz not exisits, skip -- no feature for voting
+            if not tracklet[0].feature_path or not tracklet[0].feature_path.exists():
+                continue
+            if camera_id == '019' and tracklet_duration < 150 and merged_gallery_path and merged_gallery_path.exists():
+                features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
+                ### labels from merged feature -- with invalid data
+                gallery_data = np.load(merged_gallery_path, allow_pickle=True)
+                gallery_features_np = gallery_data["feature"]
+                gallery_labels = gallery_data["label"].tolist()
+                import torch
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                gallery_features = torch.from_numpy(gallery_features_np).float().to(device)
+                features = torch.from_numpy(features).float().to(device)
+                matched_labels = match_to_gallery(features, 
+                                                gallery_features, 
+                                                gallery_labels=gallery_labels)[-1]
+                voted_results = vote_identity_from_matched_labels(
+                    matched_labels=np.array(matched_labels),
+                    sample_rate=1,
+                    return_details=True
+                )
+                voted_track_label = voted_results['voted_label']
+            if voted_track_label == "invalid":  ### skip those tracks
+                continue
+                
             ### now no matching -- do it when cross-camera stitching
-            if tracklet[0].feature_path and tracklet[0].feature_path.exists() and run_reid:
+            if tracklet[0].feature_path and tracklet[0].feature_path.exists() and run_reid and voted_track_label != "invalid":
                 if self.vote_with_gallery:
                     features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
                     ## load features from good-quality indices only - if all 'bad' - 'invalid'
                     if behavior_csv.exists():
                         df_behavior = pd.read_csv(behavior_csv)
                         # TODO -- now voting based on good quality frames + high confidence behavior + no 'standing' 
+                        if 'behavior_label_raw' in df_behavior.columns:
+                            old_behavior_label = 'behavior_label_raw'
+                        elif 'behavior_label_old' in df_behavior.columns:
+                            old_behavior_label = 'behavior_label_old'
+                        else:
+                            old_behavior_label = 'behavior_label'
                         good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
-                                                         & (df_behavior['behavior_label'] == '01_standing')
-                                                         & (df_behavior['behavior_label'] != '00_invalid')
+                                                         & (df_behavior[old_behavior_label] != '00_invalid')
                                                          & (df_behavior['behavior_conf'].astype(float) >= 0.7)].tolist()
                         if len(good_indices) == 0:  ### all bad quality frames -- no voting
-                            voted_track_label = "invalid"
+                            voted_track_label = "unassigned"
                         ### feature_indices for reid voting - pick the features with good quality
                         feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
                         features = features[feature_indices]
