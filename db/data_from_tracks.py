@@ -86,6 +86,8 @@ def load_identity_labels_from_json(
     
     track_file2_label = {}
     for tracklet in tracklets_data:
+        if tracklet['invalid_flag']:
+            continue
         track_file2_label[tracklet['track_filename']] = tracklet.get(id_col, 'Invalid')
         
     return track_file2_label
@@ -111,9 +113,12 @@ def get_args_parser(add_help=True):
         "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", required=True
     )
     parser.add_argument(
-        "--delete_existing-day", action='store_true', help="Delete existing data for the night before inserting new data"
+        "--id_col", type=str, default="stitched_label", help="Column name in JSON for identity labels (default: 'stitched_label')"
     )
-    parser.set_defaults(delete_existing_day=False)
+    parser.add_argument(
+        "--delete-existing-night", action='store_true', help="Delete existing data for the night before inserting new data"
+    )
+    parser.set_defaults(delete_existing_night=False)
     return parser
 
 
@@ -128,24 +133,62 @@ def gather_all_nights(root_dir: Path) -> list[str]:
     return list(sorted(all_nights))
 
 
+def filter_bad_tracks(df_track: pd.DataFrame) -> pd.DataFrame:
+    # filter out short tracks, less than 100 frames or less than 1.5 minutes
+    start_time = df_track["timestamp"].iloc[0]
+    end_time = df_track["timestamp"].iloc[-1]
+    duration = pd.to_datetime(end_time) - pd.to_datetime(start_time)
+    if len(df_track) < 100 or duration.total_seconds() < 90:
+        return pd.DataFrame()
+    # if 70% bad quality frames, or low confidence frames, also filter out the track
+    if 'behavior_label_raw' in df_track.columns:
+        old_behavior_label = 'behavior_label_raw'
+    elif 'behavior_label_old' in df_track.columns:
+        old_behavior_label = 'behavior_label_old'
+    else:
+        old_behavior_label = 'behavior_label'
+                            
+    if 'quality_label' in df_track.columns:
+        # '00_invalid'
+        bad_quality_frames = ((df_track['quality_label'] == 'bad') | (df_track[old_behavior_label] == '00_invalid')).sum()
+        if bad_quality_frames / len(df_track) > 0.7:
+            return pd.DataFrame()
+    return df_track
+
+
+def norm_timestamp(df) -> pd.DataFrame:
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"],
+        format="mixed",
+        errors="coerce"
+    )
+    df["timestamp"] = df["timestamp"].dt.floor("ms")
+    return df
+        
+
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
-    behavior_file = track_file.with_name(track_file.stem + "_behavior_smoothed.csv")
+    if df_track.empty:
+        return pd.DataFrame()
+    columns = ['frame_id', 'timestamp', 'score', 'world_x', 'world_y']
+    behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     if not behavior_file.exists():
-        ### earlier version - we save labels to '_behavior_smoothed' csv, 
-        ### if not exist, to load from '_behavior' csv - new version, with 'behavior_label' which are smoothed, 
-        ### and original labels in 'behavior_label_raw'
-        behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
+        return pd.DataFrame()
     df_behavior = pd.read_csv(behavior_file)
     if df_behavior.empty:
-        return df_track
-    df_merged = pd.merge(df_track, df_behavior, on='timestamp', how='left')
+        return pd.DataFrame()
+    df_track = norm_timestamp(df_track)
+    df_behavior = norm_timestamp(df_behavior)
+    df_merged = pd.merge(df_track[columns], df_behavior, on='timestamp', how='left')
+    df_merged = filter_bad_tracks(df_merged)        
+    if df_merged.empty:
+        return pd.DataFrame()
     return df_merged
 
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
-    if individual == 'invalid':
+    if individual == 'confused' or individual == 'invalid' or individual == '' or individual == 'unknown':
         individual = 'Invalid'
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)
@@ -155,8 +198,14 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     
     ### filter out bad quality frames if any, or low confidence frames
     if 'quality_label' in df_track.columns:
-        df_track = df_track[ 
-                            (df_track['quality_label'] == 'good')
+        if 'behavior_label_raw' in df_track.columns:
+            old_behavior_label = 'behavior_label_raw'
+        elif 'behavior_label_old' in df_track.columns:
+            old_behavior_label = 'behavior_label_old'
+        else:
+            old_behavior_label = 'behavior_label'
+        df_track = df_track[ (df_track[old_behavior_label] != '00_invalid')
+                            & (df_track['quality_label'] == 'good')
                             & (df_track['behavior_conf'].astype(float) >= 0.7)
                             ]
         row_count = len(df_track)
@@ -331,49 +380,6 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
     print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
 
 
-def delete_existing_data_for_day(db_cursor, date: str):
-    """
-    Delete all observations and tracks for a specific calendar day (00:00 -> next day 00:00)
-    based on tracks.start_time.
-    
-    date: 'YYYYMMDD' or 'YYYY-MM-DD'
-    """
-    # Normalize date string
-    if '-' not in date:
-        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-    
-    date_dt = pd.to_datetime(date)
-
-    day_start = date_dt.normalize()                  # 00:00:00
-    day_end = day_start + pd.Timedelta(days=1)       # next day 00:00:00
-
-    print(f"Deleting existing data for day: {day_start} to {day_end}")
-
-    # Delete observations linked to tracks in this day
-    db_cursor.execute(
-        """
-        DELETE FROM observations
-        WHERE track_id IN (
-            SELECT id FROM tracks
-            WHERE start_time >= %s AND start_time < %s
-        )
-        """,
-        (day_start, day_end)
-    )
-    deleted_observations = db_cursor.rowcount
-
-    # Delete tracks in this day
-    db_cursor.execute(
-        """
-        DELETE FROM tracks
-        WHERE start_time >= %s AND start_time < %s
-        """,
-        (day_start, day_end)
-    )
-    deleted_tracks = db_cursor.rowcount
-
-    print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
-
 def main(args):
     root_dir: Path = args.dir
     # First gather all dates
@@ -407,17 +413,13 @@ def main(args):
         if '-' not in date:
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
         
-        # DELETE existing data for this night BEFORE inserting new data -- to avoid duplicates when re-running the script
-        if args.delete_existing_day:
-            delete_existing_data_for_day(db_cursor, date)
+        # DELETE existing data for this night BEFORE inserting new data to avoid duplicates
+        if args.delete_existing_night:
+            delete_existing_data_for_night(db_cursor, date, start_timestamp, end_timestamp)
         db_connection.commit()
         
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
-            ### only upload cam 16, 19
-            # if camera not in ['zag_elp_cam_016', 'zag_elp_cam_019']:
-            #     continue
-            ### all track files for this night (date 18h - next day 8h)
             track_files = list_track_files_for_night(camera_dir, date)
 
             ### one night data are saved in one json file
@@ -427,7 +429,7 @@ def main(args):
                 date = date,
                 start_datetime=start_timestamp,
                 end_datetime=end_timestamp,
-                id_col="stitched_label",
+                id_col= args.id_col,
             )
             pbar2 = pbar_manager.counter(
                 total=len(track_files), desc="Processing tracks", unit="track"

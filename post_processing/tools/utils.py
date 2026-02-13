@@ -6,6 +6,7 @@ from post_processing.tools.videoloader import VideoLoader
 from post_processing.core.behavior_inference import BehaviorInference
 import pandas as pd
 import numpy as np
+import json
 
 def setup_logger(level: str) -> logging.Logger:
     logging.basicConfig(
@@ -150,7 +151,7 @@ def get_good_frame_indices(df_tracks, ) -> list[int]:
 
 def load_tracklets_dataframe(json_path: Path) -> pd.DataFrame:
     """Load tracklet data from a JSON file."""
-    import json
+    
     with open(json_path, 'r') as f:
         data = json.load(f)
 
@@ -174,7 +175,6 @@ def load_identity_labels_from_json(
         DataFrame with columns: track_filename, stitched_label, voted_track_label, 
                                 smoothed_label, identity_label
     """
-    import json
     
     # Format datetime for JSON filename
     start_time_str = start_datetime.strftime("%Y%m%d_%H%M%S")
@@ -209,6 +209,7 @@ def load_identity_labels_from_json(
                 'track_filename': tracklet.get('track_filename', ''),
                 'track_csv_path': tracklet.get('track_csv_path', ''),
                 'camera_id': tracklet.get('camera_id', cam_id),
+                'stitched_id': tracklet.get('stitched_id', 'invalid'),
                 'stitched_label': tracklet.get('stitched_label', 'invalid'),
                 'voted_track_label': tracklet.get('voted_track_label', 'invalid'),
                 'smoothed_label': tracklet.get('smoothed_label', 'invalid'),
@@ -221,6 +222,114 @@ def load_identity_labels_from_json(
     
     df_labels = pd.DataFrame(all_labels)
     return df_labels
+
+
+def load_tracklet_json_for_camera(
+    record_root: Path,
+    cam_id: str,
+    start_datetime: pd.Timestamp,
+    end_datetime: pd.Timestamp,
+) -> tuple[Path, list]:
+    """
+    Load tracklet JSON file for a specific camera.
+    
+    Parameters
+    ----------
+    record_root : Path
+        Root directory for records
+    cam_id : str
+        Camera ID (e.g., '016', '017')
+    start_datetime : pd.Timestamp
+        Start datetime
+    end_datetime : pd.Timestamp
+        End datetime
+        
+    Returns
+    -------
+    tuple[Path, list]
+        (json_path, tracklets_data) where tracklets_data is list of tracklet dicts
+        
+    Raises
+    ------
+    FileNotFoundError
+        If JSON file not found
+    """
+    
+    start_time_str = start_datetime.strftime("%Y%m%d_%H%M%S")
+    end_time_str = end_datetime.strftime("%Y%m%d_%H%M%S")
+    date_str = start_datetime.strftime("%Y-%m-%d")
+    
+    json_dir = record_root / 'demo' / f'zag_elp_cam_{cam_id}' / date_str
+    json_pattern = f'stitched_tracklets_cam{cam_id}_{start_time_str}_{end_time_str}.json'
+    
+    json_files = list(json_dir.glob(json_pattern))
+    
+    if not json_files:
+        raise FileNotFoundError(f"No JSON file found for camera {cam_id} at {json_dir} with pattern {json_pattern}")
+    
+    json_path = json_files[0]
+    
+    with open(json_path, 'r') as f:
+        tracklets_data = json.load(f)
+    
+    return json_path, tracklets_data
+
+
+def update_tracklet_json_identity_labels(
+    json_path: Path,
+    tracklets_data: list,
+    track_to_label: dict[str, str],
+    logger: logging.Logger = None
+) -> Path:
+    """
+    Update identity labels in tracklet JSON data and save to file.
+    
+    Parameters
+    ----------
+    json_path : Path
+        Path to the JSON file to update
+    tracklets_data : list
+        List of tracklet dictionaries loaded from JSON
+    track_to_label : dict[str, str]
+        Mapping of track_filename to new identity_label
+    logger : logging.Logger
+        Optional logger
+        
+    Returns
+    -------
+    Path
+        Path to the updated JSON file
+    """
+    
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    updated_count = 0
+    
+    for tracklet in tracklets_data:
+        track_filename = tracklet.get('track_filename', '')
+        track_npz_path = tracklet.get('track_csv_path', '').replace('.csv', '.npz')
+        # chck if track_npz_path exists, if not, skip
+        if not Path(track_npz_path).exists():
+            continue
+        
+        if track_filename in track_to_label:
+            new_label = track_to_label[track_filename]
+            old_label = tracklet.get('identity_label', 'unknown')
+            
+            tracklet['identity_label'] = new_label
+            
+            if old_label != new_label:
+                updated_count += 1
+                logger.debug(f"  {track_filename}: {old_label} → {new_label}")
+    
+    # Save updated JSON
+    with open(json_path, 'w') as f:
+        json.dump(tracklets_data, f, indent=2)
+    
+    logger.info(f"✓ Updated {updated_count} identity labels in {json_path.name}")
+    
+    return json_path
 
 
 
@@ -246,6 +355,7 @@ def load_valid_tracks(record_root,
                       camera_ids,
                       start_datetime: pd.Timestamp,
                       end_datetime: pd.Timestamp,
+                      behavior_csv_suffix: str = '_behavior.csv'
                      ) -> pd.DataFrame:
     
     from post_processing.core.file_manager import (
@@ -268,7 +378,7 @@ def load_valid_tracks(record_root,
         for date in date_list:
             td = offline_track_dir(record_root, cam_id, date)
             csv_list = list_track_files(td)
-            csv_list = [f for f in csv_list if '_behavior' not in str(f)]  ### track csv only
+            csv_list = [f for f in csv_list if behavior_csv_suffix not in str(f)]  ### track csv only
             if cam_id not in all_track_csvs:
                 all_track_csvs[cam_id] = []
             all_track_csvs[cam_id].extend(csv_list)
@@ -279,7 +389,7 @@ def load_valid_tracks(record_root,
         for track_file in track_files:
             # print("Processing track file:", track_file)
             date = track_file.parent.name
-            behavior_csv = track_file.with_name(track_file.stem + '_behavior.csv')
+            behavior_csv = track_file.with_name(track_file.stem + behavior_csv_suffix)
             if not behavior_csv.exists():
                 continue
             
@@ -298,9 +408,9 @@ def load_valid_tracks(record_root,
                 continue
 
             ### check if length matches
-            if len(track_data) != len(behavior_data):
-                print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
-                continue
+            # if len(track_data) != len(behavior_data):
+                # print(f"Warning: Length mismatch between track data ({len(track_data)}) and behavior data ({len(behavior_data)}) for {track_file.name}.")
+                # continue
 
             track_data = pd.merge(track_data, behavior_data, on='timestamp', how='left')
 
@@ -311,7 +421,8 @@ def load_valid_tracks(record_root,
             track_data['camera_id'] = cam_id
             valid_track_df = pd.concat([valid_track_df, track_data], ignore_index=True)
     # sort by timestamp
-    valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
+    if not valid_track_df.empty:
+        valid_track_df = valid_track_df.sort_values(by=['camera_id', 'timestamp']).reset_index(drop=True)   
             
     return valid_track_df
 

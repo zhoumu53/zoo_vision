@@ -12,3 +12,4 @@ export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 export FASTRTPS_DEFAULT_PROFILES_FILE="$PWD/zoo_vision_ros2/src/fast_dds_config.xml"
 export LD_LIBRARY_PATH=$PWD/build/RelWithDebInfo/src/zoo_msgs:${LD_LIBRARY_PATH}
 export CLICOLOR_FORCE=1 # Enable color on ninja build 
+export PYTHONPATH="$PYTHONPATH:$PWD"
