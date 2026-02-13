@@ -82,7 +82,6 @@ def get_stitched_data(
     camera_id: str,
     output_dir: Path = Path("/media/ElephantsWD/elephants/xmas/demo"),
     run_stitching:  bool = True,
-    merged_gallery_path: Optional[Path] = None,
 ):
     """Stitch tracklets for a single camera/time window and assign IDs."""
 
@@ -97,8 +96,7 @@ def get_stitched_data(
     
 
     tracklet_manager.load_tracklets_for_camera(track_dirs=track_dirs, 
-                                               camera_id=camera_id,
-                                               merged_gallery_path=merged_gallery_path)
+                                               camera_id=camera_id,)
 
     tracklet_manager.stitch_tracklets_bidirectional(
         max_gap_frames=600,
@@ -340,7 +338,6 @@ def main():
                     camera_id=camera_id,
                     output_dir= Path(output_dir),
                     run_stitching=args.run_stitching,
-                    merged_gallery_path=merged_gallery_npz_path if merged_gallery_npz_path.exists() else None,
                 )
 
             final_camera_tracklets[camera_id] = (tracklet_results, save_path)
@@ -367,8 +364,6 @@ def main():
                     gallery_npz_path = (
                         args.checkpoint.parent / "pred_features" / "train_iid" / "pytorch_result_e.npz"
                     )
-                    
-                print("known_individuals", known_individuals)
 
                 # ── Cross-camera track-level matching ──
                 track_to_xcid, summary_df, bout_summary_df = run_cross_camera_matching_v2(
@@ -376,9 +371,6 @@ def main():
                     camera_ids=camera_ids,
                     start_datetime=pd.Timestamp(start_datetime),
                     end_datetime=pd.Timestamp(end_datetime),
-                    # distance_threshold=2.0,
-                    # bin_seconds=1.0,
-                    # min_matched_bins=5,
                     known_individuals=known_individuals,
                     gallery_path=gallery_npz_path,
                     logger=logger,

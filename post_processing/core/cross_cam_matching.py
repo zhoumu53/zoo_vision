@@ -1882,12 +1882,11 @@ def run_cross_camera_matching_v2(
                 ### double-check that we don't have a conflict where both tracks in an xcsid group are labeled as the same known individual 
                 # (should not happen with the strict assignment, but just in case)
                 if len(known_individuals) == 2:
-                    prev_lbl = str(t.get("identity_label", "unknown"))
-                    if prev_lbl in known_set:
-                        other = [k for k in known_individuals if k != prev_lbl]
-                        t["identity_label"] = str(other[0]) if other else "unknown"
-                    else:
-                        t["identity_label"] = "unknown" 
+                    t["identity_label"] = "confused"  # if only 2 known individuals, any conflict means we can't disambiguate, so label as confused
+                elif len(known_individuals) ==1:
+                    prev_lbl = str(t.get("voted_track_label", "unknown"))
+                    ### Thai -> if matches with previous voted label, keep it, otherwise set to unknown (to avoid conflicts where strict assignment fails to assign a known label but the vote suggests a known label)
+                    t["identity_label"] = prev_lbl if prev_lbl in known_set else "unknown"
                 else:
                     t["identity_label"] = "unknown"
                 

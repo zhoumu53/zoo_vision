@@ -71,6 +71,11 @@ def init_tracklets_from_online_results(track_csv: str,
     end_frame_id = int(df['frame_id'].iloc[-1])
     track_filename = Path(track_csv).stem
 
+    # check track csv --- filter out the tracks that are not elephants (based on scores < 0.85)
+    avg_score = df['score'].mean()
+    if avg_score < 0.85:
+        return []
+
     ## load identity label from npz if exists    
     feature_path = Path(track_csv).with_suffix(".npz")
     if not feature_path.exists():
@@ -87,7 +92,7 @@ def init_tracklets_from_online_results(track_csv: str,
                  end_frame_id=end_frame_id,
                  track_filename=track_filename,
                  track_csv_path=Path(track_csv),
-                 voted_track_label=""
+                 voted_track_label=voted_track_label
                  )
     
     return [t]
@@ -509,7 +514,7 @@ class TrackletManager:
                  known_labels: Optional[List[str]] = None,
                  gallery_features = None,
                  gallery_labels = None,
-                 vote_with_gallery: bool = True
+                 vote_with_gallery: bool = False
                  ):
         
         """Initialize TrackletManager.
@@ -620,9 +625,7 @@ class TrackletManager:
     def load_tracklets_for_camera(self, 
                                   track_dirs: list[Path], 
                                   camera_id: str | None = None, 
-                                  filter_invalids: bool = True,
-                                  run_reid: bool = False,
-                                  merged_gallery_path: Path | None = None) -> None:
+                                  run_reid: bool = True) -> None:
 
         camera_id = camera_id or self.camera_id            
         # track_files = sorted(track_dir.glob("*.csv"))
@@ -632,9 +635,6 @@ class TrackletManager:
             files = [file for file in files if f"_behavior" not in file.stem]
             track_files.extend(files)
                     
-        n_invalid = 0
-        polygons = self.invalid_zone_handler.load_zones(camera_id)
-        
         for track_file in track_files:
 
             track_filename = track_file.stem
@@ -683,34 +683,9 @@ class TrackletManager:
             tracklet[0].semi_gt_labels = self.known_labels
 
             voted_track_label = ""
-            #### filter tracklets based on features (if not elephants - skip, based on similarity to gallery features)
-            # if npz not exisits, skip -- no feature for voting
-            if not tracklet[0].feature_path or not tracklet[0].feature_path.exists():
-                continue
-            if camera_id == '019' and tracklet_duration < 150 and merged_gallery_path and merged_gallery_path.exists():
-                features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
-                ### labels from merged feature -- with invalid data
-                gallery_data = np.load(merged_gallery_path, allow_pickle=True)
-                gallery_features_np = gallery_data["feature"]
-                gallery_labels = gallery_data["label"].tolist()
-                import torch
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                gallery_features = torch.from_numpy(gallery_features_np).float().to(device)
-                features = torch.from_numpy(features).float().to(device)
-                matched_labels = match_to_gallery(features, 
-                                                gallery_features, 
-                                                gallery_labels=gallery_labels)[-1]
-                voted_results = vote_identity_from_matched_labels(
-                    matched_labels=np.array(matched_labels),
-                    sample_rate=1,
-                    return_details=True
-                )
-                voted_track_label = voted_results['voted_label']
-            if voted_track_label == "invalid":  ### skip those tracks
-                continue
                 
             ### now no matching -- do it when cross-camera stitching
-            if tracklet[0].feature_path and tracklet[0].feature_path.exists() and run_reid and voted_track_label != "invalid":
+            if tracklet[0].feature_path and tracklet[0].feature_path.exists() and run_reid:
                 if self.vote_with_gallery:
                     features, frame_ids = load_embedding(tracklet[0].feature_path)[0:2]
                     ## load features from good-quality indices only - if all 'bad' - 'invalid'
@@ -738,12 +713,13 @@ class TrackletManager:
                         gallery_features=self.gallery_features
                         gallery_labels=self.gallery_labels
                         if self.known_labels is not None and len(self.known_labels) > 0:
-                            g_labels = [label for label in gallery_labels if label in self.known_labels]
-                            g_features = [gallery_features[i] for i, label in enumerate(gallery_labels) if label in self.known_labels]
+                            known_labels_indices = [i for i, label in enumerate(gallery_labels) if label in self.known_labels]
+                            gallery_features = gallery_features[known_labels_indices]
+                            gallery_labels = [gallery_labels[i] for i in known_labels_indices]
 
                         matched_labels = match_to_gallery(features, 
-                                                        gallery_features, 
-                                                        gallery_labels=gallery_labels)[-1]
+                                                          gallery_features, 
+                                                          gallery_labels=gallery_labels)[-1]
                         
                         voted_results = vote_identity_from_matched_labels(
                             matched_labels=np.array(matched_labels),
