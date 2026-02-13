@@ -19,9 +19,9 @@ VALID_LABELS = {
 
 LABEL_ORDER = [
     "01_standing",
+    "walking",
     "02_sleeping_left",
     "03_sleeping_right",
-    "walking",
     "stereotypy",
     "outside",
 ]
@@ -30,7 +30,7 @@ LABEL_DISPLAY = {
     "01_standing": "standing",
     "02_sleeping_left": "sleeping left",
     "03_sleeping_right": "sleeping right",
-    "outside": "outside / no-detection",
+    "outside": "outside / no-data",
     "walking": "walking",
     "stereotypy": "stereotypy",
 }
@@ -40,15 +40,15 @@ LABEL_COLORS = {
     "03_sleeping_right": "#FF9A2A",
     "outside": "#F1F1F1",
     "stereotypy": "#FF2624",
-    "walking": "#c372cb",
     "01_standing": "#8a00ac",
+    "walking": "#c372cb",
 }
 
 LABEL_PRIORITY = {
     "outside": 0,
+    "01_standing": 2,
     "02_sleeping_left": 1,
     "03_sleeping_right": 1,
-    "01_standing": 2,
     "walking": 3,
     "stereotypy": 4,
 }
@@ -405,7 +405,7 @@ def _plot_activity_timeline_multi_night(
     x1 = mdates.date2num(anchor + pd.Timedelta(seconds=float(df["offset_end_sec"].max())))
     ax.set_xlim(x0, x1)
     ax.set_title(title)
-    ax.set_ylabel("Date")
+    ax.set_ylabel("Night")
     ax.set_yticks(range(len(dates_sorted)))
     ax.set_yticklabels(y_labels)
     ax.invert_yaxis()
@@ -438,7 +438,216 @@ def _plot_activity_timeline_multi_night(
     plt.close(fig)
 
 
-def _load_bouts_for_date(csv_paths: Iterable[Path]) -> pd.DataFrame:
+def _normalize_track_filename(track_filename: str) -> str:
+    name = str(track_filename).strip()
+    if name.endswith(".csv"):
+        return name
+    return f"{name}.csv"
+
+
+def _resolve_track_csv_path(
+    track_dir: Path,
+    cam_id: str,
+    bout_start: pd.Timestamp,
+    track_filename: str,
+) -> Path | None:
+    date_dir = bout_start.strftime("%Y-%m-%d")
+    fname = _normalize_track_filename(track_filename)
+    cam_txt = str(cam_id).strip()
+
+    preferred = [
+        track_dir / f"zag_elp_cam_{cam_txt}" / date_dir / fname,
+    ]
+    if cam_txt.isdigit():
+        preferred.append(track_dir / f"zag_elp_cam_{int(cam_txt):03d}" / date_dir / fname)
+
+    for p in preferred:
+        if p.exists():
+            return p
+
+    fallback = list(track_dir.glob(f"**/{date_dir}/{fname}"))
+    if not fallback:
+        return None
+    if cam_txt:
+        cam_hits = [p for p in fallback if f"cam_{cam_txt}" in p.as_posix()]
+        if cam_hits:
+            return cam_hits[0]
+    return fallback[0]
+
+
+def _read_track_points(
+    track_csv: Path,
+    cache: dict[Path, pd.DataFrame],
+) -> pd.DataFrame:
+    if track_csv in cache:
+        return cache[track_csv]
+
+    df = pd.read_csv(track_csv)
+    required = {"timestamp", "world_x", "world_y"}
+    if not required.issubset(df.columns):
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "world_x", "world_y"])
+        return cache[track_csv]
+
+    pts = df[["timestamp", "world_x", "world_y"]].copy()
+    pts["timestamp"] = pd.to_datetime(pts["timestamp"], errors="coerce")
+    pts = pts.dropna(subset=["timestamp", "world_x", "world_y"]).sort_values("timestamp")
+    cache[track_csv] = pts
+    return pts
+
+
+def _split_standing_into_standing_walking(
+    bouts: pd.DataFrame,
+    track_dir: Path,
+    standing_merge_gap_sec: float,
+    walking_bin_minutes: float,
+    walking_bin_distance_threshold: float,
+    movement_step_clip: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if bouts.empty:
+        return bouts
+
+    non_standing = bouts[bouts["behavior_label"] != "01_standing"].copy()
+    standing = bouts[bouts["behavior_label"] == "01_standing"].copy()
+    if standing.empty:
+        out0 = bouts.sort_values(["start_time", "end_time"]).reset_index(drop=True)
+        diag0 = pd.DataFrame(
+            columns=[
+                "start_time",
+                "end_time",
+                "duration_sec",
+                "window_start_time",
+                "window_end_time",
+                "n_source_bouts",
+                "n_track_points",
+                "bin_distance",
+                "walking_bin_minutes",
+                "walking_bin_distance_threshold",
+                "movement_step_clip",
+                "predicted_label",
+            ]
+        )
+        return out0, diag0
+
+    standing = standing.sort_values(["start_time", "end_time"]).reset_index(drop=True)
+    gap = pd.Timedelta(seconds=float(standing_merge_gap_sec))
+    merged_windows: list[dict] = []
+
+    curr_start = standing.loc[0, "start_time"]
+    curr_end = standing.loc[0, "end_time"]
+    curr_rows = [0]
+    for i in range(1, len(standing)):
+        s = standing.loc[i, "start_time"]
+        e = standing.loc[i, "end_time"]
+        if s <= curr_end + gap:
+            if e > curr_end:
+                curr_end = e
+            curr_rows.append(i)
+            continue
+        merged_windows.append({"start_time": curr_start, "end_time": curr_end, "rows": curr_rows})
+        curr_start, curr_end, curr_rows = s, e, [i]
+    merged_windows.append({"start_time": curr_start, "end_time": curr_end, "rows": curr_rows})
+
+    track_cache: dict[Path, pd.DataFrame] = {}
+    new_rows: list[dict] = []
+    diagnostics: list[dict] = []
+    for window in merged_windows:
+        w_start = window["start_time"]
+        w_end = window["end_time"]
+        if pd.isna(w_start) or pd.isna(w_end) or w_start >= w_end:
+            continue
+
+        parts = standing.loc[window["rows"]]
+        collected_pts: list[pd.DataFrame] = []
+        for _, row in parts.iterrows():
+            track_filename = row.get("track_filename")
+            cam_id = row.get("cam_id")
+            if pd.isna(track_filename) or pd.isna(cam_id):
+                continue
+            track_csv = _resolve_track_csv_path(track_dir, str(cam_id), row["start_time"], str(track_filename))
+            if track_csv is None:
+                continue
+
+            pts = _read_track_points(track_csv, track_cache)
+            if pts.empty:
+                continue
+            wpts = pts[(pts["timestamp"] >= w_start) & (pts["timestamp"] <= w_end)]
+            if not wpts.empty:
+                collected_pts.append(wpts[["timestamp", "world_x", "world_y"]])
+
+        duration_sec = float((w_end - w_start).total_seconds())
+        all_pts = pd.DataFrame(columns=["timestamp", "world_x", "world_y"])
+        if collected_pts:
+            all_pts = pd.concat(collected_pts, ignore_index=True).sort_values("timestamp")
+            all_pts = all_pts.groupby("timestamp", as_index=False)[["world_x", "world_y"]].median().set_index("timestamp")
+            # Smooth to reduce frame-level jitter that inflates path length.
+            all_pts = all_pts.resample("1s").median().interpolate(limit_direction="both").dropna().reset_index()
+
+        bin_seconds = max(1, int(round(float(walking_bin_minutes) * 60.0)))
+        n_bins = max(1, int(np.ceil(duration_sec / bin_seconds)))
+        bin_rows: list[dict] = []
+        for b in range(n_bins):
+            b_start = w_start + pd.Timedelta(seconds=b * bin_seconds)
+            b_end = min(w_end, w_start + pd.Timedelta(seconds=(b + 1) * bin_seconds))
+            if b_start >= b_end:
+                continue
+
+            bpts = all_pts[(all_pts["timestamp"] >= b_start) & (all_pts["timestamp"] <= b_end)]
+            bin_duration_sec = float((b_end - b_start).total_seconds())
+            bin_distance = 0.0
+            if len(bpts) >= 2:
+                step = np.sqrt(bpts["world_x"].diff().pow(2) + bpts["world_y"].diff().pow(2))
+                bin_distance = float(step.clip(upper=float(movement_step_clip)).iloc[1:].sum())
+
+            # User rule: classify walking on full bins only, based on bin distance.
+            is_full_bin = abs(bin_duration_sec - float(bin_seconds)) <= 1.0
+            pred_label = "walking" if (is_full_bin and bin_distance > float(walking_bin_distance_threshold)) else "01_standing"
+            bin_rows.append({
+                "start_time": b_start,
+                "end_time": b_end,
+                "behavior_label": pred_label,
+            })
+            diagnostics.append({
+                "start_time": b_start,
+                "end_time": b_end,
+                "duration_sec": bin_duration_sec,
+                "window_start_time": w_start,
+                "window_end_time": w_end,
+                "n_source_bouts": len(parts),
+                "n_track_points": int(len(bpts)),
+                "bin_distance": bin_distance,
+                "walking_bin_minutes": float(walking_bin_minutes),
+                "walking_bin_distance_threshold": float(walking_bin_distance_threshold),
+                "movement_step_clip": float(movement_step_clip),
+                "predicted_label": pred_label,
+            })
+
+        if not bin_rows:
+            continue
+
+        cur = bin_rows[0].copy()
+        for row in bin_rows[1:]:
+            if row["behavior_label"] == cur["behavior_label"] and row["start_time"] <= cur["end_time"]:
+                cur["end_time"] = row["end_time"]
+            else:
+                new_rows.append(cur)
+                cur = row.copy()
+        new_rows.append(cur)
+
+    out = pd.concat([non_standing[["start_time", "end_time", "behavior_label"]], pd.DataFrame(new_rows)], ignore_index=True)
+    out = out.sort_values(["start_time", "end_time"]).reset_index(drop=True)
+    diag = pd.DataFrame(diagnostics)
+    return out, diag
+
+
+def _load_bouts_for_date(
+    csv_paths: Iterable[Path],
+    track_dir: Path,
+    individual_label: str,
+    standing_merge_gap_sec: float,
+    walking_bin_minutes: float,
+    walking_bin_distance_threshold: float,
+    movement_step_clip: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     frames: list[pd.DataFrame] = []
     for csv_path in csv_paths:
         df = pd.read_csv(csv_path)
@@ -448,11 +657,13 @@ def _load_bouts_for_date(csv_paths: Iterable[Path]) -> pd.DataFrame:
             raise ValueError(f"Missing start_time/end_time in {csv_path}")
         if "identity_label" not in df.columns:
             raise ValueError(f"Missing identity_label in {csv_path}")
+        if "cam_id" not in df.columns or "track_filename" not in df.columns:
+            raise ValueError(f"Missing cam_id/track_filename in {csv_path}")
 
         df = df.copy()
         df["behavior_label"] = df[label_col].astype(str)
         df = df[df["behavior_label"].isin(VALID_LABELS)]
-        df = df[df["identity_label"].astype(str) == "Thai"]
+        df = df[df["identity_label"].astype(str) == individual_label]
         if df.empty:
             continue
 
@@ -462,11 +673,22 @@ def _load_bouts_for_date(csv_paths: Iterable[Path]) -> pd.DataFrame:
         if df.empty:
             continue
 
-        frames.append(df[["start_time", "end_time", "behavior_label"]])
+        frames.append(df[["start_time", "end_time", "behavior_label", "cam_id", "track_filename"]])
 
     if not frames:
-        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
-    return pd.concat(frames, ignore_index=True)
+        return (
+            pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]),
+            pd.DataFrame(),
+        )
+    merged = pd.concat(frames, ignore_index=True)
+    return _split_standing_into_standing_walking(
+        bouts=merged,
+        track_dir=track_dir,
+        standing_merge_gap_sec=standing_merge_gap_sec,
+        walking_bin_minutes=walking_bin_minutes,
+        walking_bin_distance_threshold=walking_bin_distance_threshold,
+        movement_step_clip=movement_step_clip,
+    )
 
 
 if __name__ == "__main__":
@@ -506,6 +728,30 @@ if __name__ == "__main__":
         default=10,
         help="Bin size in minutes for the ethogram-style stacked bar plot.",
     )
+    parser.add_argument(
+        "--standing_merge_gap_sec",
+        type=float,
+        default=1.0,
+        help="Merge adjacent standing bouts when gap is <= this many seconds.",
+    )
+    parser.add_argument(
+        "--walking_bin_minutes",
+        type=float,
+        default=2.0,
+        help="Time bin size (minutes) for standing-vs-walking split.",
+    )
+    parser.add_argument(
+        "--walking_bin_distance_threshold",
+        type=float,
+        default=15.0,
+        help="Mark a bin as walking when movement distance in that bin exceeds this threshold (world units).",
+    )
+    parser.add_argument(
+        "--movement_step_clip",
+        type=float,
+        default=2.0,
+        help="Maximum per-second movement step (world units) used in movement integration; larger jumps are clipped.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir) if args.output_dir else (Path(args.record_root) / "demo" / "night_bout_summary")
@@ -530,7 +776,15 @@ if __name__ == "__main__":
     all_night_segments: list[pd.DataFrame] = []
 
     for date, csv_paths in sorted(by_date.items()):
-        bouts = _load_bouts_for_date(csv_paths)
+        bouts, standing_diag = _load_bouts_for_date(
+            csv_paths=csv_paths,
+            track_dir=track_dir,
+            individual_label=args.individual_group,
+            standing_merge_gap_sec=args.standing_merge_gap_sec,
+            walking_bin_minutes=args.walking_bin_minutes,
+            walking_bin_distance_threshold=args.walking_bin_distance_threshold,
+            movement_step_clip=args.movement_step_clip,
+        )
         max_ts = None
         if not bouts.empty:
             max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
@@ -554,6 +808,8 @@ if __name__ == "__main__":
         timeline["date"] = date
         timeline_csv = out_dir / f"{args.individual_group}_activity_timeline_{args.bin_minutes}min.csv"
         timeline.to_csv(timeline_csv, index=False)
+        standing_diag_csv = out_dir / f"{args.individual_group}_standing_walking_diagnostics.csv"
+        standing_diag.to_csv(standing_diag_csv, index=False)
         segments = _labels_to_segments(labels, night_start)
         segments["date"] = date
         segments["offset_start_sec"] = (segments["start_time"] - night_start).dt.total_seconds()
@@ -570,6 +826,7 @@ if __name__ == "__main__":
 
         print(f"Saved: {out_csv}")
         print(f"Saved: {timeline_csv}")
+        print(f"Saved: {standing_diag_csv}")
         print(f"Saved: {plot_path}")
         print(f"Saved: {ethogram_path}")
 
