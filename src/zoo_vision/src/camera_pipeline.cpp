@@ -422,7 +422,7 @@ void CameraPipeline::recordTracks(const SysTime /*time*/, uint64_t frameId, cons
   std::lock_guard guard{g_mutex};
 
   for (auto &&[idx, trackId] : std::views::enumerate(trackIds)) {
-    if (trackId == TrackMatcher::INVALID_TRACK_ID) {
+    if (trackId == INVALID_TRACK_ID) {
       continue;
     }
     TrackData &track = trackMatcher_.getTrackData(trackId);
@@ -483,6 +483,9 @@ void CameraPipeline::moveTrackImagesToIdentityPath(const TrackData &track) {
 void CameraPipeline::recordMasks(std::string_view videoFile, uint64_t frameId, std::span<TrackId> trackIds,
                                  const at::Tensor &masks) {
   for (const auto [index, trackId] : std::views::enumerate(trackIds)) {
+    if (trackId == INVALID_TRACK_ID) {
+      continue;
+    }
     const std::filesystem::path dir =
         config_.rootPathImprove / "masks" / videoFile / std::format("track_{:04}", trackId);
     const std::filesystem::path filename = dir / (std::format("frame_{:06}", frameId) + ".png");

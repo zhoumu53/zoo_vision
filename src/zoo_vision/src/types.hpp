@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <stacktrace>
 #include <stdexcept>
 
@@ -62,6 +63,7 @@ using float32_t = float;
 namespace zoo {
 
 using TrackId = uint32_t;
+static constexpr TrackId INVALID_TRACK_ID = 0;
 
 using TClassId = uint32_t;
 using TIdentity = uint32_t;

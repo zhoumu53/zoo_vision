@@ -75,7 +75,7 @@
     "model": "../models/segmentation/yolo/all_v3/weights/best.onnx",
     "model_backup": "../models/segmentation/mask2former/all/config.ptc",
     "elephant_label_id": 0,
-    "score_threshold": 0.9
+    "score_threshold": 0.8
   },
   "models": {
     "embeddings": "../models/identity/vit/all/config_embeddings.ptc",
