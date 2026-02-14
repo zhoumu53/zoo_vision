@@ -80,18 +80,39 @@ TrackUpdateStats TrackMatcher::update(Clock::time_point now, float32_t fps, std:
 
   // ByteTrack does not do the matching between detection index and track index.
   // We need to do it ourselves.
-  for (auto &&[box, outputTrackId] : std::views::zip(boxes, outputTrackIds)) {
-    float32_t bestDistance = 1e10;
-    TrackId bestId = INVALID_TRACK_ID;
+  std::vector<TrackData *> tracksByIndex;
+  tracksByIndex.resize(tracks_.size());
+  for (auto &&[trackIndex, trackRecord] : std::views::enumerate(tracks_)) {
+    tracksByIndex[trackIndex] = trackRecord.second.get();
+  }
 
-    for (const auto &[trackId, data] : tracks_) {
-      const float32_t distance = (data->box.center() - box.center()).squaredNorm();
-      if (distance <= bestDistance) {
-        bestDistance = distance;
-        bestId = trackId;
-      }
+  auto distances = Eigen::MatrixXf(boxes.size(), tracks_.size());
+  for (auto &&[boxIndex, box] : std::views::enumerate(boxes)) {
+    for (auto &&[trackIndex, trackPtr] : std::views::enumerate(tracksByIndex)) {
+      const auto &track = *trackPtr;
+      const float32_t distance = (track.box.center() - box.center()).squaredNorm();
+      distances(boxIndex, trackIndex) = distance;
     }
-    outputTrackId = bestId;
+  }
+
+  // Initially set all output tracks to invalid in case we have more detections than tracks
+  for (auto &value : outputTrackIds) {
+    value = INVALID_TRACK_ID;
+  }
+
+  // Find matches for the valid detections
+  const auto validOutputs = std::min(tracks_.size(), boxes.size());
+  for (size_t i = 0; i < validOutputs; i++) {
+    // Find the track with the best match
+    int bestTrackIndex = -1;
+    int bestBoxIndex = -1;
+    distances.minCoeff(&bestBoxIndex, &bestTrackIndex);
+
+    // Assign to output
+    outputTrackIds[bestBoxIndex] = tracksByIndex[bestTrackIndex]->id;
+
+    // Reset distances for this track so it doesn't get picked again
+    distances.col(bestTrackIndex).setConstant(std::numeric_limits<float32_t>::max());
   }
   return result;
 }

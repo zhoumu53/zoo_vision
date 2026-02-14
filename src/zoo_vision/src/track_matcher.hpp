@@ -97,7 +97,6 @@ class TrackMatcher {
 public:
   using Clock = std::chrono::system_clock;
 
-  static constexpr TrackId INVALID_TRACK_ID = 0;
   static constexpr size_t MAX_TRACK_COUNT = 25;
 
   TrackMatcher(const std::filesystem::path &rootTracksPath);
