@@ -105,6 +105,9 @@ void SegmenterYolo::onImage(SegmenterResult &result, const at::Tensor & /*imageG
   nvtxLabel.emplace("seg_after (" + cameraName_ + ")");
 
   for (const auto &[i, resultYolo] : std::views::enumerate(resultsYolo)) {
+    if (resultYolo.conf < scoreThreshold_) {
+      continue;
+    }
     CHECK_EQ(detectionImageSize_[0], resultYolo.mask.cols);
     CHECK_EQ(detectionImageSize_[1], resultYolo.mask.rows);
 
