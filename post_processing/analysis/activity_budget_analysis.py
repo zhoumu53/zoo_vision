@@ -46,8 +46,8 @@ LABEL_COLORS = {
 }
 
 GT_LABEL_COLORS = {
-    "02_sleeping_left": "#E3E902",   ## lighter green
-    "03_sleeping_right": "#FFEC17",  ## lighter yellow
+    "02_sleeping_left": "#539B32",
+    "03_sleeping_right": "#FFC300",
 }
 
 GT_LABEL_MAP = {
@@ -64,11 +64,18 @@ GT_LABEL_MAP = {
     "stereotypy": "stereotypy",
 }
 
+TRAJ_HEATMAP_LABELS = [
+    "01_standing",
+    "walking",
+    "02_sleeping_left",
+    "03_sleeping_right",
+]
+
 LABEL_PRIORITY = {
     "outside": 0,
-    "01_standing": 2,
-    "02_sleeping_left": 1,
-    "03_sleeping_right": 1,
+    "01_standing": 1,
+    "02_sleeping_left": 2,
+    "03_sleeping_right": 2,
     "walking": 3,
     "stereotypy": 4,
 }
@@ -366,14 +373,15 @@ def _plot_activity_timeline(
             if color is None:
                 continue
             gt_present_labels.append(gt_label)
-            starts = mdates.date2num(dfg["start_time"])
-            ends = mdates.date2num(dfg["end_time"])
+            starts = np.asarray(mdates.date2num(dfg["start_time"]), dtype=float)
+            ends = np.asarray(mdates.date2num(dfg["end_time"]), dtype=float)
+            ys = np.full(starts.shape[0], y_gt, dtype=float)
             ax.hlines(
-                y=y_gt,
+                y=ys,
                 xmin=starts,
                 xmax=ends,
                 colors=color,
-                linewidth=3.0,
+                linewidth=1.0,
                 zorder=5,
             )
             centers = (starts + ends) / 2.0
@@ -800,8 +808,9 @@ def _load_bouts_for_date(
     walking_bin_minutes: float,
     walking_bin_distance_threshold: float,
     movement_step_clip: float,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     frames: list[pd.DataFrame] = []
+    has_nonempty_source_csv = False
     for csv_path, track_dir in csv_sources:
         try:
             df = pd.read_csv(csv_path)
@@ -811,6 +820,10 @@ def _load_bouts_for_date(
         except pd.errors.ParserError as exc:
             print(f"Warning: skipping unparsable CSV: {csv_path} ({exc})")
             continue
+        if df.empty:
+            print(f"Warning: skipping empty CSV with header but no rows: {csv_path}")
+            continue
+        has_nonempty_source_csv = True
         label_col = _behavior_label_col(df)
 
         if "start_time" not in df.columns or "end_time" not in df.columns:
@@ -840,9 +853,11 @@ def _load_bouts_for_date(
         return (
             pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]),
             pd.DataFrame(),
+            pd.DataFrame(columns=["start_time", "end_time", "behavior_label", "cam_id", "track_filename", "track_root"]),
+            has_nonempty_source_csv,
         )
     merged = pd.concat(frames, ignore_index=True)
-    return _split_standing_into_standing_walking(
+    split_bouts, diagnostics = _split_standing_into_standing_walking(
         bouts=merged,
         track_dir=None,
         standing_merge_gap_sec=standing_merge_gap_sec,
@@ -850,6 +865,248 @@ def _load_bouts_for_date(
         walking_bin_distance_threshold=walking_bin_distance_threshold,
         movement_step_clip=movement_step_clip,
     )
+    return split_bouts, diagnostics, merged, has_nonempty_source_csv
+
+
+def _build_identity_trajectory_points(
+    source_bouts: pd.DataFrame,
+    refined_bouts: pd.DataFrame,
+) -> pd.DataFrame:
+    if source_bouts.empty:
+        return pd.DataFrame(
+            columns=["timestamp", "world_x", "world_y", "behavior_label", "camera_id", "label_priority"]
+        )
+
+    track_cache: dict[Path, pd.DataFrame] = {}
+    rows: list[pd.DataFrame] = []
+    for _, row in source_bouts.iterrows():
+        track_filename = row.get("track_filename")
+        cam_id = row.get("cam_id")
+        track_root = row.get("track_root")
+        if pd.isna(track_filename) or pd.isna(cam_id) or pd.isna(track_root):
+            continue
+
+        track_csv = _resolve_track_csv_path(Path(str(track_root)), str(cam_id), row["start_time"], str(track_filename))
+        if track_csv is None:
+            continue
+
+        pts = _read_track_points(track_csv, track_cache)
+        if pts.empty:
+            continue
+
+        seg = pts[(pts["timestamp"] >= row["start_time"]) & (pts["timestamp"] <= row["end_time"])].copy()
+        if seg.empty:
+            continue
+        seg["camera_id"] = str(cam_id)
+        rows.append(seg)
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["timestamp", "world_x", "world_y", "behavior_label", "camera_id", "label_priority"]
+        )
+
+    out = pd.concat(rows, ignore_index=True)
+    out = out.sort_values(["timestamp"])
+    out = out.drop_duplicates(subset=["timestamp", "camera_id"], keep="last")
+
+    # Re-label trajectory points using refined bouts (standing split into standing/walking).
+    out["behavior_label"] = "outside"
+    out["label_priority"] = int(LABEL_PRIORITY["outside"])
+    if not refined_bouts.empty:
+        refined = refined_bouts.sort_values(["start_time", "end_time"]).reset_index(drop=True)
+        for _, bout in refined.iterrows():
+            label = str(bout["behavior_label"])
+            if label not in VALID_LABELS:
+                continue
+            s = bout["start_time"]
+            e = bout["end_time"]
+            if pd.isna(s) or pd.isna(e) or s >= e:
+                continue
+            pr = int(LABEL_PRIORITY.get(label, 0))
+            mask = (out["timestamp"] >= s) & (out["timestamp"] <= e) & (out["label_priority"] < pr)
+            if not mask.any():
+                continue
+            out.loc[mask, "behavior_label"] = label
+            out.loc[mask, "label_priority"] = pr
+
+    out = out[out["behavior_label"].isin(VALID_LABELS)]
+    out = out.drop(columns=["label_priority"])
+    return out.reset_index(drop=True)
+
+
+def _trajectory_behaviour_cmap_map() -> dict[str, str]:
+    return {
+        "01_standing": "winter",
+        "02_sleeping_left": "magma",
+        "03_sleeping_right": "plasma",
+        "walking": "viridis",
+        "stereotypy": "inferno",
+    }
+
+
+def _plot_world_heatmap_by_behaviour(
+    df_traj: pd.DataFrame,
+    out_path: Path,
+    title: str,
+) -> None:
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"])
+    d = d[d["behavior_label"].isin(TRAJ_HEATMAP_LABELS)]
+    if d.empty:
+        return
+
+    cmap_for = _trajectory_behaviour_cmap_map()
+    behaviors_to_show = [lbl for lbl in TRAJ_HEATMAP_LABELS if (d["behavior_label"] == lbl).any()]
+    n = len(behaviors_to_show)
+    if n == 0:
+        return
+
+    ncols = 2 if n > 1 else 1
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(12, max(4, 3.8 * nrows)),
+        dpi=180,
+        facecolor="black",
+    )
+    axes_arr = np.array(axes, dtype=object).reshape(-1)
+    x_min, x_max = float(d["world_x"].min()), float(d["world_x"].max())
+    y_min, y_max = float(d["world_y"].min()), float(d["world_y"].max())
+
+    for i, beh in enumerate(behaviors_to_show):
+        ax = axes_arr[i]
+        ax.set_facecolor("black")
+        g = d[d["behavior_label"] == beh]
+        hb = ax.hexbin(
+            g["world_x"].to_numpy(),
+            g["world_y"].to_numpy(),
+            gridsize=140,
+            bins="log",
+            cmap=cmap_for.get(str(beh), "Greys"),
+            mincnt=1,
+            alpha=0.85,
+        )
+        ax.set_title(LABEL_DISPLAY.get(beh, beh), color="white")
+        ax.set_xlabel("world_x", color="white")
+        ax.set_ylabel("world_y", color="white")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_color("white")
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.grid(False)
+
+        cbar = fig.colorbar(hb, ax=ax, pad=0.02, fraction=0.046)
+        cbar.set_label("Density (log scale)", color="white", rotation=270, labelpad=16)
+        cbar.ax.yaxis.set_tick_params(color="white")
+        cbar.outline.set_edgecolor("white")
+        plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
+
+    for j in range(n, len(axes_arr)):
+        axes_arr[j].axis("off")
+
+    fig.suptitle(title, color="white")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor(), bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_world_time_ordered_trajectory(
+    df_traj: pd.DataFrame,
+    out_path: Path,
+    title: str,
+) -> None:
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"]).sort_values("timestamp")
+    if d.empty:
+        return
+
+    t = d["timestamp"]
+    dt = (t - t.min()).dt.total_seconds().to_numpy()
+    dt_range = max(float(dt.max()), 1e-9)
+    t_norm = dt / dt_range
+
+    x = d["world_x"].to_numpy(dtype=float)
+    y = d["world_y"].to_numpy(dtype=float)
+
+    breaks = np.zeros(len(x), dtype=bool)
+    if len(x) >= 2:
+        gaps = np.diff(dt)
+        jumps = np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+        breaks[1:] = (gaps > 10.0) | (jumps > 20.0)
+
+    fig = plt.figure(figsize=(10, 7), dpi=180, facecolor="black")
+    ax = fig.add_subplot(111, facecolor="black")
+
+    ax.hexbin(
+        x,
+        y,
+        gridsize=140,
+        bins="log",
+        cmap="Greys",
+        mincnt=1,
+        alpha=0.30,
+    )
+
+    sc = None
+    start = 0
+    for i in range(1, len(x) + 1):
+        if i == len(x) or breaks[i]:
+            xs = x[start:i]
+            ys = y[start:i]
+            ts = t_norm[start:i]
+            if len(xs) >= 2:
+                ax.plot(xs, ys, linewidth=2.0, alpha=0.9)
+            sc = ax.scatter(xs, ys, c=ts, s=10.0, cmap="turbo", alpha=0.95, linewidths=0)
+            start = i
+
+    ax.set_title(title, color="white")
+    ax.set_xlabel("world_x", color="white")
+    ax.set_ylabel("world_y", color="white")
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("white")
+
+    if sc is not None:
+        cbar = fig.colorbar(sc, ax=ax, pad=0.02, fraction=0.046)
+        cbar.set_label("Time (normalized)", color="white", rotation=270, labelpad=20)
+        cbar.ax.yaxis.set_tick_params(color="white")
+        cbar.outline.set_edgecolor("white")
+        plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor(), bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_trajectory_heatmaps_for_date(
+    source_bouts: pd.DataFrame,
+    refined_bouts: pd.DataFrame,
+    out_dir: Path,
+    output_stem: str,
+    individual_label: str,
+) -> tuple[Path, Path] | None:
+    df_traj = _build_identity_trajectory_points(source_bouts, refined_bouts)
+    if df_traj.empty:
+        return None
+
+    heat_path = out_dir / f"{output_stem}_trajectory_heatmap_world_xy.png"
+    traj_heat_path = out_dir / f"{output_stem}_trajectory_time_ordered_world_xy.png"
+    _plot_world_heatmap_by_behaviour(
+        df_traj=df_traj,
+        out_path=heat_path,
+        title=heat_path.name.replace(".png", ""),
+    )
+    _plot_world_time_ordered_trajectory(
+        df_traj=df_traj,
+        out_path=traj_heat_path,
+        title=traj_heat_path.name.replace(".png", ""),
+    )
+    return heat_path, traj_heat_path
 
 
 def _resolve_record_roots(args: argparse.Namespace) -> list[Path]:
@@ -1100,7 +1357,7 @@ def run_analysis(args: argparse.Namespace) -> None:
     for date, csv_sources in sorted(by_date.items()):
         output_stem = _per_date_output_stem(csv_sources, args.individual_group)
         gt_stem = _remove_date_suffix(output_stem, date)
-        bouts, standing_diag = _load_bouts_for_date(
+        bouts, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
             csv_sources=csv_sources,
             individual_label=args.individual_group,
             standing_merge_gap_sec=args.standing_merge_gap_sec,
@@ -1108,6 +1365,9 @@ def run_analysis(args: argparse.Namespace) -> None:
             walking_bin_distance_threshold=args.walking_bin_distance_threshold,
             movement_step_clip=args.movement_step_clip,
         )
+        if not has_nonempty_source_csv:
+            print(f"Skipped date {date}: all bout summary CSVs are empty; no analysis outputs created.")
+            continue
         max_ts = None
         if not bouts.empty:
             max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
@@ -1139,14 +1399,19 @@ def run_analysis(args: argparse.Namespace) -> None:
 
         out_dir = out_root / date
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_csv = out_dir / f"{output_stem}_activity_budget.csv"
+        out_csv_dir = out_dir / "csvs"
+        out_fig_dir = out_dir / "figures"
+        out_csv_dir.mkdir(parents=True, exist_ok=True)
+        out_fig_dir.mkdir(parents=True, exist_ok=True)
+
+        out_csv = out_csv_dir / f"{output_stem}_activity_budget.csv"
         budget.to_csv(out_csv, index=False)
 
         timeline = _aggregate_timeline(labels, night_start, args.bin_minutes)
         timeline["date"] = date
-        timeline_csv = out_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
+        timeline_csv = out_csv_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
         timeline.to_csv(timeline_csv, index=False)
-        standing_diag_csv = out_dir / f"{output_stem}_standing_walking_diagnostics.csv"
+        standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
         standing_diag.to_csv(standing_diag_csv, index=False)
         segments = _labels_to_segments(labels, night_start)
         segments["date"] = date
@@ -1156,19 +1421,31 @@ def run_analysis(args: argparse.Namespace) -> None:
         if not bouts.empty:
             all_night_segments.append(segments)
 
-        plot_path = out_dir / f"{output_stem}_activity_budget.png"
-        title = f"{output_stem} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
-        _plot_activity_budget(budget, plot_path, title)
+        plot_path = None
+        # plot_path = out_fig_dir / f"{output_stem}_activity_budget.png"
+        # title = f"{output_stem} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        # _plot_activity_budget(budget, plot_path, title)
 
-        ethogram_path = out_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
+        ethogram_path = out_fig_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
         ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
         _plot_activity_timeline(segments, ethogram_path, ethogram_title, df_gt_segments=gt_segments)
+        traj_paths = None
+        # traj_paths = _plot_trajectory_heatmaps_for_date(
+        #     source_bouts=source_bouts,
+        #     refined_bouts=bouts,
+        #     out_dir=out_fig_dir,
+        #     output_stem=output_stem,
+        #     individual_label=args.individual_group,
+        # )
 
         print(f"Saved: {out_csv}")
         print(f"Saved: {timeline_csv}")
         print(f"Saved: {standing_diag_csv}")
         print(f"Saved: {plot_path}")
         print(f"Saved: {ethogram_path}")
+        if traj_paths is not None:
+            print(f"Saved: {traj_paths[0]}")
+            print(f"Saved: {traj_paths[1]}")
         if gt_created:
             print(f"Created empty GT template: {gt_csv}")
 
