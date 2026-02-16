@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 
 VALID_LABELS = {
@@ -30,7 +31,7 @@ LABEL_DISPLAY = {
     "01_standing": "standing",
     "02_sleeping_left": "sleeping left",
     "03_sleeping_right": "sleeping right",
-    "outside": "outside / no-data",
+    "outside": "outside / no observation",
     "walking": "walking",
     "stereotypy": "stereotypy",
 }
@@ -42,6 +43,25 @@ LABEL_COLORS = {
     "stereotypy": "#FF2624",
     "01_standing": "#8a00ac",
     "walking": "#c372cb",
+}
+
+GT_LABEL_COLORS = {
+    "02_sleeping_left": "#E3E902",   ## lighter green
+    "03_sleeping_right": "#FFEC17",  ## lighter yellow
+}
+
+GT_LABEL_MAP = {
+    "sleep_left": "02_sleeping_left",
+    "sleeping_left": "02_sleeping_left",
+    "left_sleep": "02_sleeping_left",
+    "sleep_right": "03_sleeping_right",
+    "sleeping_right": "03_sleeping_right",
+    "right_sleep": "03_sleeping_right",
+    "standing": "01_standing",
+    "stand": "01_standing",
+    "walking": "walking",
+    "walk": "walking",
+    "stereotypy": "stereotypy",
 }
 
 LABEL_PRIORITY = {
@@ -69,6 +89,7 @@ def get_bout_csvs(
     output_dir: Path,
     dates: list[str],
     filename_keyword: str | None = None,
+    strict: bool = True,
 ) -> list[tuple[str, Path]]:
     collected: list[tuple[str, Path]] = []
     for date in dates:
@@ -79,7 +100,7 @@ def get_bout_csvs(
         for csv_path in sorted(date_dir.glob(pattern)):
             collected.append((date, csv_path))
 
-    if not collected:
+    if not collected and strict:
         keyword_txt = f" containing '{filename_keyword}'" if filename_keyword else ""
         raise FileNotFoundError(
             f"No bout summary CSV files{keyword_txt} found in {output_dir} for dates: {dates}"
@@ -92,6 +113,8 @@ def _behavior_label_col(df: pd.DataFrame) -> str:
         return "behavior_label"
     if "behavior_label_raw" in df.columns:
         return "behavior_label_raw"
+    if "behavior_label_stage1" in df.columns:
+        return "behavior_label_stage1"
     if "behavior_label_old" in df.columns:
         return "behavior_label_old"
     raise ValueError("No behavior label column found in CSV")
@@ -307,6 +330,7 @@ def _plot_activity_timeline(
     df_segments: pd.DataFrame,
     out_path: Path,
     title: str,
+    df_gt_segments: pd.DataFrame | None = None,
 ) -> None:
     df = df_segments.copy()
     if df.empty:
@@ -332,6 +356,38 @@ def _plot_activity_timeline(
             linewidth=0.4,
         )
 
+    gt_present_labels: list[str] = []
+    if df_gt_segments is not None and not df_gt_segments.empty:
+        gt_df = df_gt_segments.copy().sort_values(["start_time", "end_time"])
+        # Overlay GT directly on top of the behavior bar.
+        y_gt = 0.50
+        for gt_label, dfg in gt_df.groupby("behavior_label"):
+            color = GT_LABEL_COLORS.get(gt_label)
+            if color is None:
+                continue
+            gt_present_labels.append(gt_label)
+            starts = mdates.date2num(dfg["start_time"])
+            ends = mdates.date2num(dfg["end_time"])
+            ax.hlines(
+                y=y_gt,
+                xmin=starts,
+                xmax=ends,
+                colors=color,
+                linewidth=3.0,
+                zorder=5,
+            )
+            centers = (starts + ends) / 2.0
+            ax.scatter(
+                centers,
+                np.full(len(centers), y_gt),
+                marker="*",
+                s=90,
+                c=color,
+                edgecolors="black",
+                linewidths=0.4,
+                zorder=6,
+            )
+
     ax.set_title(title)
     ax.set_ylabel("")
     ax.set_yticks([])
@@ -339,7 +395,7 @@ def _plot_activity_timeline(
     ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax.set_xlim(mdates.date2num(df["start_time"].min()), mdates.date2num(df["end_time"].max()))
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0, 1.0)
     ax.set_axisbelow(True)
     ax.grid(axis="x", color="#E2E8F0", linewidth=0.8)
     ax.spines["top"].set_visible(False)
@@ -349,6 +405,20 @@ def _plot_activity_timeline(
         Patch(facecolor=LABEL_COLORS[label], edgecolor="none", label=LABEL_DISPLAY[label])
         for label in LABEL_ORDER
     ]
+    legend_handles.extend([
+        Line2D(
+            [0],
+            [0],
+            color=GT_LABEL_COLORS[label],
+            lw=3.0,
+            marker="*",
+            markersize=10,
+            markeredgecolor="black",
+            markeredgewidth=0.4,
+            label=f"GT {LABEL_DISPLAY[label]}",
+        )
+        for label in sorted(set(gt_present_labels))
+    ])
     ax.legend(
         handles=legend_handles,
         ncol=1,
@@ -369,40 +439,89 @@ def _plot_activity_timeline_multi_night(
     df_segments_all: pd.DataFrame,
     out_path: Path,
     title: str,
+    df_gt_segments_all: pd.DataFrame | None = None,
 ) -> None:
     df = df_segments_all.copy()
-    if df.empty:
-        raise ValueError("No multi-night timeline segments to plot")
+    gt_df = pd.DataFrame() if df_gt_segments_all is None else df_gt_segments_all.copy()
+    if df.empty and gt_df.empty:
+        raise ValueError("No multi-night timeline/GT segments to plot")
 
-    dates_sorted = sorted(df["date"].astype(str).unique())
+    dates_union = set()
+    if not df.empty:
+        dates_union.update(df["date"].astype(str).unique())
+    if not gt_df.empty:
+        dates_union.update(gt_df["date"].astype(str).unique())
+    dates_sorted = sorted(dates_union)
     date_to_y = {d: i for i, d in enumerate(dates_sorted)}
     y_labels = [pd.to_datetime(d, format="%Y%m%d").strftime("%Y-%m-%d") for d in dates_sorted]
 
     anchor = pd.Timestamp("2000-01-01 18:00:00")
-    start_nums = mdates.date2num(anchor + pd.to_timedelta(df["offset_start_sec"], unit="s"))
-    width_days = (df["offset_end_sec"] - df["offset_start_sec"]).to_numpy(dtype=float) / 86400.0
+    if not df.empty:
+        start_nums = mdates.date2num(anchor + pd.to_timedelta(df["offset_start_sec"], unit="s"))
+        width_days = (df["offset_end_sec"] - df["offset_start_sec"]).to_numpy(dtype=float) / 86400.0
+    else:
+        start_nums = np.array([], dtype=float)
+        width_days = np.array([], dtype=float)
 
-    fig_h = max(3.0, 0.5 * len(dates_sorted) + 1.2)
-    fig, ax = plt.subplots(figsize=(13, fig_h))
+    # Full-page friendly layout for many nights.
+    fig_h = max(11.0, 0.4 * len(dates_sorted) + 1.5)
+    fig, ax = plt.subplots(figsize=(17, fig_h))
 
-    for label in LABEL_ORDER:
-        dfl = df[df["behavior_label"] == label]
-        if dfl.empty:
-            continue
-        idx = dfl.index.to_numpy()
-        ax.barh(
-            [date_to_y[d] for d in dfl["date"].astype(str)],
-            width_days[idx],
-            left=start_nums[idx],
-            height=0.56,
-            color=LABEL_COLORS[label],
-            # edgecolor="white",
-            linewidth=0.3,
-            label="_nolegend_",
-        )
+    if not df.empty:
+        for label in LABEL_ORDER:
+            dfl = df[df["behavior_label"] == label]
+            if dfl.empty:
+                continue
+            idx = dfl.index.to_numpy()
+            ax.barh(
+                [date_to_y[d] for d in dfl["date"].astype(str)],
+                width_days[idx],
+                left=start_nums[idx],
+                height=0.56,
+                color=LABEL_COLORS[label],
+                # edgecolor="white",
+                linewidth=0.3,
+                label="_nolegend_",
+            )
+
+    gt_present_labels: list[str] = []
+    if not gt_df.empty:
+        gt_start_nums = mdates.date2num(anchor + pd.to_timedelta(gt_df["offset_start_sec"], unit="s"))
+        gt_end_nums = mdates.date2num(anchor + pd.to_timedelta(gt_df["offset_end_sec"], unit="s"))
+        for gt_label, dfg in gt_df.groupby("behavior_label"):
+            color = GT_LABEL_COLORS.get(gt_label)
+            if color is None:
+                continue
+            gt_present_labels.append(gt_label)
+            idx = dfg.index.to_numpy()
+            ys = [date_to_y[d] for d in dfg["date"].astype(str)]
+            ax.hlines(
+                y=ys,
+                xmin=gt_start_nums[idx],
+                xmax=gt_end_nums[idx],
+                colors=color,
+                linewidth=2.6,
+                zorder=5,
+            )
+            centers = (gt_start_nums[idx] + gt_end_nums[idx]) / 2.0
+            ax.scatter(
+                centers,
+                ys,
+                marker="*",
+                s=70,
+                c=color,
+                edgecolors="black",
+                linewidths=0.4,
+                zorder=6,
+            )
 
     x0 = mdates.date2num(anchor)
-    x1 = mdates.date2num(anchor + pd.Timedelta(seconds=float(df["offset_end_sec"].max())))
+    max_end_offset = 0.0
+    if not df.empty:
+        max_end_offset = max(max_end_offset, float(df["offset_end_sec"].max()))
+    if not gt_df.empty:
+        max_end_offset = max(max_end_offset, float(gt_df["offset_end_sec"].max()))
+    x1 = mdates.date2num(anchor + pd.Timedelta(seconds=max_end_offset))
     ax.set_xlim(x0, x1)
     ax.set_title(title)
     ax.set_ylabel("Night")
@@ -422,6 +541,20 @@ def _plot_activity_timeline_multi_night(
         Patch(facecolor=LABEL_COLORS[label], edgecolor="none", label=LABEL_DISPLAY[label])
         for label in LABEL_ORDER
     ]
+    legend_handles.extend([
+        Line2D(
+            [0],
+            [0],
+            color=GT_LABEL_COLORS[label],
+            lw=3.0,
+            marker="*",
+            markersize=10,
+            markeredgecolor="black",
+            markeredgewidth=0.4,
+            label=f"GT {LABEL_DISPLAY[label]}",
+        )
+        for label in sorted(set(gt_present_labels))
+    ])
     ax.legend(
         handles=legend_handles,
         ncol=1,
@@ -482,7 +615,16 @@ def _read_track_points(
     if track_csv in cache:
         return cache[track_csv]
 
-    df = pd.read_csv(track_csv)
+    try:
+        df = pd.read_csv(track_csv)
+    except pd.errors.EmptyDataError:
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "world_x", "world_y"])
+        print(f"Warning: skipping empty track CSV: {track_csv}")
+        return cache[track_csv]
+    except pd.errors.ParserError as exc:
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "world_x", "world_y"])
+        print(f"Warning: skipping unparsable track CSV: {track_csv} ({exc})")
+        return cache[track_csv]
     required = {"timestamp", "world_x", "world_y"}
     if not required.issubset(df.columns):
         cache[track_csv] = pd.DataFrame(columns=["timestamp", "world_x", "world_y"])
@@ -497,14 +639,14 @@ def _read_track_points(
 
 def _split_standing_into_standing_walking(
     bouts: pd.DataFrame,
-    track_dir: Path,
+    track_dir: Path | None,
     standing_merge_gap_sec: float,
     walking_bin_minutes: float,
     walking_bin_distance_threshold: float,
     movement_step_clip: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if bouts.empty:
-        return bouts
+        return bouts, pd.DataFrame()
 
     non_standing = bouts[bouts["behavior_label"] != "01_standing"].copy()
     standing = bouts[bouts["behavior_label"] == "01_standing"].copy()
@@ -563,7 +705,11 @@ def _split_standing_into_standing_walking(
             cam_id = row.get("cam_id")
             if pd.isna(track_filename) or pd.isna(cam_id):
                 continue
-            track_csv = _resolve_track_csv_path(track_dir, str(cam_id), row["start_time"], str(track_filename))
+            row_track_dir = row.get("track_root")
+            resolved_track_dir = Path(str(row_track_dir)) if pd.notna(row_track_dir) else track_dir
+            if resolved_track_dir is None:
+                continue
+            track_csv = _resolve_track_csv_path(resolved_track_dir, str(cam_id), row["start_time"], str(track_filename))
             if track_csv is None:
                 continue
 
@@ -598,9 +744,17 @@ def _split_standing_into_standing_walking(
                 step = np.sqrt(bpts["world_x"].diff().pow(2) + bpts["world_y"].diff().pow(2))
                 bin_distance = float(step.clip(upper=float(movement_step_clip)).iloc[1:].sum())
 
-            # User rule: classify walking on full bins only, based on bin distance.
+            # classify walking on full bins only, based on bin distance - threshold observed from raw video
             is_full_bin = abs(bin_duration_sec - float(bin_seconds)) <= 1.0
-            pred_label = "walking" if (is_full_bin and bin_distance > float(walking_bin_distance_threshold)) else "01_standing"
+            # pred_label = "walking" if (is_full_bin and bin_distance > float(walking_bin_distance_threshold)) else "01_standing"
+            ### for not full_bin (it still may walking but distance is underestimated due to short bin) -- count the speed from bin seconds, and bin threshold
+            if not is_full_bin and bin_duration_sec > 0:
+                speed = bin_distance / bin_duration_sec
+                pred_label = "walking" if speed > (float(walking_bin_distance_threshold) / float(bin_seconds)) else "01_standing"
+            else:
+                pred_label = "walking" if bin_distance > float(walking_bin_distance_threshold) else "01_standing"
+            
+            
             bin_rows.append({
                 "start_time": b_start,
                 "end_time": b_end,
@@ -640,8 +794,7 @@ def _split_standing_into_standing_walking(
 
 
 def _load_bouts_for_date(
-    csv_paths: Iterable[Path],
-    track_dir: Path,
+    csv_sources: Iterable[tuple[Path, Path]],
     individual_label: str,
     standing_merge_gap_sec: float,
     walking_bin_minutes: float,
@@ -649,8 +802,15 @@ def _load_bouts_for_date(
     movement_step_clip: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     frames: list[pd.DataFrame] = []
-    for csv_path in csv_paths:
-        df = pd.read_csv(csv_path)
+    for csv_path, track_dir in csv_sources:
+        try:
+            df = pd.read_csv(csv_path)
+        except pd.errors.EmptyDataError:
+            print(f"Warning: skipping empty CSV with no header/data: {csv_path}")
+            continue
+        except pd.errors.ParserError as exc:
+            print(f"Warning: skipping unparsable CSV: {csv_path} ({exc})")
+            continue
         label_col = _behavior_label_col(df)
 
         if "start_time" not in df.columns or "end_time" not in df.columns:
@@ -673,7 +833,8 @@ def _load_bouts_for_date(
         if df.empty:
             continue
 
-        frames.append(df[["start_time", "end_time", "behavior_label", "cam_id", "track_filename"]])
+        df["track_root"] = str(track_dir)
+        frames.append(df[["start_time", "end_time", "behavior_label", "cam_id", "track_filename", "track_root"]])
 
     if not frames:
         return (
@@ -683,7 +844,7 @@ def _load_bouts_for_date(
     merged = pd.concat(frames, ignore_index=True)
     return _split_standing_into_standing_walking(
         bouts=merged,
-        track_dir=track_dir,
+        track_dir=None,
         standing_merge_gap_sec=standing_merge_gap_sec,
         walking_bin_minutes=walking_bin_minutes,
         walking_bin_distance_threshold=walking_bin_distance_threshold,
@@ -691,19 +852,154 @@ def _load_bouts_for_date(
     )
 
 
-if __name__ == "__main__":
+def _resolve_record_roots(args: argparse.Namespace) -> list[Path]:
+    roots: list[Path] = []
+    if args.record_roots:
+        roots.extend(Path(p) for p in args.record_roots)
+    elif args.record_root:
+        roots.append(Path(args.record_root))
+    if not roots:
+        raise ValueError("Provide --record_root or --record_roots")
+    return roots
+
+
+def _build_source_configs(
+    record_roots: list[Path],
+    output_dir_override: str | None,
+) -> list[tuple[Path, Path]]:
+    if output_dir_override and len(record_roots) > 1:
+        raise ValueError("--output_dir override supports only one record root")
+
+    configs: list[tuple[Path, Path]] = []
+    for i, root in enumerate(record_roots):
+        output_dir = Path(output_dir_override) if (output_dir_override and i == 0) else (root / "demo" / "night_bout_summary")
+        track_dir = root / "tracks"
+        configs.append((output_dir, track_dir))
+    return configs
+
+
+def _per_date_output_stem(
+    csv_sources: Iterable[tuple[Path, Path]],
+    fallback: str,
+) -> str:
+    stems = sorted({csv_path.stem for csv_path, _ in csv_sources})
+    if len(stems) == 1:
+        return stems[0]
+    return fallback
+
+
+def _remove_date_suffix(stem: str, date: str) -> str:
+    suffixes = (f"_{date}", f"_{pd.to_datetime(date, format='%Y%m%d'):%Y-%m-%d}")
+    for suffix in suffixes:
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def _map_gt_label(gt_label: str) -> str | None:
+    key = str(gt_label).strip().lower().replace(" ", "_")
+    mapped = GT_LABEL_MAP.get(key)
+    if mapped in VALID_LABELS:
+        return mapped
+    return None
+
+
+def _parse_gt_clock_timestamp(date: str, value: str) -> pd.Timestamp | None:
+    txt = str(value).strip()
+    if not txt:
+        return None
+
+    full_ts = pd.to_datetime(txt, errors="coerce")
+    if pd.notna(full_ts) and ("-" in txt or "T" in txt):
+        return pd.Timestamp(full_ts)
+
+    parsed_time = pd.to_datetime(txt, format="%H:%M:%S", errors="coerce")
+    if pd.isna(parsed_time):
+        parsed_time = pd.to_datetime(txt, format="%H:%M", errors="coerce")
+    if pd.isna(parsed_time):
+        return None
+
+    base = pd.to_datetime(date, format="%Y%m%d")
+    ts = pd.Timestamp.combine(base.date(), parsed_time.time())
+    if ts.hour < 18:
+        ts = ts + pd.Timedelta(days=1)
+    return ts
+
+
+def _ensure_and_load_gt_segments(
+    gt_csv: Path,
+    date: str,
+    individual_label: str,
+    night_start: pd.Timestamp,
+    night_end: pd.Timestamp,
+) -> tuple[pd.DataFrame, bool]:
+    required_cols = ["id", "gt", "start_timestamp", "end_timestamp"]
+    created = False
+    if not gt_csv.exists():
+        gt_csv.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=required_cols).to_csv(gt_csv, index=False)
+        created = True
+
+    try:
+        gt_df = pd.read_csv(gt_csv)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+    except pd.errors.ParserError as exc:
+        print(f"Warning: skipping unparsable GT CSV: {gt_csv} ({exc})")
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+
+    if gt_df.empty:
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+    if not set(required_cols).issubset(gt_df.columns):
+        print(f"Warning: GT CSV missing required columns {required_cols}: {gt_csv}")
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+
+    gt_df = gt_df.copy()
+    gt_df["id"] = gt_df["id"].astype(str).str.strip()
+    gt_df = gt_df[gt_df["id"].str.lower() == individual_label.lower()]
+    if gt_df.empty:
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+
+    rows: list[dict] = []
+    for _, row in gt_df.iterrows():
+        mapped = _map_gt_label(str(row["gt"]))
+        if mapped is None:
+            continue
+        s = _parse_gt_clock_timestamp(date, str(row["start_timestamp"]))
+        e = _parse_gt_clock_timestamp(date, str(row["end_timestamp"]))
+        if s is None or e is None:
+            continue
+        s = max(s, night_start)
+        e = min(e, night_end)
+        if s >= e:
+            continue
+        rows.append({"start_time": s, "end_time": e, "behavior_label": mapped})
+
+    if not rows:
+        return pd.DataFrame(columns=["start_time", "end_time", "behavior_label"]), created
+    out = pd.DataFrame(rows).sort_values(["start_time", "end_time"]).reset_index(drop=True)
+    return out, created
+
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compute activity budget per night from bout summary CSVs")
     parser.add_argument(
         "--record_root",
         type=str,
         default="/media/ElephantsWD/elephants/test_dan/results",
-        help="Root directory of the record",
+        help="Root directory of one record.",
+    )
+    parser.add_argument(
+        "--record_roots",
+        nargs="+",
+        default=None,
+        help="Optional list of record roots. When provided, all roots are merged in one analysis.",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
         default=None,
-        help="Optional direct path to night_bout_summary directory. Overrides --record_root.",
+        help="Optional direct path to one night_bout_summary directory. Overrides --record_root for single-root runs.",
     )
     parser.add_argument(
         "--dates",
@@ -752,33 +1048,60 @@ if __name__ == "__main__":
         default=2.0,
         help="Maximum per-second movement step (world units) used in movement integration; larger jumps are clipped.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--gt_root",
+        type=str,
+        default="/media/mu/zoo_vision/data/GT_id_behavior/behavior_GTs",
+        help="Root directory for GT CSV files. Files are read/written under <gt_root>/<individual_group>/.",
+    )
+    return parser.parse_args()
 
-    output_dir = Path(args.output_dir) if args.output_dir else (Path(args.record_root) / "demo" / "night_bout_summary")
-    track_dir = Path(args.record_root) / "tracks"
-    
-    if not output_dir.exists():
-        raise FileNotFoundError(f"Output directory not found: {output_dir}")
 
-    dates = [normalize_date(d) for d in args.dates] if args.dates else get_available_dates(output_dir)
+def run_analysis(args: argparse.Namespace) -> None:
+    record_roots = _resolve_record_roots(args)
+    source_configs = _build_source_configs(record_roots, args.output_dir)
+
+    for output_dir, _ in source_configs:
+        if not output_dir.exists():
+            raise FileNotFoundError(f"Output directory not found: {output_dir}")
+
+    if args.dates:
+        dates = [normalize_date(d) for d in args.dates]
+    else:
+        all_dates = set()
+        for output_dir, _ in source_configs:
+            all_dates.update(get_available_dates(output_dir))
+        dates = sorted(all_dates)
     if not dates:
-        raise FileNotFoundError(f"No date folders found in: {output_dir}")
+        raise FileNotFoundError("No date folders found in the selected input roots")
 
     filename_keyword = args.individual_group if args.individual_group else None
-    bout_csvs = get_bout_csvs(output_dir=output_dir, dates=dates, filename_keyword=filename_keyword)
-
     out_root = Path(args.out_root)
+    gt_dir = Path(args.gt_root) / args.individual_group
 
-    by_date: dict[str, list[Path]] = {}
-    for date, csv_path in bout_csvs:
-        by_date.setdefault(date, []).append(csv_path)
+    by_date: dict[str, list[tuple[Path, Path]]] = {}
+    for output_dir, track_dir in source_configs:
+        bouts = get_bout_csvs(
+            output_dir=output_dir,
+            dates=dates,
+            filename_keyword=filename_keyword,
+            strict=False,
+        )
+        for date, csv_path in bouts:
+            by_date.setdefault(date, []).append((csv_path, track_dir))
+
+    if not by_date:
+        raise FileNotFoundError("No bout summary CSV files found for selected roots/dates")
 
     all_night_segments: list[pd.DataFrame] = []
+    all_night_gt_segments: list[pd.DataFrame] = []
+    all_budgets: list[pd.DataFrame] = []
 
-    for date, csv_paths in sorted(by_date.items()):
+    for date, csv_sources in sorted(by_date.items()):
+        output_stem = _per_date_output_stem(csv_sources, args.individual_group)
+        gt_stem = _remove_date_suffix(output_stem, date)
         bouts, standing_diag = _load_bouts_for_date(
-            csv_paths=csv_paths,
-            track_dir=track_dir,
+            csv_sources=csv_sources,
             individual_label=args.individual_group,
             standing_merge_gap_sec=args.standing_merge_gap_sec,
             walking_bin_minutes=args.walking_bin_minutes,
@@ -790,6 +1113,20 @@ if __name__ == "__main__":
             max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
 
         night_start, night_end = _night_window(date, max_ts)
+        gt_csv = gt_dir / f"{gt_stem}_{date}.csv"
+        gt_segments, gt_created = _ensure_and_load_gt_segments(
+            gt_csv=gt_csv,
+            date=date,
+            individual_label=args.individual_group,
+            night_start=night_start,
+            night_end=night_end,
+        )
+        if not gt_segments.empty:
+            gt_segments_plot = gt_segments.copy()
+            gt_segments_plot["date"] = date
+            gt_segments_plot["offset_start_sec"] = (gt_segments_plot["start_time"] - night_start).dt.total_seconds()
+            gt_segments_plot["offset_end_sec"] = (gt_segments_plot["end_time"] - night_start).dt.total_seconds()
+            all_night_gt_segments.append(gt_segments_plot)
         labels = _build_timeline_labels(bouts, night_start, night_end)
         budget = _summarize_labels(labels)
         budget["duration_min"] = budget["duration_sec"] / 60.0
@@ -798,46 +1135,79 @@ if __name__ == "__main__":
         budget["night_start"] = night_start
         budget["night_end"] = night_end
         budget["date"] = date
+        all_budgets.append(budget)
 
         out_dir = out_root / date
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_csv = out_dir / f"{args.individual_group}_activity_budget.csv"
+        out_csv = out_dir / f"{output_stem}_activity_budget.csv"
         budget.to_csv(out_csv, index=False)
 
         timeline = _aggregate_timeline(labels, night_start, args.bin_minutes)
         timeline["date"] = date
-        timeline_csv = out_dir / f"{args.individual_group}_activity_timeline_{args.bin_minutes}min.csv"
+        timeline_csv = out_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
         timeline.to_csv(timeline_csv, index=False)
-        standing_diag_csv = out_dir / f"{args.individual_group}_standing_walking_diagnostics.csv"
+        standing_diag_csv = out_dir / f"{output_stem}_standing_walking_diagnostics.csv"
         standing_diag.to_csv(standing_diag_csv, index=False)
         segments = _labels_to_segments(labels, night_start)
         segments["date"] = date
         segments["offset_start_sec"] = (segments["start_time"] - night_start).dt.total_seconds()
         segments["offset_end_sec"] = (segments["end_time"] - night_start).dt.total_seconds()
-        all_night_segments.append(segments)
+        # Keep y-axis dates in the all-night plot only for nights with actual bouts.
+        if not bouts.empty:
+            all_night_segments.append(segments)
 
-        plot_path = out_dir / f"{args.individual_group}_activity_budget.png"
-        title = f"{args.individual_group} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        plot_path = out_dir / f"{output_stem}_activity_budget.png"
+        title = f"{output_stem} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
         _plot_activity_budget(budget, plot_path, title)
 
-        ethogram_path = out_dir / f"{args.individual_group}_activity_ethogram_{args.bin_minutes}min.png"
-        ethogram_title = f"{args.individual_group} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
-        _plot_activity_timeline(segments, ethogram_path, ethogram_title)
+        ethogram_path = out_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
+        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        _plot_activity_timeline(segments, ethogram_path, ethogram_title, df_gt_segments=gt_segments)
 
         print(f"Saved: {out_csv}")
         print(f"Saved: {timeline_csv}")
         print(f"Saved: {standing_diag_csv}")
         print(f"Saved: {plot_path}")
         print(f"Saved: {ethogram_path}")
+        if gt_created:
+            print(f"Created empty GT template: {gt_csv}")
 
-    if all_night_segments:
-        all_segments = pd.concat(all_night_segments, ignore_index=True)
-        all_segments_csv = out_root / f"{args.individual_group}_activity_segments_all_nights.csv"
-        all_segments.to_csv(all_segments_csv, index=False)
+    if all_night_segments or all_night_gt_segments:
+        all_segments = pd.concat(all_night_segments, ignore_index=True) if all_night_segments else pd.DataFrame()
+        if not all_segments.empty:
+            all_segments_csv = out_root / f"{args.individual_group}_activity_segments_all_nights.csv"
+            all_segments.to_csv(all_segments_csv, index=False)
+            print(f"Saved: {all_segments_csv}")
 
         all_ethogram_path = out_root / f"{args.individual_group}_activity_ethogram_all_nights.png"
         all_ethogram_title = f"{args.individual_group} Activity Ethogram Across Nights"
-        _plot_activity_timeline_multi_night(all_segments, all_ethogram_path, all_ethogram_title)
-
-        print(f"Saved: {all_segments_csv}")
+        all_gt_segments = pd.concat(all_night_gt_segments, ignore_index=True) if all_night_gt_segments else pd.DataFrame()
+        _plot_activity_timeline_multi_night(
+            all_segments,
+            all_ethogram_path,
+            all_ethogram_title,
+            df_gt_segments_all=all_gt_segments,
+        )
         print(f"Saved: {all_ethogram_path}")
+
+    if all_budgets:
+        merged_budget = pd.concat(all_budgets, ignore_index=True)
+        merged_budget = merged_budget.groupby("behavior_label", as_index=False)["duration_sec"].sum()
+        merged_budget["duration_min"] = merged_budget["duration_sec"] / 60.0
+        merged_budget["duration_hr"] = merged_budget["duration_sec"] / 3600.0
+        merged_budget["percent"] = merged_budget["duration_sec"] / merged_budget["duration_sec"].sum() * 100.0
+
+        merged_budget_csv = out_root / f"{args.individual_group}_activity_budget_all_nights.csv"
+        merged_budget_png = out_root / f"{args.individual_group}_activity_budget_all_nights.png"
+        merged_budget.to_csv(merged_budget_csv, index=False)
+        _plot_activity_budget(
+            merged_budget,
+            merged_budget_png,
+            f"{args.individual_group} Activity Budget Across All Nights",
+        )
+        print(f"Saved: {merged_budget_csv}")
+        print(f"Saved: {merged_budget_png}")
+
+
+if __name__ == "__main__":
+    run_analysis(parse_args())

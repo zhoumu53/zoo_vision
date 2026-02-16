@@ -875,9 +875,12 @@ def _is_sleep_label(lbl: str) -> bool:
     return isinstance(lbl, str) and ("sleep" in lbl.lower())
 
 
-def _get_behavior_label_col(df: pd.DataFrame) -> str:
+def _get_raw_behavior_label_col(df: pd.DataFrame) -> str:
+    "Find the most raw behavior label column available in the DataFrame, with a preference order."
     if "behavior_label_raw" in df.columns:
         return "behavior_label_raw"
+    if "behavior_label_stage1" in df.columns:
+        return "behavior_label_stage1"
     if "behavior_label_old" in df.columns:
         return "behavior_label_old"
     return "behavior_label"
@@ -937,14 +940,14 @@ def _select_reid_frame_indices_from_behavior_csv(
     df = norm_timestamp(df)
     df = df.dropna(subset=["timestamp"]).reset_index(drop=True)
 
-    lbl_col = _get_behavior_label_col(df)
+    lbl_col = _get_raw_behavior_label_col(df)
     if lbl_col not in df.columns:
         return []
 
     if "behavior_conf" not in df.columns:
-        df["behavior_conf"] = 1.0
+        df["behavior_conf"] = -1.0
     if "quality_label" not in df.columns:
-        df["quality_label"] = "good"
+        df["quality_label"] = "bad"
 
     labels = df[lbl_col].astype(str)
     conf = pd.to_numeric(df["behavior_conf"], errors="coerce").fillna(0.0)
@@ -1530,16 +1533,39 @@ def smooth_behavior_cross_camera(
             continue
         changed = False
 
-        if "behavior_label_raw" in df.columns:
-            if "behavior_label" in df.columns and "behavior_label_old" not in df.columns:
-                df["behavior_label_old"] = df["behavior_label"]
+        ### make sure we do smooth for earlier version (only _raw & _old labels, no _stage1 labels)
+        ### if _stage1 labels exist, we assume they are the snapshot of single-cam smoothed labels from the first run, and we keep using them as the basis for cross-cam smoothing in subsequent runs, instead of raw or old legacy labels.
+        ### if _old labels exist but no _stage1, we use _old as the basis for cross-cam smoothing, and we create _stage1 snapshot from them for future runs.
+        has_label = "behavior_label" in df.columns
+        has_stage1 = "behavior_label_stage1" in df.columns
+        has_old_legacy = "behavior_label_old" in df.columns   ### from early versions, before we had _stage1 snapshot, but after we had _old_legacy column to store the original raw labels before any smoothing.
+        has_raw = "behavior_label_raw" in df.columns
+
+        # init run: snapshot current (single-cam smoothed) labels.
+        if has_label and not has_stage1:
+            df["behavior_label_stage1"] = df["behavior_label"].astype(str)
+            changed = True
+            has_stage1 = True
+
+        # re-runs: start cross-camera smoothing from stage1 snapshot, not raw.
+        if has_stage1:
+            stage1_vals = df["behavior_label_stage1"].astype(str)
+            if (not has_label) or (not df["behavior_label"].astype(str).equals(stage1_vals)):
+                df["behavior_label"] = stage1_vals
                 changed = True
-            raw_vals = df["behavior_label_raw"].astype(str)
-            if "behavior_label" not in df.columns or not df["behavior_label"].astype(str).equals(raw_vals):
-                df["behavior_label"] = raw_vals
+        elif has_old_legacy:  # fallback for early versions missing _stage1 snapshot but having _old legacy column.
+            old_vals = df["behavior_label_old"].astype(str)
+            if (not has_label) or (not df["behavior_label"].astype(str).equals(old_vals)):
+                df["behavior_label"] = old_vals
                 changed = True
-        elif "behavior_label" in df.columns and "behavior_label_old" not in df.columns:
-            df["behavior_label_old"] = df["behavior_label"]
+        elif has_raw and not has_label:
+            # Fallback for legacy files missing behavior_label.
+            df["behavior_label"] = df["behavior_label_raw"].astype(str)
+            changed = True
+        
+        ## in the end, we won't keep _old if exists (but only keep _stage1 as the snapshot for future runs)
+        if has_old_legacy:
+            df.drop(columns=["behavior_label_old"], inplace=True, errors="ignore")
             changed = True
 
         if changed:
