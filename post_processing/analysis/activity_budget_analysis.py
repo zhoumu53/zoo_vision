@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.ticker import MultipleLocator
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
@@ -69,6 +70,11 @@ TRAJ_HEATMAP_LABELS = [
     "walking",
     "02_sleeping_left",
     "03_sleeping_right",
+]
+
+TRAJ_STANDING_WALKING_LABELS = [
+    "01_standing",
+    "walking",
 ]
 
 LABEL_PRIORITY = {
@@ -645,6 +651,93 @@ def _read_track_points(
     return pts
 
 
+def _read_behavior_quality_points(
+    track_csv: Path,
+    cache: dict[Path, pd.DataFrame],
+) -> pd.DataFrame:
+    if track_csv in cache:
+        return cache[track_csv]
+
+    beh_csv = track_csv.with_name(f"{track_csv.stem}_behavior.csv")
+    if not beh_csv.exists():
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "is_bad_quality"])
+        return cache[track_csv]
+
+    try:
+        df = pd.read_csv(beh_csv)
+    except pd.errors.EmptyDataError:
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "is_bad_quality"])
+        return cache[track_csv]
+    except pd.errors.ParserError as exc:
+        print(f"Warning: skipping unparsable behavior CSV: {beh_csv} ({exc})")
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "is_bad_quality"])
+        return cache[track_csv]
+
+    if "timestamp" not in df.columns:
+        cache[track_csv] = pd.DataFrame(columns=["timestamp", "is_bad_quality"])
+        return cache[track_csv]
+
+    if {"quality_label", "behavior_conf"}.issubset(df.columns):
+        quality_norm = df["quality_label"].astype(str).str.strip().str.lower()
+        n_total = len(df)
+        n_bad = int(quality_norm.eq("bad").sum())
+        bad_ratio = (float(n_bad) / float(n_total)) if n_total > 0 else 0.0
+
+        conf = pd.to_numeric(df["behavior_conf"], errors="coerce")
+        avg_conf = float(conf.mean()) if conf.notna().any() else float("nan")
+        conf_too_low = (pd.notna(avg_conf) and avg_conf < 0.7) or pd.isna(avg_conf)
+        if bad_ratio >= 0.8 or conf_too_low:
+            print(
+                f"Skipping whole track due to poor quality: {beh_csv} "
+                f"(bad_ratio={bad_ratio:.3f}, avg_behavior_conf={avg_conf})"
+            )
+            cache[track_csv] = pd.DataFrame(columns=["timestamp", "is_bad_quality"])
+            return cache[track_csv]
+
+    ts_raw = df["timestamp"].astype(str).str.strip()
+    ts = pd.to_datetime(ts_raw, format="%Y-%m-%d %H:%M:%S", errors="coerce")
+    missing = ts.isna()
+    if missing.any():
+        ts_sub = pd.to_datetime(ts_raw[missing], format="%Y-%m-%d %H:%M:%S.%f", errors="coerce")
+        ts.loc[missing] = ts_sub
+    out = pd.DataFrame({"timestamp": ts})
+    if "quality_label" in df.columns:
+        out["is_bad_quality"] = df["quality_label"].astype(str).str.strip().str.lower().eq("bad")
+    else:
+        out["is_bad_quality"] = False
+    out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
+    cache[track_csv] = out
+    return out
+
+
+def _filter_track_points_by_behavior_quality(
+    pts: pd.DataFrame,
+    track_csv: Path,
+    quality_cache: dict[Path, pd.DataFrame],
+) -> pd.DataFrame:
+    if pts.empty:
+        return pts
+    quality = _read_behavior_quality_points(track_csv, quality_cache)
+    if quality.empty:
+        # Existing behavior CSV + empty quality output means whole-track rejection.
+        beh_csv = track_csv.with_name(f"{track_csv.stem}_behavior.csv")
+        if beh_csv.exists():
+            return pts.iloc[0:0][["timestamp", "world_x", "world_y"]]
+        return pts
+    if "is_bad_quality" not in quality.columns:
+        return pts
+
+    merged = pts.merge(
+        quality[["timestamp", "is_bad_quality"]],
+        on="timestamp",
+        how="left",
+    )
+    is_bad = merged["is_bad_quality"].astype("boolean").fillna(False)
+    keep = ~is_bad.to_numpy(dtype=bool)
+    filtered = merged.loc[keep, ["timestamp", "world_x", "world_y"]]
+    return filtered
+
+
 def _split_standing_into_standing_walking(
     bouts: pd.DataFrame,
     track_dir: Path | None,
@@ -909,6 +1002,7 @@ def _build_identity_trajectory_points(
         )
 
     track_cache: dict[Path, pd.DataFrame] = {}
+    quality_cache: dict[Path, pd.DataFrame] = {}
     rows: list[pd.DataFrame] = []
     for _, row in source_bouts.iterrows():
         track_filename = row.get("track_filename")
@@ -922,6 +1016,9 @@ def _build_identity_trajectory_points(
             continue
 
         pts = _read_track_points(track_csv, track_cache)
+        if pts.empty:
+            continue
+        pts = _filter_track_points_by_behavior_quality(pts, track_csv, quality_cache)
         if pts.empty:
             continue
 
@@ -967,12 +1064,41 @@ def _build_identity_trajectory_points(
 
 def _trajectory_behaviour_cmap_map() -> dict[str, str]:
     return {
-        "01_standing": "winter",
+        "01_standing": "Spectral",
         "02_sleeping_left": "magma",
         "03_sleeping_right": "plasma",
-        "walking": "viridis",
+        "walking": "cool",
         "stereotypy": "inferno",
     }
+
+
+def _normalize_behavior_label_name(label: str) -> str | None:
+    key = str(label).strip().lower().replace(" ", "_")
+    if key in VALID_LABELS:
+        return key
+    mapped = GT_LABEL_MAP.get(key)
+    if mapped in VALID_LABELS:
+        return mapped
+    return None
+
+
+def _resolve_hourly_traj_behaviors(behaviors: Iterable[str] | None) -> list[str]:
+    if behaviors is None:
+        return list(TRAJ_STANDING_WALKING_LABELS)
+
+    resolved: list[str] = []
+    for item in behaviors:
+        mapped = _normalize_behavior_label_name(str(item))
+        if mapped is None:
+            print(f"Warning: unknown behavior for hourly trajectory heatmap, skipped: {item}")
+            continue
+        if mapped not in resolved:
+            resolved.append(mapped)
+
+    if not resolved:
+        print("Warning: no valid hourly trajectory behaviors provided; using defaults: standing, walking")
+        return list(TRAJ_STANDING_WALKING_LABELS)
+    return resolved
 
 
 def _plot_world_heatmap_by_behaviour(
@@ -1114,30 +1240,200 @@ def _plot_world_time_ordered_trajectory(
     plt.close(fig)
 
 
+def _plot_world_heatmap_standing_walking_by_hour(
+    df_traj: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    night_start: pd.Timestamp,
+    night_end: pd.Timestamp,
+    bin_hours: float,
+    behaviors: Iterable[str] | None = None,
+) -> None:
+    if bin_hours <= 0:
+        raise ValueError("bin_hours must be positive")
+
+    behaviors_to_show = _resolve_hourly_traj_behaviors(behaviors)
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"])
+    d = d[d["behavior_label"].isin(behaviors_to_show)]
+    d = d[(d["timestamp"] >= night_start) & (d["timestamp"] <= night_end)]
+    if d.empty:
+        return
+
+    x_min, x_max = float(d["world_x"].min()), float(d["world_x"].max())
+    y_min, y_max = float(d["world_y"].min()), float(d["world_y"].max())
+
+    def _interval_step(vmin: float, vmax: float) -> int:
+        span = max(0.0, float(vmax) - float(vmin))
+        if span <= 0.0:
+            return 5
+        step = int(round(span / 8.0))
+        return int(min(15, max(5, step)))
+
+    bin_delta = pd.Timedelta(hours=float(bin_hours))
+    time_edges = pd.date_range(start=night_start, end=night_end, freq=bin_delta)
+    if len(time_edges) == 0 or time_edges[-1] < night_end:
+        time_edges = time_edges.append(pd.DatetimeIndex([night_end]))
+    if len(time_edges) < 2:
+        time_edges = pd.DatetimeIndex([night_start, night_end])
+
+    n_bins = len(time_edges) - 1
+    cmap_for = _trajectory_behaviour_cmap_map()
+    per_behavior_root = out_path.parent / out_path.stem
+    valid_time_bins: list[tuple[pd.Timestamp, pd.Timestamp, pd.DataFrame]] = []
+    for r in range(n_bins):
+        b_start = time_edges[r]
+        b_end = time_edges[r + 1]
+        in_bin = (d["timestamp"] >= b_start) & (d["timestamp"] < b_end if r < (n_bins - 1) else d["timestamp"] <= b_end)
+        d_bin = d[in_bin]
+        if d_bin.empty:
+            continue
+        valid_time_bins.append((b_start, b_end, d_bin))
+
+        for beh in behaviors_to_show:
+            g = d_bin[d_bin["behavior_label"] == beh]
+            if g.empty:
+                continue
+
+            # Save one PNG per behavior per hour only when there are valid points.
+            time_label = f"{b_start:%H:%M}-{b_end:%H:%M}"
+            beh_dir = per_behavior_root / str(beh)
+            beh_dir.mkdir(parents=True, exist_ok=True)
+            slot_png = beh_dir / f"{out_path.stem}_{beh}_{b_start:%Y%m%d_%H%M%S}_{b_end:%Y%m%d_%H%M%S}.png"
+            fig_single, ax_single = plt.subplots(figsize=(6, 6), dpi=180, facecolor="black")
+            ax_single.set_facecolor("black")
+            hb_single = ax_single.hexbin(
+                g["world_x"].to_numpy(),
+                g["world_y"].to_numpy(),
+                gridsize=120,
+                bins="log",
+                cmap=cmap_for.get(beh, "Greys"),
+                mincnt=1,
+                alpha=0.90,
+            )
+            ax_single.set_xlim(x_min, x_max)
+            ax_single.set_ylim(y_min, y_max)
+            ax_single.set_aspect("equal", adjustable="box")
+            ax_single.xaxis.set_major_locator(MultipleLocator(_interval_step(x_min, x_max)))
+            ax_single.yaxis.set_major_locator(MultipleLocator(_interval_step(y_min, y_max)))
+            ax_single.set_title(f"{LABEL_DISPLAY.get(beh, beh)} | {time_label}", color="white", fontsize=10)
+            ax_single.set_xlabel("world_x", color="white")
+            ax_single.set_ylabel("world_y", color="white")
+            ax_single.tick_params(colors="white")
+            for spine in ax_single.spines.values():
+                spine.set_color("white")
+            ax_single.grid(False)
+            cbar_single = fig_single.colorbar(hb_single, ax=ax_single, pad=0.02, fraction=0.046)
+            cbar_single.ax.yaxis.set_tick_params(color="white")
+            cbar_single.outline.set_edgecolor("white")
+            plt.setp(plt.getp(cbar_single.ax.axes, "yticklabels"), color="white")
+            fig_single.tight_layout()
+            fig_single.savefig(slot_png, facecolor=fig_single.get_facecolor(), bbox_inches="tight")
+            plt.close(fig_single)
+
+    if not valid_time_bins:
+        return
+
+    ncols = max(1, len(behaviors_to_show))
+    nrows = len(valid_time_bins)
+    panel_w = 5.2
+    panel_h = 4.6
+    fig_w = max(11.0, panel_w * ncols)
+    fig_h = max(5.0, panel_h * nrows)
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(fig_w, fig_h),
+        dpi=180,
+        facecolor="black",
+        gridspec_kw={"wspace": 0.28, "hspace": 0.36},
+    )
+    axes_arr = np.array(axes, dtype=object).reshape(nrows, ncols)
+
+    for r, (b_start, b_end, d_bin) in enumerate(valid_time_bins):
+        time_label = f"{b_start:%H:%M}-{b_end:%H:%M}"
+        for c, beh in enumerate(behaviors_to_show):
+            ax = axes_arr[r, c]
+            ax.set_facecolor("black")
+            g = d_bin[d_bin["behavior_label"] == beh]
+            if g.empty:
+                ax.axis("off")
+                continue
+
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_aspect("equal", adjustable="box")
+            ax.xaxis.set_major_locator(MultipleLocator(_interval_step(x_min, x_max)))
+            ax.yaxis.set_major_locator(MultipleLocator(_interval_step(y_min, y_max)))
+            ax.set_xlabel("world_x", color="white")
+            ax.set_ylabel("world_y", color="white")
+            ax.tick_params(colors="white")
+            for spine in ax.spines.values():
+                spine.set_color("white")
+            ax.grid(False)
+            ax.set_title(f"{LABEL_DISPLAY.get(beh, beh)} | {time_label}", color="white", fontsize=9)
+
+            hb = ax.hexbin(
+                g["world_x"].to_numpy(),
+                g["world_y"].to_numpy(),
+                gridsize=120,
+                bins="log",
+                cmap=cmap_for.get(beh, "Greys"),
+                mincnt=1,
+                alpha=0.90,
+            )
+            cbar = fig.colorbar(hb, ax=ax, pad=0.01, fraction=0.040)
+            cbar.ax.yaxis.set_tick_params(color="white")
+            cbar.outline.set_edgecolor("white")
+            plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
+
+    # Control top margin explicitly so title stays close to first row.
+    fig.suptitle(title, color="white", y=0.985, fontsize=16)
+    fig.subplots_adjust(top=0.965, bottom=0.04, left=0.05, right=0.98)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor())
+    plt.close(fig)
+
+
 def _plot_trajectory_heatmaps_for_date(
     source_bouts: pd.DataFrame,
     refined_bouts: pd.DataFrame,
     out_dir: Path,
     output_stem: str,
     individual_label: str,
-) -> tuple[Path, Path] | None:
+    night_start: pd.Timestamp,
+    night_end: pd.Timestamp,
+    bin_hours: float,
+    traj_hourly_behaviors: Iterable[str] | None = None,
+) -> tuple[Path, Path, Path] | None:
     df_traj = _build_identity_trajectory_points(source_bouts, refined_bouts)
     if df_traj.empty:
         return None
 
     heat_path = out_dir / f"{output_stem}_trajectory_heatmap_world_xy.png"
     traj_heat_path = out_dir / f"{output_stem}_trajectory_time_ordered_world_xy.png"
+    standing_walking_hourly_path = out_dir / f"trajs" / f"{output_stem}.png"
     _plot_world_heatmap_by_behaviour(
         df_traj=df_traj,
         out_path=heat_path,
         title=heat_path.name.replace(".png", ""),
     )
-    _plot_world_time_ordered_trajectory(
+    # _plot_world_time_ordered_trajectory(
+    #     df_traj=df_traj,
+    #     out_path=traj_heat_path,
+    #     title=traj_heat_path.name.replace(".png", ""),
+    # )
+    _plot_world_heatmap_standing_walking_by_hour(
         df_traj=df_traj,
-        out_path=traj_heat_path,
-        title=traj_heat_path.name.replace(".png", ""),
+        out_path=standing_walking_hourly_path,
+        title=standing_walking_hourly_path.name.replace(".png", ""),
+        night_start=night_start,
+        night_end=night_end,
+        bin_hours=bin_hours,
+        behaviors=traj_hourly_behaviors,
     )
-    return heat_path, traj_heat_path
+    return heat_path, traj_heat_path, standing_walking_hourly_path
 
 
 def _resolve_record_roots(args: argparse.Namespace) -> list[Path]:
@@ -1337,6 +1633,18 @@ def parse_args() -> argparse.Namespace:
         help="Maximum per-second movement step (world units) used in movement integration; larger jumps are clipped.",
     )
     parser.add_argument(
+        "--bin_hours",
+        type=float,
+        default=1.0,
+        help="Hour bin size for standing/walking trajectory heatmaps across the night.",
+    )
+    parser.add_argument(
+        "--traj_hourly_behaviors",
+        nargs="+",
+        default=["standing", "walking"],
+        help="Behaviors to include in hourly trajectory heatmaps (default: standing walking).",
+    )
+    parser.add_argument(
         "--gt_root",
         type=str,
         default="/media/mu/zoo_vision/data/GT_id_behavior/behavior_GTs",
@@ -1386,6 +1694,12 @@ def run_analysis(args: argparse.Namespace) -> None:
     all_budgets: list[pd.DataFrame] = []
 
     for date, csv_sources in sorted(by_date.items()):
+        ### no 2025-0501, 2025-10-15 - wrong timestamp
+        if date in ("20250501", "20251015", "20251030"):
+            print(f"Skipping date {date} due to known timestamp issues in source CSVs.")
+            continue
+
+
         output_stem = _per_date_output_stem(csv_sources, args.individual_group)
         gt_stem = _remove_date_suffix(output_stem, date)
         bouts, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
@@ -1430,20 +1744,27 @@ def run_analysis(args: argparse.Namespace) -> None:
 
         out_dir = out_root / date
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_csv_dir = out_dir / "csvs"
         out_fig_dir = out_dir / "figures"
-        out_csv_dir.mkdir(parents=True, exist_ok=True)
         out_fig_dir.mkdir(parents=True, exist_ok=True)
 
-        out_csv = out_csv_dir / f"{output_stem}_activity_budget.csv"
-        budget.to_csv(out_csv, index=False)
+        save_csvs = False
+        if save_csvs:
+            out_csv_dir = out_dir / "csvs"
+            out_csv_dir.mkdir(parents=True, exist_ok=True)
+            out_csv = out_csv_dir / f"{output_stem}_activity_budget.csv"
+            budget.to_csv(out_csv, index=False)
 
-        timeline = _aggregate_timeline(labels, night_start, args.bin_minutes)
-        timeline["date"] = date
-        timeline_csv = out_csv_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
-        timeline.to_csv(timeline_csv, index=False)
-        standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
-        standing_diag.to_csv(standing_diag_csv, index=False)
+            timeline = _aggregate_timeline(labels, night_start, args.bin_minutes)
+            timeline["date"] = date
+            timeline_csv = out_csv_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
+            timeline.to_csv(timeline_csv, index=False)
+            standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
+            standing_diag.to_csv(standing_diag_csv, index=False)
+
+            print(f"Saved: {out_csv}")
+            print(f"Saved: {timeline_csv}")
+            print(f"Saved: {standing_diag_csv}")
+
         segments = _labels_to_segments(labels, night_start)
         segments["date"] = date
         segments["offset_start_sec"] = (segments["start_time"] - night_start).dt.total_seconds()
@@ -1461,22 +1782,23 @@ def run_analysis(args: argparse.Namespace) -> None:
         ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
         _plot_activity_timeline(segments, ethogram_path, ethogram_title, df_gt_segments=gt_segments)
         traj_paths = None
-        # traj_paths = _plot_trajectory_heatmaps_for_date(
-        #     source_bouts=source_bouts,
-        #     refined_bouts=bouts,
-        #     out_dir=out_fig_dir,
-        #     output_stem=output_stem,
-        #     individual_label=args.individual_group,
-        # )
-
-        print(f"Saved: {out_csv}")
-        print(f"Saved: {timeline_csv}")
-        print(f"Saved: {standing_diag_csv}")
+        traj_paths = _plot_trajectory_heatmaps_for_date(
+            source_bouts=source_bouts,
+            refined_bouts=bouts,
+            out_dir=out_fig_dir,
+            output_stem=output_stem,
+            individual_label=args.individual_group,
+            night_start=night_start,
+            night_end=night_end,
+            bin_hours=args.bin_hours,
+            traj_hourly_behaviors=args.traj_hourly_behaviors,
+        )
         print(f"Saved: {plot_path}")
         print(f"Saved: {ethogram_path}")
         if traj_paths is not None:
             print(f"Saved: {traj_paths[0]}")
             print(f"Saved: {traj_paths[1]}")
+            print(f"Saved: {traj_paths[2]}")
         if gt_created:
             print(f"Created empty GT template: {gt_csv}")
 
@@ -1498,23 +1820,23 @@ def run_analysis(args: argparse.Namespace) -> None:
         )
         print(f"Saved: {all_ethogram_path}")
 
-    if all_budgets:
-        merged_budget = pd.concat(all_budgets, ignore_index=True)
-        merged_budget = merged_budget.groupby("behavior_label", as_index=False)["duration_sec"].sum()
-        merged_budget["duration_min"] = merged_budget["duration_sec"] / 60.0
-        merged_budget["duration_hr"] = merged_budget["duration_sec"] / 3600.0
-        merged_budget["percent"] = merged_budget["duration_sec"] / merged_budget["duration_sec"].sum() * 100.0
+    # if all_budgets:
+    #     merged_budget = pd.concat(all_budgets, ignore_index=True)
+    #     merged_budget = merged_budget.groupby("behavior_label", as_index=False)["duration_sec"].sum()
+    #     merged_budget["duration_min"] = merged_budget["duration_sec"] / 60.0
+    #     merged_budget["duration_hr"] = merged_budget["duration_sec"] / 3600.0
+    #     merged_budget["percent"] = merged_budget["duration_sec"] / merged_budget["duration_sec"].sum() * 100.0
 
-        merged_budget_csv = out_root / f"{args.individual_group}_activity_budget_all_nights.csv"
-        merged_budget_png = out_root / f"{args.individual_group}_activity_budget_all_nights.png"
-        merged_budget.to_csv(merged_budget_csv, index=False)
-        _plot_activity_budget(
-            merged_budget,
-            merged_budget_png,
-            f"{args.individual_group} Activity Budget Across All Nights",
-        )
-        print(f"Saved: {merged_budget_csv}")
-        print(f"Saved: {merged_budget_png}")
+    #     merged_budget_csv = out_root / f"{args.individual_group}_activity_budget_all_nights.csv"
+    #     merged_budget_png = out_root / f"{args.individual_group}_activity_budget_all_nights.png"
+    #     merged_budget.to_csv(merged_budget_csv, index=False)
+    #     _plot_activity_budget(
+    #         merged_budget,
+    #         merged_budget_png,
+    #         f"{args.individual_group} Activity Budget Across All Nights",
+    #     )
+    #     print(f"Saved: {merged_budget_csv}")
+    #     print(f"Saved: {merged_budget_png}")
 
 
 if __name__ == "__main__":
