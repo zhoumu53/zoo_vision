@@ -1101,6 +1101,79 @@ def _resolve_hourly_traj_behaviors(behaviors: Iterable[str] | None) -> list[str]
     return resolved
 
 
+def _looks_like_stereotypy_path(
+    points: pd.DataFrame,
+    axis_xlim: tuple[float, float] | None = None,
+    axis_ylim: tuple[float, float] | None = None,
+) -> bool:
+    """Heuristic flag for repetitive pacing-like trajectories (scale-aware)."""
+    if points is None or points.empty:
+        return False
+    if len(points) < 80:
+        return False
+
+    xy = points[["world_x", "world_y"]].to_numpy(dtype=float)
+    if xy.shape[0] < 3:
+        return False
+
+    # 1) Path geometry in its own coordinates.
+    x_span = float(np.max(xy[:, 0]) - np.min(xy[:, 0]))
+    y_span = float(np.max(xy[:, 1]) - np.min(xy[:, 1]))
+    bbox_diag = float(np.hypot(x_span, y_span))
+    centered = xy - xy.mean(axis=0, keepdims=True)
+    cov = np.cov(centered, rowvar=False)
+    eigvals = np.sort(np.linalg.eigvalsh(cov))
+    minor = max(float(eigvals[0]), 1e-6)
+    major = float(eigvals[1])
+    elongation = major / minor
+
+    # 2) Revisit ratio in coarse occupancy grid.
+    scale = np.sqrt(max(major, 1e-6))
+    bin_size = max(0.35, 0.20 * scale)
+    gx = np.floor((xy[:, 0] - xy[:, 0].min()) / bin_size).astype(int)
+    gy = np.floor((xy[:, 1] - xy[:, 1].min()) / bin_size).astype(int)
+    unique_cells = len(set(zip(gx.tolist(), gy.tolist())))
+    revisit_ratio = float(len(xy)) / float(max(unique_cells, 1))
+
+    # 3) Reversals along principal axis + repeated end-to-end shuttling.
+    eigvecs = np.linalg.eigh(cov)[1]
+    principal = eigvecs[:, 1]
+    proj = centered @ principal
+    dproj = np.diff(proj)
+    signs = np.sign(dproj)
+    signs = signs[signs != 0]
+    reversals = int(np.sum(signs[1:] * signs[:-1] < 0)) if len(signs) >= 2 else 0
+    reversal_density = float(reversals) / float(max(len(signs) - 1, 1))
+
+    p_min = float(np.min(proj))
+    p_max = float(np.max(proj))
+    p_span = max(1e-6, p_max - p_min)
+    p_norm = (proj - p_min) / p_span
+    at_lo = p_norm <= 0.2
+    at_hi = p_norm >= 0.8
+    end_state = np.where(at_hi, 1, np.where(at_lo, -1, 0))
+    end_state = end_state[end_state != 0]
+    shuttle_transitions = int(np.sum(end_state[1:] * end_state[:-1] < 0)) if len(end_state) >= 2 else 0
+
+    # 4) Dynamic size: compare path span to axis span for this panel.
+    if axis_xlim is None or axis_ylim is None:
+        axis_diag = bbox_diag
+    else:
+        axis_dx = max(1e-6, float(axis_xlim[1]) - float(axis_xlim[0]))
+        axis_dy = max(1e-6, float(axis_ylim[1]) - float(axis_ylim[0]))
+        axis_diag = float(np.hypot(axis_dx, axis_dy))
+    coverage = float(bbox_diag) / float(max(axis_diag, 1e-6))
+
+    return (
+        coverage >= 0.18
+        and elongation >= 2.5
+        and revisit_ratio >= 1.8
+        and reversals >= 6
+        and reversal_density >= 0.10
+        and shuttle_transitions >= 3
+    )
+
+
 def _plot_world_heatmap_by_behaviour(
     df_traj: pd.DataFrame,
     out_path: Path,
@@ -1318,6 +1391,22 @@ def _plot_world_heatmap_standing_walking_by_hour(
             ax_single.xaxis.set_major_locator(MultipleLocator(_interval_step(x_min, x_max)))
             ax_single.yaxis.set_major_locator(MultipleLocator(_interval_step(y_min, y_max)))
             ax_single.set_title(f"{LABEL_DISPLAY.get(beh, beh)} | {time_label}", color="white", fontsize=10)
+            if beh == "walking" and _looks_like_stereotypy_path(
+                g,
+                axis_xlim=(x_min, x_max),
+                axis_ylim=(y_min, y_max),
+            ):
+                ax_single.text(
+                    0.98,
+                    1.01,
+                    "stereotypy",
+                    color="#FF2624",
+                    fontsize=10,
+                    fontweight="bold",
+                    ha="right",
+                    va="bottom",
+                    transform=ax_single.transAxes,
+                )
             ax_single.set_xlabel("world_x", color="white")
             ax_single.set_ylabel("world_y", color="white")
             ax_single.tick_params(colors="white")
@@ -1373,6 +1462,22 @@ def _plot_world_heatmap_standing_walking_by_hour(
                 spine.set_color("white")
             ax.grid(False)
             ax.set_title(f"{LABEL_DISPLAY.get(beh, beh)} | {time_label}", color="white", fontsize=9)
+            if beh == "walking" and _looks_like_stereotypy_path(
+                g,
+                axis_xlim=(x_min, x_max),
+                axis_ylim=(y_min, y_max),
+            ):
+                ax.text(
+                    0.98,
+                    1.01,
+                    "stereotypy",
+                    color="#FF2624",
+                    fontsize=9,
+                    fontweight="bold",
+                    ha="right",
+                    va="bottom",
+                    transform=ax.transAxes,
+                )
 
             hb = ax.hexbin(
                 g["world_x"].to_numpy(),
