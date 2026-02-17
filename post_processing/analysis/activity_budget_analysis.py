@@ -832,8 +832,39 @@ def _load_bouts_for_date(
             raise ValueError(f"Missing identity_label in {csv_path}")
         if "cam_id" not in df.columns or "track_filename" not in df.columns:
             raise ValueError(f"Missing cam_id/track_filename in {csv_path}")
+        
+        ### DO FILTERING -- ONLY KEEP THE TRACK FILES WITH VALID TRACK FRAMES
+        df['date'] = pd.to_datetime(df['start_time'], errors='coerce').dt.strftime('%Y-%m-%d')
+        unique_tracks = df[["date", "cam_id", "track_filename"]].drop_duplicates()
+        valid_track_rows = []
+        for _, track_row in unique_tracks.iterrows():
+            beh_csv_path = track_dir / f"zag_elp_cam_0{str(track_row['cam_id']).strip()}" / track_row["date"] / f"{track_row['track_filename']}_behavior.csv"
+            if not beh_csv_path.exists():
+                continue
+            df_beh = pd.read_csv(beh_csv_path)
+            if df_beh.empty:
+                continue
+            # if 80% 'bad' quality frames (quality_label == 'bad') in df_beh, or avg behavior_conf < 0.7, then skip this track file
+            if "quality_label" in df_beh.columns and "behavior_conf" in df_beh.columns:
+                n_bad = (df_beh["quality_label"] == "bad").sum()
+                n_total = len(df_beh)
+                if n_total > 0 and (n_bad / n_total) >= 0.8:
+                    print(f"Skipping track {beh_csv_path} due to high proportion of bad quality frames ({n_bad}/{n_total})")
+                    continue
+                
+                avg_conf = df_beh["behavior_conf"].mean()
+                if avg_conf < 0.7:
+                    print(f"Skipping track {beh_csv_path} due to low behavior confidence ({avg_conf})")
+                    continue
+            
+            valid_track_rows.append(track_row)
 
         df = df.copy()
+        # keep items with valid track files only
+        if valid_track_rows:
+            valid_track_filenames = set([row["track_filename"] for row in valid_track_rows])
+            df = df[df["track_filename"].isin(valid_track_filenames)]
+
         df["behavior_label"] = df[label_col].astype(str)
         df = df[df["behavior_label"].isin(VALID_LABELS)]
         df = df[df["identity_label"].astype(str) == individual_label]

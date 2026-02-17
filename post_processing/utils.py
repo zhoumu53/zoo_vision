@@ -201,39 +201,134 @@ def vote_known_individuals(track_dir: Path,
     ### get track_files between start_time and end_time
     start_dt = pd.to_datetime(f"{date} {start_time}", format="%Y%m%d %H%M%S")
     end_dt = pd.to_datetime(f"{date} {end_time}", format="%Y%m%d %H%M%S")
-    
-    votes = []
-    valid_track_files = []
+
+    def _to_identity_name(label: str) -> str:
+        if not isinstance(label, str):
+            return str(label)
+        if label in IDENTITY_NAMES:
+            return label
+        if label in ID2NAMES:
+            return ID2NAMES[label]
+        if "_" in label:
+            suffix = label.split("_", 1)[1]
+            if suffix in IDENTITY_NAMES:
+                return suffix
+        return label
+
+    multi_individual_names = set(SOCIAL_GROUPS[1] + SOCIAL_GROUPS[2])
+    single_individual_names = set(SOCIAL_GROUPS[3])
+
+    # First pass: collect valid tracks and build timestamp-level concurrent individual counts.
+    track_infos = []
+    timestamp_counts: dict[pd.Timestamp, int] = {}
     for track_file in track_files:
         track_filename = track_file.stem
         behavior_csv = track_file.parent / f"{track_filename}_behavior.csv"
         if not behavior_csv.exists():
             continue
-        df_behavior = pd.read_csv(behavior_csv)
-        track_start_dt = pd.to_datetime(df_behavior['timestamp'].min())
-        # check if track overlaps with the time window
-        if (track_start_dt >= start_dt) and (track_start_dt <= end_dt):
-            feature_path = track_file.parent / f"{track_filename}.npz"
-            features, frame_ids = load_embedding(feature_path)[0:2]
-            # now voting based on good quality frames + high confidence behavior + no 'standing' 
-            good_indices = df_behavior.index[(df_behavior['quality_label'] == 'good') 
-                                                & (df_behavior['behavior_label'] == '01_standing')
-                                                & (df_behavior['behavior_conf'].astype(float) >= 0.9)].tolist()
-            if len(good_indices) == 0:  ### all bad quality frames -- no voting
-                voted_track_label = "invalid"
-            ### feature_indices for reid voting - pick the features with good quality
-            feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
-            features = features[feature_indices]
-            if len(features) == 0:
-                continue
-            
-            matched_labels = match_to_gallery(features, 
-                                            gallery_features, 
-                                            gallery_labels=gallery_labels)[-1]
-            voted_labels = vote_matched_labels(matched_labels)
-            voted_label = max(set(voted_labels), key=voted_labels.count)
-            votes.append(voted_label)
-            
+        try:
+            df_behavior = pd.read_csv(behavior_csv)
+        except Exception:
+            continue
+        if df_behavior.empty or "timestamp" not in df_behavior.columns:
+            continue
+
+        df_behavior = df_behavior.copy()
+        df_behavior["timestamp"] = pd.to_datetime(df_behavior["timestamp"], errors="coerce")
+        df_behavior = df_behavior.dropna(subset=["timestamp"])
+        if df_behavior.empty:
+            continue
+
+        track_start_dt = df_behavior["timestamp"].min()
+        if (track_start_dt < start_dt) or (track_start_dt > end_dt):
+            continue
+
+        is_valid_track = True
+        if "quality_label" in df_behavior.columns and "behavior_conf" in df_behavior.columns:
+            behavior_conf = pd.to_numeric(df_behavior["behavior_conf"], errors="coerce")
+            n_bad = (df_behavior["quality_label"] == "bad").sum()
+            n_total = len(df_behavior)
+            avg_conf = behavior_conf.mean()
+            if n_total == 0 or (n_bad / n_total) >= 0.8 or pd.isna(avg_conf) or avg_conf < 0.7:
+                is_valid_track = False
+        if not is_valid_track:
+            continue
+
+        # Count individuals using good-quality, confident frames from valid tracks.
+        if "quality_label" in df_behavior.columns and "behavior_conf" in df_behavior.columns:
+            quality_mask = (
+                (df_behavior["quality_label"] == "good")
+                & (pd.to_numeric(df_behavior["behavior_conf"], errors="coerce") >= 0.7)
+            )
+        elif "quality_label" in df_behavior.columns:
+            quality_mask = df_behavior["quality_label"] == "good"
+        else:
+            quality_mask = pd.Series(True, index=df_behavior.index)
+
+        occupancy_timestamps = set(df_behavior.loc[quality_mask, "timestamp"])
+        for ts in occupancy_timestamps:
+            timestamp_counts[ts] = timestamp_counts.get(ts, 0) + 1
+
+        track_infos.append((track_file, df_behavior))
+
+    # Second pass: run ReID voting with occupancy-aware social-group constraints.
+    votes = []
+    for track_file, df_behavior in track_infos:
+        track_filename = track_file.stem
+        feature_path = track_file.parent / f"{track_filename}.npz"
+        if not feature_path.exists():
+            continue
+
+        features, frame_ids = load_embedding(feature_path)[0:2]
+        if "quality_label" not in df_behavior.columns or "behavior_label" not in df_behavior.columns or "behavior_conf" not in df_behavior.columns:
+            continue
+
+        # ReID voting frames: good quality + standing + high confidence.
+        behavior_conf = pd.to_numeric(df_behavior["behavior_conf"], errors="coerce")
+        good_indices = df_behavior.index[
+            (df_behavior["quality_label"] == "good")
+            & (df_behavior["behavior_label"] == "01_standing")
+            & (behavior_conf >= 0.9)
+        ].tolist()
+        if len(good_indices) == 0:
+            continue
+
+        feature_indices = [i for i, fid in enumerate(frame_ids) if fid in good_indices]
+        if len(feature_indices) == 0:
+            continue
+        features = features[feature_indices]
+
+        matched_labels = match_to_gallery(
+            features,
+            gallery_features,
+            gallery_labels=gallery_labels
+        )[-1]
+        voted_labels = [_to_identity_name(lbl) for lbl in vote_matched_labels(matched_labels)]
+        if len(voted_labels) == 0:
+            continue
+
+        good_timestamps = df_behavior.loc[good_indices, "timestamp"].dropna().tolist()
+        concurrent_counts = [timestamp_counts.get(ts, 1) for ts in good_timestamps]
+        observed_n_individuals = max(concurrent_counts) if len(concurrent_counts) > 0 else 1
+
+        # Occupancy rule:
+        # - single individual -> only social group 3 (Thai)
+        # - multiple individuals -> social groups 1/2 (exclude Thai)
+        if observed_n_individuals <= 1:
+            allowed_names = single_individual_names
+        else:
+            allowed_names = multi_individual_names
+
+        constrained_votes = [lbl for lbl in voted_labels if lbl in allowed_names]
+        if len(constrained_votes) == 0:
+            # Fallback keeps signal in cases where occupancy estimation is noisy.
+            constrained_votes = voted_labels
+
+        voted_label = max(set(constrained_votes), key=constrained_votes.count)
+        votes.append(voted_label)
+
+    if len(votes) == 0:
+        return pd.Series(dtype=int)
     vote_counts = pd.Series(votes).value_counts()
     return vote_counts
     
