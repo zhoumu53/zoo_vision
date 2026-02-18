@@ -92,7 +92,7 @@ LABEL_PRIORITY = {
     "stereotypy": 4,
 }
 
-STEREOTYPY_CAMERA_IDS = {16, 19}
+STEREOTYPY_CAMERA_IDS = {16, 19}   ### now the stereotypy only for 016-019, the trajs from 017-018 are not good enough for stereotypy analysis
 
 
 def normalize_date(date_str: str) -> str:
@@ -119,6 +119,9 @@ def get_bout_csvs(
             continue
         pattern = "*.csv" if not filename_keyword else f"*{filename_keyword}*.csv"
         for csv_path in sorted(date_dir.glob(pattern)):
+            # # ### TODO - NOW ONLY FOR 016-019,
+            # if '016' not in str(csv_path) and '019' not in str(csv_path):
+            #     continue
             collected.append((date, csv_path))
 
     if not collected and strict:
@@ -328,6 +331,110 @@ def _labels_to_segments(
     return pd.DataFrame(rows)
 
 
+def _finalize_stereotypy_from_debug(
+    df_debug: pd.DataFrame,
+    min_consecutive_bins: int = 2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep only consecutive stereotypy detections and merge them into windows."""
+    if df_debug is None or df_debug.empty:
+        return pd.DataFrame(), pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+
+    dbg = df_debug.copy()
+    dbg["start_timestamp"] = pd.to_datetime(dbg["start_timestamp"], errors="coerce")
+    dbg["end_timestamp"] = pd.to_datetime(dbg["end_timestamp"], errors="coerce")
+    dbg["final_stereotypy"] = False
+
+    walk = dbg[(dbg["behavior_label"] == "walking") & dbg["start_timestamp"].notna() & dbg["end_timestamp"].notna()].copy()
+    if walk.empty:
+        return dbg, pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+
+    walk = walk.sort_values(["start_timestamp", "end_timestamp"])
+    bin_span_sec = (walk["end_timestamp"] - walk["start_timestamp"]).dt.total_seconds().median()
+    if not np.isfinite(bin_span_sec) or bin_span_sec <= 0:
+        bin_span_sec = 120.0
+    contiguous_gap = pd.Timedelta(seconds=max(1.0, 0.25 * float(bin_span_sec)))
+
+    true_rows = walk[walk["is_stereotypy"].astype(bool)].copy()
+    if true_rows.empty:
+        return dbg, pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+
+    true_rows = true_rows.sort_values(["start_timestamp", "end_timestamp"])
+    runs: list[list[int]] = []
+    current: list[int] = []
+    prev_end: pd.Timestamp | None = None
+    for idx, row in true_rows.iterrows():
+        s = pd.Timestamp(row["start_timestamp"])
+        e = pd.Timestamp(row["end_timestamp"])
+        if prev_end is None or s <= (prev_end + contiguous_gap):
+            current.append(idx)
+        else:
+            if current:
+                runs.append(current)
+            current = [idx]
+        prev_end = e
+    if current:
+        runs.append(current)
+
+    keep_idxs: list[int] = []
+    for run in runs:
+        if len(run) >= int(min_consecutive_bins):
+            keep_idxs.extend(run)
+
+    if keep_idxs:
+        dbg.loc[keep_idxs, "final_stereotypy"] = True
+
+    final_rows = dbg[(dbg["behavior_label"] == "walking") & dbg["final_stereotypy"]].copy()
+    if final_rows.empty:
+        return dbg, pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+
+    final_rows = final_rows.sort_values(["start_timestamp", "end_timestamp"])
+    merged: list[dict] = []
+    cur_s = pd.Timestamp(final_rows.iloc[0]["start_timestamp"])
+    cur_e = pd.Timestamp(final_rows.iloc[0]["end_timestamp"])
+    for i in range(1, len(final_rows)):
+        s = pd.Timestamp(final_rows.iloc[i]["start_timestamp"])
+        e = pd.Timestamp(final_rows.iloc[i]["end_timestamp"])
+        if s <= (cur_e + contiguous_gap):
+            if e > cur_e:
+                cur_e = e
+        else:
+            merged.append({"start_time": cur_s, "end_time": cur_e, "behavior_label": "stereotypy"})
+            cur_s, cur_e = s, e
+    merged.append({"start_time": cur_s, "end_time": cur_e, "behavior_label": "stereotypy"})
+    merged_df = pd.DataFrame(merged).sort_values(["start_time", "end_time"]).reset_index(drop=True)
+    return dbg, merged_df
+
+
+def _apply_stereotypy_windows_to_labels(
+    labels: np.ndarray,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    df_stereotypy_windows: pd.DataFrame | None,
+) -> np.ndarray:
+    if labels.size == 0 or df_stereotypy_windows is None or df_stereotypy_windows.empty:
+        return labels
+
+    out = labels.copy()
+    label_codes = {lbl: i for i, lbl in enumerate(LABEL_ORDER)}
+    stereo_code = label_codes["stereotypy"]
+    for _, row in df_stereotypy_windows.iterrows():
+        s = pd.to_datetime(row.get("start_time"), errors="coerce")
+        e = pd.to_datetime(row.get("end_time"), errors="coerce")
+        if pd.isna(s) or pd.isna(e):
+            continue
+        s = max(pd.Timestamp(s), start)
+        e = min(pd.Timestamp(e), end)
+        if s >= e:
+            continue
+        s_idx = int((s - start).total_seconds())
+        e_idx = int((e - start).total_seconds())
+        s_idx = max(0, min(s_idx, len(out)))
+        e_idx = max(0, min(e_idx, len(out)))
+        if s_idx < e_idx:
+            out[s_idx:e_idx] = stereo_code
+    return out
+
+
 def _plot_activity_budget(df_budget: pd.DataFrame, out_path: Path, title: str) -> None:
     df_budget = df_budget.copy()
     df_budget["display_label"] = df_budget["behavior_label"].map(LABEL_DISPLAY)
@@ -352,6 +459,7 @@ def _plot_activity_timeline(
     out_path: Path,
     title: str,
     df_gt_segments: pd.DataFrame | None = None,
+    df_stereotypy_segments: pd.DataFrame | None = None,
 ) -> None:
     df = df_segments.copy()
     if df.empty:
@@ -409,6 +517,22 @@ def _plot_activity_timeline(
                 linewidths=0.4,
                 zorder=6,
             )
+
+    has_stereotypy_overlay = False
+    if df_stereotypy_segments is not None and not df_stereotypy_segments.empty:
+        st_df = df_stereotypy_segments.copy().sort_values(["start_time", "end_time"])
+        starts = np.asarray(mdates.date2num(st_df["start_time"]), dtype=float)
+        ends = np.asarray(mdates.date2num(st_df["end_time"]), dtype=float)
+        ys = np.full(starts.shape[0], 0.94, dtype=float)
+        ax.hlines(
+            y=ys,
+            xmin=starts,
+            xmax=ends,
+            colors=LABEL_COLORS["stereotypy"],
+            linewidth=2.8,
+            zorder=7,
+        )
+        has_stereotypy_overlay = True
 
     ax.set_title(title)
     ax.set_ylabel("")
@@ -2045,7 +2169,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out_root",
         type=str,
-        default="/media/ElephantsWD/elephants/activity_budgets",
+        default="/media/ElephantsWD/elephants/activity_budgets-new",
         help="Output root directory for activity budget CSVs and plots",
     )
     parser.add_argument(
@@ -2203,6 +2327,84 @@ def run_analysis(args: argparse.Namespace) -> None:
             gt_segments_plot["offset_end_sec"] = (gt_segments_plot["end_time"] - night_start).dt.total_seconds()
             all_night_gt_segments.append(gt_segments_plot)
         labels = _build_timeline_labels(bouts, night_start, night_end)
+
+        out_dir = out_root / date
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_csv_dir = out_dir / "csvs"
+        out_csv_dir.mkdir(parents=True, exist_ok=True)
+        out_fig_dir = out_dir / "figures"
+        out_fig_dir.mkdir(parents=True, exist_ok=True)
+
+        final_stereotypy_windows = pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+
+        plot_path = None
+        # plot_path = out_fig_dir / f"{output_stem}_activity_budget.png"
+        # title = f"{output_stem} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        # _plot_activity_budget(budget, plot_path, title)
+
+        ethogram_path = out_fig_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
+        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        traj_paths = None
+        traj_paths = _plot_trajectory_heatmaps_for_date(
+            source_bouts=source_bouts,
+            refined_bouts=bouts,
+            out_dir=out_fig_dir,
+            output_stem=output_stem,
+            individual_label=args.individual_group,
+            night_start=night_start,
+            night_end=night_end,
+            bin_hours=args.bin_hours,
+            traj_hourly_behaviors=args.traj_hourly_behaviors,
+        )
+        print(f"Saved: {plot_path}")
+        if traj_paths is not None:
+            print(f"Saved: {traj_paths[0]}")
+            print(f"Saved: {traj_paths[1]}")
+            stereotypy_flags = traj_paths[2]
+            stereotypy_debug = traj_paths[3]
+            if not stereotypy_debug.empty:
+                stereotypy_debug, final_stereotypy_windows = _finalize_stereotypy_from_debug(
+                    stereotypy_debug,
+                    min_consecutive_bins=2,
+                )
+                debug_csv = out_csv_dir / f"{output_stem}_stereotypy_debug.csv"
+                stereotypy_debug.to_csv(debug_csv, index=False)
+                print(f"Saved: {debug_csv}")
+                if not final_stereotypy_windows.empty:
+                    final_windows_csv = out_csv_dir / f"{output_stem}_stereotypy_final_windows.csv"
+                    final_stereotypy_windows.to_csv(final_windows_csv, index=False)
+                    print(f"Saved: {final_windows_csv}")
+                    labels = _apply_stereotypy_windows_to_labels(
+                        labels=labels,
+                        start=night_start,
+                        end=night_end,
+                        df_stereotypy_windows=final_stereotypy_windows,
+                    )
+                    if not stereotypy_flags.empty:
+                        sf = stereotypy_flags.copy()
+                        sf["start_timestamp"] = pd.to_datetime(sf["start_timestamp"], errors="coerce")
+                        sf["end_timestamp"] = pd.to_datetime(sf["end_timestamp"], errors="coerce")
+                        keep_mask = np.zeros(len(sf), dtype=bool)
+                        for i, row in sf.iterrows():
+                            s = row["start_timestamp"]
+                            e = row["end_timestamp"]
+                            if pd.isna(s) or pd.isna(e):
+                                continue
+                            overlaps = (
+                                (final_stereotypy_windows["start_time"] < e)
+                                & (final_stereotypy_windows["end_time"] > s)
+                            )
+                            keep_mask[i] = bool(overlaps.any())
+                        stereotypy_flags = sf[keep_mask].copy()
+                else:
+                    stereotypy_flags = pd.DataFrame(columns=stereotypy_flags.columns if not stereotypy_flags.empty else [])
+            if not stereotypy_flags.empty:
+                stereotypy_csv = out_csv_dir / f"{output_stem}_stereotypy_flags.csv"
+                stereotypy_flags.to_csv(stereotypy_csv, index=False)
+                print(f"Saved: {stereotypy_csv}")
+                flags_all = stereotypy_flags.copy()
+                flags_all["individual"] = args.individual_group
+                all_stereotypy_flags.append(flags_all)
         budget = _summarize_labels(labels)
         budget["duration_min"] = budget["duration_sec"] / 60.0
         budget["duration_hr"] = budget["duration_sec"] / 3600.0
@@ -2211,13 +2413,6 @@ def run_analysis(args: argparse.Namespace) -> None:
         budget["night_end"] = night_end
         budget["date"] = date
         all_budgets.append(budget)
-
-        out_dir = out_root / date
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_csv_dir = out_dir / "csvs"
-        out_csv_dir.mkdir(parents=True, exist_ok=True)
-        out_fig_dir = out_dir / "figures"
-        out_fig_dir.mkdir(parents=True, exist_ok=True)
 
         save_csvs = False
         if save_csvs:
@@ -2242,45 +2437,14 @@ def run_analysis(args: argparse.Namespace) -> None:
         # Keep y-axis dates in the all-night plot only for nights with actual bouts.
         if not bouts.empty:
             all_night_segments.append(segments)
-
-        plot_path = None
-        # plot_path = out_fig_dir / f"{output_stem}_activity_budget.png"
-        # title = f"{output_stem} Activity Budget {date} ({night_start:%H:%M}–{night_end:%H:%M})"
-        # _plot_activity_budget(budget, plot_path, title)
-
-        ethogram_path = out_fig_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
-        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
-        _plot_activity_timeline(segments, ethogram_path, ethogram_title, df_gt_segments=gt_segments)
-        traj_paths = None
-        traj_paths = _plot_trajectory_heatmaps_for_date(
-            source_bouts=source_bouts,
-            refined_bouts=bouts,
-            out_dir=out_fig_dir,
-            output_stem=output_stem,
-            individual_label=args.individual_group,
-            night_start=night_start,
-            night_end=night_end,
-            bin_hours=args.bin_hours,
-            traj_hourly_behaviors=args.traj_hourly_behaviors,
+        _plot_activity_timeline(
+            segments,
+            ethogram_path,
+            ethogram_title,
+            df_gt_segments=gt_segments,
+            df_stereotypy_segments=final_stereotypy_windows,
         )
-        print(f"Saved: {plot_path}")
         print(f"Saved: {ethogram_path}")
-        if traj_paths is not None:
-            print(f"Saved: {traj_paths[0]}")
-            print(f"Saved: {traj_paths[1]}")
-            stereotypy_flags = traj_paths[2]
-            stereotypy_debug = traj_paths[3]
-            if not stereotypy_debug.empty:
-                debug_csv = out_csv_dir / f"{output_stem}_stereotypy_debug.csv"
-                stereotypy_debug.to_csv(debug_csv, index=False)
-                print(f"Saved: {debug_csv}")
-            if not stereotypy_flags.empty:
-                stereotypy_csv = out_csv_dir / f"{output_stem}_stereotypy_flags.csv"
-                stereotypy_flags.to_csv(stereotypy_csv, index=False)
-                print(f"Saved: {stereotypy_csv}")
-                flags_all = stereotypy_flags.copy()
-                flags_all["individual"] = args.individual_group
-                all_stereotypy_flags.append(flags_all)
         if gt_created:
             print(f"Created empty GT template: {gt_csv}")
 
