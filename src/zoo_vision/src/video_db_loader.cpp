@@ -192,13 +192,24 @@ void VideoDBLoader::loadNextVideo(const std::string &cameraName, CameraData &cam
   openVideo(cameraName, cameraData, *cameraData.currentVideo_);
 }
 
-void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
+cv::Mat3b VideoDBLoader::loadImage(CameraData &cameraData, zoo_msgs::msg::Image12m &msg) {
+
   if (!cameraData.videoStartTime_.has_value() || *cameraData.videoStartTime_ > replayNow_) {
-    image = cv::Mat3b{};
-    return;
+    return cv::Mat3b{};
   }
 
   assert(cameraData.videoStream_.has_value());
+
+  msg.header.stamp =
+      rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
+  setMsgString(msg.encoding, "rgb8");
+  msg.width = cameraData.frameSize.width;
+  msg.height = cameraData.frameSize.height;
+  msg.is_bigendian = false;
+  msg.step = msg->width * 3 * sizeof(char);
+
+  cv::Mat3b image = wrapMat3bFromMsg(msg);
+
   auto &cvVideo = *cameraData.videoStream_;
 
   // Retry fetch a few times because some videos have encoding errors
@@ -212,12 +223,15 @@ void VideoDBLoader::loadImage(CameraData &cameraData, cv::Mat3b &image) {
 
   // If we didn't get any image we are probably at the end of the video
   if (!ok) {
-    image = cv::Mat3b{};
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500, "Video for %s EOF",
                          cameraData.currentVideo_->videoFile.c_str());
     cameraData.videoStartTime_.reset();
     cameraData.videoStream_.reset();
+    return cv::Mat3b{};
   }
+
+  CHECK_PTR_EQ(&msg.data[0], image.data);
+  return image;
 }
 
 auto VideoDBLoader::findNextValidReplayTime() const -> std::optional<Clock::time_point> {
@@ -252,22 +266,15 @@ void VideoDBLoader::onTimer() {
     }
 
     auto msg = std::make_unique<zoo_msgs::msg::Image12m>();
-    msg->header.stamp =
-        rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
-    setMsgString(msg->encoding, "rgb8");
-    msg->width = cameraData.frameSize.width;
-    msg->height = cameraData.frameSize.height;
-    msg->is_bigendian = false;
-    msg->step = msg->width * 3 * sizeof(char);
 
-    cv::Mat3b image = wrapMat3bFromMsg(*msg);
+    cv::Mat3b image;
     {
       ProfileSection s{"loadImage"};
 
-      loadImage(cameraData, image);
+      image = loadImage(cameraData, *msg);
       if (!cameraData.videoStream_.has_value()) {
         loadNextVideo(cameraName, cameraData);
-        loadImage(cameraData, image);
+        image = loadImage(cameraData, *msg);
         if (image.empty()) {
           RCLCPP_ERROR(get_logger(), "%s: Loading image failed from new video", cameraName.c_str());
         }

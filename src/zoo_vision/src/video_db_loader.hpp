@@ -59,7 +59,7 @@ private:
 
   std::optional<Clock::time_point> findNextValidReplayTime() const;
 
-  void loadImage(CameraData &cameraData, cv::Mat3b &img);
+  cv::Mat3b loadImage(CameraData &cameraData, zoo_msgs::msg::Image12m &msg);
   void onTimer();
 
   int skipFrameCount_;
