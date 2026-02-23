@@ -206,7 +206,7 @@ cv::Mat3b VideoDBLoader::loadImage(CameraData &cameraData, zoo_msgs::msg::Image1
   msg.width = cameraData.frameSize.width;
   msg.height = cameraData.frameSize.height;
   msg.is_bigendian = false;
-  msg.step = msg->width * 3 * sizeof(char);
+  msg.step = msg.width * 3 * sizeof(char);
 
   cv::Mat3b image = wrapMat3bFromMsg(msg);
 
