@@ -65,14 +65,14 @@ LABEL_ORDER = [
     "02_sleeping_left",
     "03_sleeping_right",
     "stereotypy",
-    "outside",
+    "no_observation",
 ]
 
 LABEL_DISPLAY = {
     "01_standing": "standing",
     "02_sleeping_left": "sleeping left",
     "03_sleeping_right": "sleeping right",
-    "outside": "outside / no observation",
+    "no_observation": "outside / no observation",
     "walking": "walking",
     "stereotypy": "stereotypy",
 }
@@ -80,7 +80,7 @@ LABEL_DISPLAY = {
 LABEL_COLORS = {
     "02_sleeping_left": "#5FB13E",
     "03_sleeping_right": "#FF9A2A",
-    "outside": "#F1F1F1",
+    "no_observation": "#F1F1F1",
     "stereotypy": "#FF2624",
     "01_standing": "#8a00ac",
     "walking": "#c372cb",
@@ -118,7 +118,7 @@ TRAJ_STANDING_WALKING_LABELS = [
 ]
 
 LABEL_PRIORITY = {
-    "outside": 0,
+    "no_observation": 0,
     "01_standing": 1,
     "02_sleeping_left": 2,
     "03_sleeping_right": 2,
@@ -196,12 +196,12 @@ def _assign_bouts_to_timeline(
     label_codes = {lbl: i for i, lbl in enumerate(LABEL_ORDER)}
     code_to_label = {i: lbl for lbl, i in label_codes.items()}
 
-    labels = np.full(total_seconds, label_codes["outside"], dtype=np.int16)
-    priorities = np.full(total_seconds, LABEL_PRIORITY["outside"], dtype=np.int16)
+    labels = np.full(total_seconds, label_codes["no_observation"], dtype=np.int16)
+    priorities = np.full(total_seconds, LABEL_PRIORITY["no_observation"], dtype=np.int16)
 
     if bouts.empty:
         return pd.DataFrame({
-            "behavior_label": ["outside"],
+            "behavior_label": ["no_observation"],
             "duration_sec": [total_seconds],
         })
 
@@ -235,7 +235,7 @@ def _assign_bouts_to_timeline(
     counts = np.bincount(labels, minlength=len(LABEL_ORDER))
     data = []
     for code, secs in enumerate(counts):
-        label = code_to_label.get(code, "outside")
+        label = code_to_label.get(code, "no_observation")
         data.append({
             "behavior_label": label,
             "duration_sec": int(secs),
@@ -253,8 +253,8 @@ def _build_timeline_labels(
         raise ValueError("Invalid night window; end must be after start")
 
     label_codes = {lbl: i for i, lbl in enumerate(LABEL_ORDER)}
-    labels = np.full(total_seconds, label_codes["outside"], dtype=np.int16)
-    priorities = np.full(total_seconds, LABEL_PRIORITY["outside"], dtype=np.int16)
+    labels = np.full(total_seconds, label_codes["no_observation"], dtype=np.int16)
+    priorities = np.full(total_seconds, LABEL_PRIORITY["no_observation"], dtype=np.int16)
 
     if bouts.empty:
         return labels
@@ -294,7 +294,7 @@ def _summarize_labels(labels: np.ndarray) -> pd.DataFrame:
     counts = np.bincount(labels, minlength=len(LABEL_ORDER))
     data = []
     for code, secs in enumerate(counts):
-        label = code_to_label.get(code, "outside")
+        label = code_to_label.get(code, "no_observation")
         data.append({
             "behavior_label": label,
             "duration_sec": int(secs),
@@ -1203,8 +1203,8 @@ def _build_identity_trajectory_points(
     out = out.drop_duplicates(subset=["timestamp", "camera_id"], keep="last")
 
     # Re-label trajectory points using refined bouts (standing split into standing/walking).
-    out["behavior_label"] = "outside"
-    out["label_priority"] = int(LABEL_PRIORITY["outside"])
+    out["behavior_label"] = "no_observation"
+    out["label_priority"] = int(LABEL_PRIORITY["no_observation"])
     if not refined_bouts.empty:
         refined = refined_bouts.sort_values(["start_time", "end_time"]).reset_index(drop=True)
         for _, bout in refined.iterrows():
@@ -1537,30 +1537,14 @@ def _plot_trajectory_heatmaps_for_date(
     return heat_path, traj_heat_path, stereotypy_flags, stereotypy_debug
 
 
-def _resolve_record_roots(args: argparse.Namespace) -> list[Path]:
-    roots: list[Path] = []
-    if args.record_roots:
-        roots.extend(Path(p) for p in args.record_roots)
-    elif args.record_root:
-        roots.append(Path(args.record_root))
-    if not roots:
-        raise ValueError("Provide --record_root or --record_roots")
-    return roots
-
-
-def _build_source_configs(
-    record_roots: list[Path],
+def _build_source_config(
+    record_root: Path,
     output_dir_override: str | None,
-) -> list[tuple[Path, Path]]:
-    if output_dir_override and len(record_roots) > 1:
-        raise ValueError("--output_dir override supports only one record root")
-
-    configs: list[tuple[Path, Path]] = []
-    for i, root in enumerate(record_roots):
-        output_dir = Path(output_dir_override) if (output_dir_override and i == 0) else (root / "demo" / "night_bout_summary")
-        track_dir = root / "tracks"
-        configs.append((output_dir, track_dir))
-    return configs
+) -> tuple[Path, Path]:
+    """Build output_dir and track_dir paths from a single record root."""
+    output_dir = Path(output_dir_override) if output_dir_override else (record_root / "demo" / "night_bout_summary")
+    track_dir = record_root / "tracks"
+    return output_dir, track_dir
 
 
 def _per_date_output_stem(
@@ -1671,20 +1655,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--record_root",
         type=str,
-        default="/media/ElephantsWD/elephants/test_dan/results",
+        required=True,
         help="Root directory of one record.",
     )
     parser.add_argument(
-        "--record_roots",
-        nargs="+",
-        default=None,
-        help="Optional list of record roots. When provided, all roots are merged in one analysis.",
-    )
-    parser.add_argument(
-        "--output_dir",
+        "--night_output_dir",
         type=str,
         default=None,
-        help="Optional direct path to one night_bout_summary directory. Overrides --record_root for single-root runs.",
+        help="Optional direct path to one night_bout_summary directory. Overrides --record_root.",
     )
     parser.add_argument(
         "--date",
@@ -1692,16 +1670,10 @@ def parse_args() -> argparse.Namespace:
         help="Date to process, e.g. 2026-02-05 or 20260205.",
     )
     parser.add_argument(
-        "--out_root",
-        type=str,
-        default="/media/mu/zoo_vision/post_processing/analysis/activity_budgets-perday",
-        help="Output root directory for generated CSVs.",
-    )
-    parser.add_argument(
         "--individual_group",
         type=str,
-        default="Thai",
-        help="Optional keyword to filter bout summary CSV files. Default is 'Thai'.",
+        default=None,
+        help="Optional keyword to filter bout summary CSV files. If not provided, processes all CSV files for the date.",
     )
     parser.add_argument(
         "--standing_merge_gap_sec",
@@ -1747,111 +1719,110 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None:
-    out_root = Path(args.out_root)
-    if plotting is None:
-        plotting = bool(getattr(args, "plotting", False))
-    record_roots = _resolve_record_roots(args)
-    source_configs = _build_source_configs(record_roots, args.output_dir)
-
-    for output_dir, _ in source_configs:
-        if not output_dir.exists():
-            raise FileNotFoundError(f"Output directory not found: {output_dir}")
-
-    date = normalize_date(args.date)
-    filename_keyword = args.individual_group if args.individual_group else None
-    csv_sources: list[tuple[Path, Path]] = []
-    other_groups: list[str] = []
-    group1_candidates: list[str] = []
+def _process_individual_from_csv(
+    csv_path: Path,
+    track_dir: Path,
+    output_dir: Path,
+    date: str,
+    individual_label: str,
+    other_individual: str,
+    camera_ids_txt: str,
+    args: argparse.Namespace,
+    plotting: bool,
+    folder_name: str | None = None,
+) -> None:
+    """Process a single individual from a bout CSV file.
+    
+    Args:
+        folder_name: Optional folder name to use instead of individual_label.
+                     Used for 'invalid' identity labels like 'confused'.
+    """
+    csv_sources = [(csv_path, track_dir)]
+    
+    # Use folder_name for output directories, individual_label for filtering data
+    output_name = folder_name if folder_name else individual_label
+    
+    # Parse camera IDs
     cam_ids_from_bouts: set[int] = set()
-    for output_dir, track_dir in source_configs:
-        bouts = get_bout_csvs(
-            output_dir=output_dir,
-            dates=[date],
-            filename_keyword=filename_keyword,
-            strict=False,
-        )
-        for _, csv_path, group1, other_group, camera_ids_txt in bouts:
-            csv_sources.append((csv_path, track_dir))
-            if str(group1).strip() and str(group1).strip().lower() != "unknown":
-                group1_candidates.append(str(group1).strip())
-            if str(other_group).strip() and str(other_group).strip().lower() != "unknown":
-                other_groups.append(str(other_group).strip())
-            if str(camera_ids_txt).strip():
-                for token in str(camera_ids_txt).split(","):
-                    token = token.strip()
-                    if token.isdigit():
-                        cam_ids_from_bouts.add(int(token))
-
-    if not csv_sources:
-        raise FileNotFoundError(f"No bout summary CSV files found for date={date}")
-
-    output_stem = _per_date_output_stem(csv_sources, args.individual_group)
-    group1_title = ", ".join(sorted(set(group1_candidates))) if group1_candidates else str(args.individual_group)
-    other_group_title = ", ".join(sorted(set(other_groups))) if other_groups else "unknown"
-    bouts, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
+    if str(camera_ids_txt).strip():
+        for token in str(camera_ids_txt).split(","):
+            token = token.strip()
+            if token.isdigit():
+                cam_ids_from_bouts.add(int(token))
+    
+    bouts_data, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
         csv_sources=csv_sources,
-        individual_label=args.individual_group,
+        individual_label=individual_label,
         standing_merge_gap_sec=args.standing_merge_gap_sec,
         walking_bin_minutes=args.walking_bin_minutes,
         walking_bin_distance_threshold=args.walking_bin_distance_threshold,
         movement_step_clip=args.movement_step_clip,
     )
-    if not has_nonempty_source_csv:
-        raise ValueError(f"All source CSVs for date={date} are empty.")
+    if not has_nonempty_source_csv or bouts_data.empty:
+        return
+    
+    print(f"  → Processing individual: {individual_label} (companions: {other_individual}) [folder: {output_name}]")
 
     max_ts = None
-    if not bouts.empty:
-        max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
+    if not bouts_data.empty:
+        max_ts = max(bouts_data["end_time"].max(), bouts_data["start_time"].max())
     night_start, night_end = _night_window(date, max_ts)
-    labels = _build_timeline_labels(bouts, night_start, night_end)
+    labels = _build_timeline_labels(bouts_data, night_start, night_end)
 
-    out_dir = out_root / date
-    out_csv_dir = out_dir / "csvs"
+    # Create output directories: output_dir/date/output_name/
+    out_base = output_dir / date / output_name
+    out_csv_dir = out_base / "csvs"
     out_csv_dir.mkdir(parents=True, exist_ok=True)
-    out_fig_dir = out_dir / "figures"
+    out_fig_dir = out_base / "figures"
     out_fig_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Output file stem uses output name
+    output_stem = output_name
 
     final_stereotypy_windows = pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
     cam_ids = sorted(set(cam_ids_from_bouts))
-    group_info_csv = out_csv_dir / "group_info.csv"
+    
+    # Save individual info
+    info_csv = out_csv_dir / "individual_info.csv"
     pd.DataFrame(
         [
             {
                 "date": str(date),
-                "group1": str(group1_title),
-                "group2": str(other_group_title),
+                "individual": str(individual_label),
+                "companions": str(other_individual),
                 "camera_ids": ",".join(str(int(c)) for c in sorted(set(cam_ids))),
+                "source_csv": csv_path.name,
             }
         ]
-    ).to_csv(group_info_csv, index=False)
-    print(f"Saved: {group_info_csv}")
-    can_run_stereotypy = args.individual_group == "Thai"
+    ).to_csv(info_csv, index=False)
+    print(f"    Saved: {info_csv}")
+    
+    can_run_stereotypy = individual_label == "Thai"
     traj_paths = None
     if plotting:
         traj_paths = _plot_trajectory_heatmaps_for_date(
             source_bouts=source_bouts,
-            refined_bouts=bouts,
+            refined_bouts=bouts_data,
             out_dir=out_fig_dir,
             output_stem=output_stem,
-            individual_label=args.individual_group,
+            individual_label=individual_label,
             night_start=night_start,
             night_end=night_end,
             bin_hours=args.bin_hours,
             traj_hourly_behaviors=args.traj_hourly_behaviors,
         )
         if traj_paths is not None:
-            print(f"Saved: {traj_paths[0]}")
+            print(f"    Saved: {traj_paths[0]}")
 
     if can_run_stereotypy:
         if traj_paths is not None:
             stereotypy_flags = traj_paths[2]
             stereotypy_debug = traj_paths[3]
         else:
-            df_traj = _build_identity_trajectory_points(source_bouts, bouts)
+            df_traj = _build_identity_trajectory_points(source_bouts, bouts_data)
             stereotypy_flags, stereotypy_debug = _plot_world_heatmap_standing_walking_bin(
                 df_traj=df_traj,
-                out_dir=out_csv_dir,
+                out_dir=out_fig_dir,
                 title=output_stem,
                 night_start=night_start,
                 night_end=night_end,
@@ -1861,15 +1832,15 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
         if not stereotypy_debug.empty:
             stereotypy_debug, final_stereotypy_windows = _finalize_stereotypy_from_debug(
                 stereotypy_debug,
-                min_consecutive_bins=2,   ## observed from raw-video, so if >4min of walking in digit-8 pattern, it's stereotypy
+                min_consecutive_bins=2,
             )
-            debug_csv = out_csv_dir / f"{output_stem}_stereotypy_debug.csv"
+            debug_csv = out_csv_dir / "stereotypy_debug.csv"
             stereotypy_debug.to_csv(debug_csv, index=False)
-            print(f"Saved: {debug_csv}")
+            print(f"    Saved: {debug_csv}")
         if not final_stereotypy_windows.empty:
-            final_windows_csv = out_csv_dir / f"{output_stem}_stereotypy_final_windows.csv"
+            final_windows_csv = out_csv_dir / "stereotypy_final_windows.csv"
             final_stereotypy_windows.to_csv(final_windows_csv, index=False)
-            print(f"Saved: {final_windows_csv}")
+            print(f"    Saved: {final_windows_csv}")
             labels = _apply_stereotypy_windows_to_labels(
                 labels=labels,
                 start=night_start,
@@ -1877,41 +1848,40 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
                 df_stereotypy_windows=final_stereotypy_windows,
             )
             for _, row in final_stereotypy_windows.iterrows():
-                print(f"stereotypy: {row['start_time']} -> {row['end_time']}")
+                print(f"    stereotypy: {row['start_time']} -> {row['end_time']}")
         if not stereotypy_flags.empty:
-            stereotypy_csv = out_csv_dir / f"{output_stem}_stereotypy_flags.csv"
+            stereotypy_csv = out_csv_dir / "stereotypy_flags.csv"
             stereotypy_flags.to_csv(stereotypy_csv, index=False)
-            print(f"Saved: {stereotypy_csv}")
-    else:
-        print(
-            "Skipping stereotypy detection: supported only for individual_group='Thai' "
-        )
+            print(f"    Saved: {stereotypy_csv}")
 
     segments = _labels_to_segments(labels, night_start)
-    ethogram_csv = out_csv_dir / f"{output_stem}_ethogram.csv"
+    ethogram_csv = out_csv_dir / "ethogram.csv"
     ethogram = save_ethogram_csv(
-        identity_id=args.individual_group,
+        identity_id=individual_label,
         segments=segments,
         out_csv=ethogram_csv,
     )
-    print(f"Saved: {ethogram_csv}")
-    pie_plot = out_fig_dir / f"{output_stem}_activity_budget_pie.png"
+    print(f"    Saved: {ethogram_csv}")
+    
+    pie_plot = out_fig_dir / "activity_budget_pie.png"
     budget_from_ethogram = analyze_ethogram_and_plot_activity_budget(
         ethogram_csv=ethogram_csv,
         out_plot=pie_plot,
         date=date,
         camera_ids=cam_ids,
-        other_group=other_group_title,
+        other_group=other_individual,  # companions
         label_display_map=LABEL_DISPLAY,
         label_color_map=LABEL_COLORS,
     )
-    print(f"Saved: {pie_plot}")
-    pie_budget_csv = out_csv_dir / f"{output_stem}_activity_budget_from_ethogram.csv"
+    print(f"    Saved: {pie_plot}")
+    
+    pie_budget_csv = out_csv_dir / "activity_budget.csv"
     budget_from_ethogram.to_csv(pie_budget_csv, index=False)
-    print(f"Saved: {pie_budget_csv}")
+    print(f"    Saved: {pie_budget_csv}")
+    
     if plotting:
-        ethogram_plot = out_fig_dir / f"{output_stem}_ethogram.png"
-        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        ethogram_plot = out_fig_dir / "ethogram_timeline.png"
+        ethogram_title = f"{individual_label} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
         _plot_activity_timeline(
             segments,
             ethogram_plot,
@@ -1919,14 +1889,137 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
             df_gt_segments=None,
             df_stereotypy_segments=final_stereotypy_windows,
         )
-        print(f"Saved: {ethogram_plot}")
+        print(f"    Saved: {ethogram_plot}")
 
-    standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
+    standing_diag_csv = out_csv_dir / "standing_walking_diagnostics.csv"
     standing_diag.to_csv(standing_diag_csv, index=False)
-    print(f"Saved: {standing_diag_csv}")
+    print(f"    Saved: {standing_diag_csv}")
 
-    for _, row in ethogram[ethogram["label"].isin(["walking", "stereotypy"])].iterrows():
-        print(f"{row['label']}: {row['start_dt']} -> {row['end_dt']}")
+    walking_stereo = ethogram[ethogram["label"].isin(["walking", "stereotypy"])]
+    if not walking_stereo.empty:
+        for _, row in walking_stereo.iterrows():
+            print(f"    {row['label']}: {row['start_dt']} -> {row['end_dt']}")
+
+
+def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None:
+    if plotting is None:
+        plotting = bool(getattr(args, "plotting", False))
+    
+    # Get single record root and build config
+    record_root = Path(args.record_root)
+    if not record_root.exists():
+        raise FileNotFoundError(f"Record root not found: {record_root}")
+    
+    output_dir, track_dir = _build_source_config(record_root, args.night_output_dir)
+    if not output_dir.exists():
+        raise FileNotFoundError(f"Output directory not found: {output_dir}")
+
+    date = normalize_date(args.date)
+    
+    # Get bout CSVs from the single output directory
+    # If filename_keyword is provided, it will filter to matching files
+    bouts = get_bout_csvs(
+        output_dir=output_dir,
+        dates=[date],
+        filename_keyword=args.individual_group,
+        strict=False,
+    )
+    
+    if not bouts:
+        raise FileNotFoundError(f"No bout summary CSV files found for date={date}")
+    
+    print(f"\nFound {len(bouts)} bout CSV file(s) for date {date}")
+    
+    # Process each bout CSV - extract and process each individual separately
+    total_individuals = 0
+    for _, csv_path, group1, other_group, camera_ids_txt in bouts:
+        print(f"\n{'='*80}")
+        print(f"Processing CSV: {csv_path.name}")
+        print(f"  Date: {date}")
+        print(f"  Cameras: {camera_ids_txt}")
+        print(f"{'='*80}")
+        
+        # Parse individual names from group strings (may contain comma-separated names)
+        def parse_individuals(group_str):
+            """Split comma-separated individual names and clean them up."""
+            if not group_str or str(group_str).strip().lower() in ["unknown", "none", ""]:
+                return []
+            # Split by comma and clean each name
+            names = [n.strip() for n in str(group_str).split(",") if n.strip() and n.strip().lower() != "unknown"]
+            return names
+        
+        group1_individuals = parse_individuals(group1)
+        other_group_individuals = parse_individuals(other_group)
+        
+        # Combine all unique individuals from filename
+        filename_individuals = list(dict.fromkeys(group1_individuals + other_group_individuals))  # preserve order, remove duplicates
+        
+        # Also read CSV to find identity labels not in filename (like 'confused')
+        try:
+            csv_df = pd.read_csv(csv_path)
+            if 'identity_label' in csv_df.columns:
+                csv_identity_labels = csv_df['identity_label'].dropna().unique().tolist()
+                # Filter out empty, unknown, and already-in-filename labels
+                extra_labels = [
+                    label for label in csv_identity_labels 
+                    if str(label).strip() 
+                    and str(label).strip().lower() not in ['unknown', 'none', ''] 
+                    and str(label).strip() not in filename_individuals
+                ]
+            else:
+                extra_labels = []
+        except Exception as e:
+            print(f"  ⚠ Could not read identity labels from CSV: {e}")
+            extra_labels = []
+        
+        all_individuals = filename_individuals + extra_labels
+        
+        if not all_individuals:
+            print(f"  ⚠ No valid individuals found in {csv_path.name}, skipping.")
+            continue
+        
+        # Determine which individuals to process
+        if args.individual_group:
+            # User specified a specific individual - only process matching ones
+            individuals_to_process = [ind for ind in all_individuals if args.individual_group.lower() in ind.lower()]
+            if not individuals_to_process:
+                print(f"  ⚠ Individual '{args.individual_group}' not found in this CSV (available: {', '.join(all_individuals)}), skipping.")
+                continue
+        else:
+            # Process all individuals
+            individuals_to_process = all_individuals
+        
+        print(f"  Found {len(individuals_to_process)} individual(s) to process: {', '.join(individuals_to_process)}")
+        if extra_labels:
+            print(f"    (includes {len([l for l in extra_labels if l in individuals_to_process])} non-filename identity label(s): {', '.join([l for l in extra_labels if l in individuals_to_process])}))")
+        
+        # Process each individual separately
+        for individual_label in individuals_to_process:
+            # Determine if this is a filename-derived individual or extra label
+            is_from_filename = individual_label in filename_individuals
+            folder_name = individual_label if is_from_filename else 'invalid'
+            
+            # Determine the other individuals (companions) - only from filename
+            other_individuals = [ind for ind in filename_individuals if ind != individual_label]
+            other_individual_str = ", ".join(other_individuals) if other_individuals else "unknown"
+            
+            _process_individual_from_csv(
+                csv_path=csv_path,
+                track_dir=track_dir,
+                output_dir=output_dir,
+                date=date,
+                individual_label=individual_label,
+                other_individual=other_individual_str,
+                camera_ids_txt=camera_ids_txt,
+                args=args,
+                plotting=plotting,
+                folder_name=folder_name,
+            )
+            total_individuals += 1
+    
+    print(f"\n{'='*80}")
+    print(f"✓ Completed processing {total_individuals} individual(s) from {len(bouts)} CSV file(s)")
+    print(f"{'='*80}")
 
 
 if __name__ == "__main__":

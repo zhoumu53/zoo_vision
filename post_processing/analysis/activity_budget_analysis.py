@@ -44,14 +44,14 @@ LABEL_ORDER = [
     "02_sleeping_left",
     "03_sleeping_right",
     "stereotypy",
-    "outside",
+    "no_observation",
 ]
 
 LABEL_DISPLAY = {
     "01_standing": "standing",
     "02_sleeping_left": "sleeping left",
     "03_sleeping_right": "sleeping right",
-    "outside": "no observation",
+    "no_observation": "outside /no observation",
     "walking": "walking",
     "stereotypy": "stereotypy",
 }
@@ -59,7 +59,7 @@ LABEL_DISPLAY = {
 LABEL_COLORS = {
     "02_sleeping_left": "#5FB13E",
     "03_sleeping_right": "#FF9A2A",
-    "outside": "#F1F1F1",
+    "no_observation": "#F1F1F1",
     "stereotypy": "#FF2624",
     "01_standing": "#8a00ac",
     "walking": "#c372cb",
@@ -97,7 +97,7 @@ TRAJ_STANDING_WALKING_LABELS = [
 ]
 
 LABEL_PRIORITY = {
-    "outside": 0,
+    "no_observation": 0,
     "01_standing": 1,
     "02_sleeping_left": 2,
     "03_sleeping_right": 2,
@@ -154,12 +154,12 @@ def _assign_bouts_to_timeline(
     label_codes = {lbl: i for i, lbl in enumerate(LABEL_ORDER)}
     code_to_label = {i: lbl for lbl, i in label_codes.items()}
 
-    labels = np.full(total_seconds, label_codes["outside"], dtype=np.int16)
-    priorities = np.full(total_seconds, LABEL_PRIORITY["outside"], dtype=np.int16)
+    labels = np.full(total_seconds, label_codes["no_observation"], dtype=np.int16)
+    priorities = np.full(total_seconds, LABEL_PRIORITY["no_observation"], dtype=np.int16)
 
     if bouts.empty:
         return pd.DataFrame({
-            "behavior_label": ["outside"],
+            "behavior_label": ["no_observation"],
             "duration_sec": [total_seconds],
         })
 
@@ -193,7 +193,7 @@ def _assign_bouts_to_timeline(
     counts = np.bincount(labels, minlength=len(LABEL_ORDER))
     data = []
     for code, secs in enumerate(counts):
-        label = code_to_label.get(code, "outside")
+        label = code_to_label.get(code, "no_observation")
         data.append({
             "behavior_label": label,
             "duration_sec": int(secs),
@@ -211,8 +211,8 @@ def _build_timeline_labels(
         raise ValueError("Invalid night window; end must be after start")
 
     label_codes = {lbl: i for i, lbl in enumerate(LABEL_ORDER)}
-    labels = np.full(total_seconds, label_codes["outside"], dtype=np.int16)
-    priorities = np.full(total_seconds, LABEL_PRIORITY["outside"], dtype=np.int16)
+    labels = np.full(total_seconds, label_codes["no_observation"], dtype=np.int16)
+    priorities = np.full(total_seconds, LABEL_PRIORITY["no_observation"], dtype=np.int16)
 
     if bouts.empty:
         return labels
@@ -252,7 +252,7 @@ def _summarize_labels(labels: np.ndarray) -> pd.DataFrame:
     counts = np.bincount(labels, minlength=len(LABEL_ORDER))
     data = []
     for code, secs in enumerate(counts):
-        label = code_to_label.get(code, "outside")
+        label = code_to_label.get(code, "no_observation")
         data.append({
             "behavior_label": label,
             "duration_sec": int(secs),
@@ -1309,8 +1309,8 @@ def _build_identity_trajectory_points(
     out = out.drop_duplicates(subset=["timestamp", "camera_id"], keep="last")
 
     # Re-label trajectory points using refined bouts (standing split into standing/walking).
-    out["behavior_label"] = "outside"
-    out["label_priority"] = int(LABEL_PRIORITY["outside"])
+    out["behavior_label"] = "no_observation"
+    out["label_priority"] = int(LABEL_PRIORITY["no_observation"])
     if not refined_bouts.empty:
         refined = refined_bouts.sort_values(["start_time", "end_time"]).reset_index(drop=True)
         for _, bout in refined.iterrows():
