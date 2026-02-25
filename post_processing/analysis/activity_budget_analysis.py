@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 import re
 import json
 
@@ -11,7 +11,6 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
-
 
 try:
     from post_processing.analysis.utils import (
@@ -29,27 +28,7 @@ except ImportError:
         analyze_ethogram_and_plot_activity_budget,
         get_bout_csvs,
     )
-    
-try:
-    from post_processing.analysis.stereotype_classifier.inference import (
-        InferenceBundle,
-        load_model_for_inference,
-        predict_label_from_image,
-    )
-except Exception:
-    InferenceBundle = None
-    load_model_for_inference = None
-    predict_label_from_image = None
 
-
-INDIVIDUALS_TO_ID = {
-    "Chandra": 1,
-    "Farha": 3,
-    "Indi": 2,
-    "Panang": 4,
-    "Thai": 5,
-    "Invalid": 0,
-}
 
 VALID_LABELS = {
     "01_standing",
@@ -72,7 +51,7 @@ LABEL_DISPLAY = {
     "01_standing": "standing",
     "02_sleeping_left": "sleeping left",
     "03_sleeping_right": "sleeping right",
-    "outside": "outside / no observation",
+    "outside": "no observation",
     "walking": "walking",
     "stereotypy": "stereotypy",
 }
@@ -126,28 +105,7 @@ LABEL_PRIORITY = {
     "stereotypy": 4,
 }
 
-STEREOTYPY_MODEL_CHECKPOINT = Path(
-    "/media/mu/zoo_vision/post_processing/analysis/stereotype_classifier/model.pt"
-)
-_STEREOTYPY_BUNDLE: Any = None
-
-
-def _get_stereotypy_inference_bundle() -> Any:
-    global _STEREOTYPY_BUNDLE
-    if _STEREOTYPY_BUNDLE is not None:
-        return _STEREOTYPY_BUNDLE
-    if load_model_for_inference is None:
-        print("Stereotypy inference import unavailable; falling back to label='no'.")
-        return None
-    if not STEREOTYPY_MODEL_CHECKPOINT.exists():
-        print(f"Stereotypy checkpoint not found: {STEREOTYPY_MODEL_CHECKPOINT}; falling back to label='no'.")
-        return None
-    try:
-        _STEREOTYPY_BUNDLE = load_model_for_inference(STEREOTYPY_MODEL_CHECKPOINT)
-    except Exception as exc:
-        print(f"Failed to load stereotypy model: {exc}; falling back to label='no'.")
-        _STEREOTYPY_BUNDLE = None
-    return _STEREOTYPY_BUNDLE
+STEREOTYPY_CAMERA_IDS = {16, 19}   ### now the stereotypy only for 016-019, the trajs from 017-018 are not good enough for stereotypy analysis
 
 
 def normalize_date(date_str: str) -> str:
@@ -746,6 +704,157 @@ def _plot_activity_timeline_multi_night(
     plt.close(fig)
 
 
+def _plot_activity_timeline_with_pie_multi_night(
+    df_segments_all: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    group_info_by_date: dict[str, dict[str, str]] | None = None,
+) -> None:
+    df = df_segments_all.copy()
+    if df.empty:
+        raise ValueError("No multi-night timeline segments to plot")
+
+    dates_sorted = sorted(df["date"].astype(str).unique())
+    anchor = pd.Timestamp("2000-01-01 18:00:00")
+    x0 = mdates.date2num(anchor)
+    max_end_offset = float(df["offset_end_sec"].max()) if "offset_end_sec" in df.columns else 0.0
+    x1 = mdates.date2num(anchor + pd.Timedelta(seconds=max_end_offset))
+
+    n_rows = len(dates_sorted)
+    fig_h = max(7.0, 2.2 * n_rows + 1.2)
+    fig = plt.figure(figsize=(20, fig_h))
+    gs = fig.add_gridspec(
+        nrows=n_rows,
+        ncols=3,
+        width_ratios=[1.4, 6.6, 5.0],
+        hspace=0.24,
+        wspace=0.26,
+    )
+
+    for i, date in enumerate(dates_sorted):
+        day_df = df[df["date"].astype(str) == str(date)].copy()
+
+        ax_date = fig.add_subplot(gs[i, 0])
+        ax_date.axis("off")
+        date_txt = pd.to_datetime(date, format="%Y%m%d").strftime("%Y-%m-%d")
+        ax_date.text(
+            0.5,
+            0.70,
+            date_txt,
+            ha="center",
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+        )
+        info = {}
+        if group_info_by_date is not None:
+            info = group_info_by_date.get(str(date), {})
+        group1_txt = str(info.get("group1", "unknown"))
+        group2_txt = str(info.get("group2", "unknown"))
+        cam_txt = str(info.get("group1_camera_ids", "unknown"))
+        if '16' in cam_txt:
+            text_color = "#B00020"
+        else:
+            text_color = "#333333"
+        ax_date.text(
+            0.5,
+            0.22,
+            f"{group1_txt} | {group2_txt}\ncam: {cam_txt}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color=text_color,
+        )
+        if i == 0:
+            ax_date.set_title("Date", fontsize=12, fontweight="bold")
+
+        ax_eth = fig.add_subplot(gs[i, 1])
+        for label in LABEL_ORDER:
+            dfl = day_df[day_df["behavior_label"] == label]
+            if dfl.empty:
+                continue
+            starts = mdates.date2num(anchor + pd.to_timedelta(dfl["offset_start_sec"], unit="s"))
+            widths = (dfl["offset_end_sec"] - dfl["offset_start_sec"]).to_numpy(dtype=float) / 86400.0
+            ax_eth.bar(
+                starts,
+                np.ones(len(dfl)),
+                width=widths,
+                bottom=0.0,
+                align="edge",
+                color=LABEL_COLORS.get(label, "#9E9E9E"),
+                linewidth=0.2,
+            )
+        ax_eth.set_xlim(x0, x1)
+        ax_eth.set_ylim(0, 1.0)
+        ax_eth.set_yticks([])
+        ax_eth.xaxis_date()
+        ax_eth.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+        ax_eth.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        ax_eth.grid(axis="x", color="#E2E8F0", linewidth=0.8)
+        ax_eth.spines["top"].set_visible(False)
+        ax_eth.spines["right"].set_visible(False)
+        ax_eth.spines["left"].set_visible(False)
+        if i == 0:
+            ax_eth.set_title("Ethogram", fontsize=12, fontweight="bold")
+        legend_handles = [
+            Patch(facecolor=LABEL_COLORS[label], edgecolor="none", label=LABEL_DISPLAY[label])
+            for label in LABEL_ORDER
+        ]
+        ax_eth.legend(
+            handles=legend_handles,
+            ncol=1,
+            frameon=False,
+            loc="upper left",
+            bbox_to_anchor=(1.05, 1.0),
+            borderaxespad=0.0,
+            title="Behavior",
+        )
+        if i < (n_rows - 1):
+            ax_eth.tick_params(axis="x", labelbottom=False)
+
+        ax_pie = fig.add_subplot(gs[i, 2])
+        if day_df.empty:
+            ax_pie.text(0.5, 0.5, "No observations", ha="center", va="center", fontsize=10)
+            ax_pie.axis("off")
+        else:
+            budget = (
+                day_df.groupby("behavior_label", as_index=False)["duration_sec"]
+                .sum()
+                .sort_values("duration_sec", ascending=False)
+                .reset_index(drop=True)
+            )
+            values = (budget["duration_sec"].to_numpy(dtype=float) / 60.0)
+            pie_labels = [
+                f"{mins:.1f} min"
+                for lbl, mins in zip(budget["behavior_label"].tolist(), values.tolist())
+            ]
+            pie_legend = budget["behavior_label"].tolist()
+            pie_legend = [LABEL_DISPLAY.get(lbl, lbl) for lbl in pie_legend]
+            pie_colors = [
+                LABEL_COLORS.get(lbl, "#9E9E9E")
+                for lbl in budget["behavior_label"].tolist()
+            ]
+            wedges, _, _ = ax_pie.pie(
+                values,
+                labels=pie_labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                counterclock=False,
+                labeldistance=1.06,
+                pctdistance=0.72,
+                colors=pie_colors,
+                textprops={"fontsize": 8},
+            )
+            ax_pie.axis("equal")
+        if i == 0:
+            ax_pie.set_title("budget", fontsize=12, fontweight="bold")
+    fig.suptitle(title, y=0.995, fontsize=14, fontweight="bold")
+    fig.tight_layout(pad=0.35, rect=(0, 0, 1, 0.985))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+
+
 def _normalize_track_filename(track_filename: str) -> str:
     name = str(track_filename).strip()
     if name.endswith(".csv"):
@@ -1150,9 +1259,6 @@ def _load_bouts_for_date(
         walking_bin_distance_threshold=walking_bin_distance_threshold,
         movement_step_clip=movement_step_clip,
     )
-    
-    ## TODO - if the in
-    
     return split_bouts, diagnostics, merged, has_nonempty_source_csv
 
 
@@ -1341,11 +1447,257 @@ def _camera_id_to_int(value: object) -> int | None:
         return None
 
 
+def _filter_stereotypy_camera_points(points: pd.DataFrame) -> pd.DataFrame:
+    if points is None or points.empty or "camera_id" not in points.columns:
+        return points
+    cam_ids = points["camera_id"].map(_camera_id_to_int)
+    return points[cam_ids.isin(STEREOTYPY_CAMERA_IDS)].copy()
+
+
 def _get_camera_pairs(points: pd.DataFrame) -> pd.DataFrame:
     if points is None or points.empty or "camera_id" not in points.columns:
         return points
     cam_ids = points["camera_id"].map(_camera_id_to_int)
     return cam_ids
+
+
+def _stereotypy_metrics(
+    points: pd.DataFrame,
+    axis_xlim: tuple[float, float] | None = None,
+    axis_ylim: tuple[float, float] | None = None,
+) -> dict[str, float]:
+    """Compute scale-aware trajectory metrics used for stereotypy scoring."""
+    out = {
+        "n_points": 0.0,
+        "duration_sec": 0.0,
+        "coverage": 0.0,
+        "robust_coverage": 0.0,
+        "elongation": 0.0,
+        "revisit_ratio": 0.0,
+        "reversals": 0.0,
+        "reversal_density": 0.0,
+        "shuttle_transitions": 0.0,
+    }
+    if points is None or points.empty:
+        return out
+    out["n_points"] = float(len(points))
+    if len(points) < 3:
+        return out
+
+    p = points.copy()
+    if "timestamp" in p.columns:
+        p = p.sort_values("timestamp")
+        ts = pd.to_datetime(p["timestamp"], errors="coerce").dropna()
+        if not ts.empty:
+            out["duration_sec"] = float((ts.max() - ts.min()).total_seconds())
+    xy = p[["world_x", "world_y"]].to_numpy(dtype=float)
+    if xy.shape[0] < 3:
+        return out
+
+    x_span = float(np.max(xy[:, 0]) - np.min(xy[:, 0]))
+    y_span = float(np.max(xy[:, 1]) - np.min(xy[:, 1]))
+    bbox_diag = float(np.hypot(x_span, y_span))
+    centered = xy - xy.mean(axis=0, keepdims=True)
+    cov = np.cov(centered, rowvar=False)
+    eigvals = np.sort(np.linalg.eigvalsh(cov))
+    minor = max(float(eigvals[0]), 1e-6)
+    major = float(eigvals[1])
+    elongation = major / minor
+    out["elongation"] = float(elongation)
+
+    scale = np.sqrt(max(major, 1e-6))
+    bin_size = max(0.35, 0.20 * scale)
+    gx = np.floor((xy[:, 0] - xy[:, 0].min()) / bin_size).astype(int)
+    gy = np.floor((xy[:, 1] - xy[:, 1].min()) / bin_size).astype(int)
+    unique_cells = len(set(zip(gx.tolist(), gy.tolist())))
+    revisit_ratio = float(len(xy)) / float(max(unique_cells, 1))
+    out["revisit_ratio"] = float(revisit_ratio)
+
+    eigvecs = np.linalg.eigh(cov)[1]
+    principal = eigvecs[:, 1]
+    proj = centered @ principal
+    dproj = np.diff(proj)
+    signs = np.sign(dproj)
+    signs = signs[signs != 0]
+    reversals = int(np.sum(signs[1:] * signs[:-1] < 0)) if len(signs) >= 2 else 0
+    reversal_density = float(reversals) / float(max(len(signs) - 1, 1))
+    out["reversals"] = float(reversals)
+    out["reversal_density"] = float(reversal_density)
+
+    p_min = float(np.min(proj))
+    p_max = float(np.max(proj))
+    p_span = max(1e-6, p_max - p_min)
+    p_norm = (proj - p_min) / p_span
+    at_lo = p_norm <= 0.2
+    at_hi = p_norm >= 0.8
+    end_state = np.where(at_hi, 1, np.where(at_lo, -1, 0))
+    end_state = end_state[end_state != 0]
+    shuttle_transitions = int(np.sum(end_state[1:] * end_state[:-1] < 0)) if len(end_state) >= 2 else 0
+    out["shuttle_transitions"] = float(shuttle_transitions)
+
+    if axis_xlim is None or axis_ylim is None:
+        axis_diag = bbox_diag
+    else:
+        axis_dx = max(1e-6, float(axis_xlim[1]) - float(axis_xlim[0]))
+        axis_dy = max(1e-6, float(axis_ylim[1]) - float(axis_ylim[0]))
+        axis_diag = float(np.hypot(axis_dx, axis_dy))
+    coverage = float(bbox_diag) / float(max(axis_diag, 1e-6))
+    out["coverage"] = float(coverage)
+    qx = np.quantile(xy[:, 0], [0.05, 0.95])
+    qy = np.quantile(xy[:, 1], [0.05, 0.95])
+    robust_diag = float(np.hypot(float(qx[1] - qx[0]), float(qy[1] - qy[0])))
+    out["robust_coverage"] = float(robust_diag) / float(max(axis_diag, 1e-6))
+    return out
+
+
+def _apply_dynamic_stereotypy_flags(metrics_df: pd.DataFrame, is_cam_17_18: bool=False) -> pd.DataFrame:
+    """Recurrence-first detector for 10-min bins (single recurrence is sufficient)."""
+    if metrics_df.empty:
+        out = metrics_df.copy()
+        out["stereotypy_score"] = pd.Series(dtype=float)
+        out["is_stereotypy"] = pd.Series(dtype=bool)
+        out["gate_base"] = pd.Series(dtype=bool)
+        out["gate_short_guard"] = pd.Series(dtype=bool)
+        out["gate_override"] = pd.Series(dtype=bool)
+        return out
+
+    out = metrics_df.copy()
+    out["stereotypy_score"] = 0.0
+    out["is_stereotypy"] = False
+    out["gate_base"] = False
+    out["gate_short_guard"] = False
+    out["gate_override"] = False
+
+    m = out.copy()
+    m = m[m["behavior_label"].astype(str) == "walking"].copy()
+    # 10-min bins can have sparse points; keep them.
+    m = m[m["n_points"] >= 12].copy()
+    if m.empty:
+        return out
+
+    m["is_cam_17_18"] = is_cam_17_18
+
+    rank_cols = [
+        "coverage",
+        "robust_coverage",
+        "elongation",
+        "revisit_ratio",
+        "reversals",
+        "reversal_density",
+        "shuttle_transitions",
+    ]
+    for col in rank_cols:
+        m[f"{col}_rank"] = m[col].rank(method="average", pct=True)
+
+    # Keep score for diagnostics; flagging uses recurrence-first logic below.
+    m["stereotypy_score_raw"] = (
+        0.25 * m["revisit_ratio_rank"]
+        + 0.25 * m["shuttle_transitions_rank"]
+        + 0.18 * m["reversal_density_rank"]
+        + 0.14 * m["reversals_rank"]
+        + 0.10 * m["elongation_rank"]
+        + 0.08 * m["robust_coverage_rank"]
+    )
+    # Reduce score inflation for sparse windows while still allowing strong sparse patterns.
+    point_conf = ((m["n_points"] - 12.0) / 78.0).clip(lower=0.0, upper=1.0)
+    m["stereotypy_score"] = m["stereotypy_score_raw"] * (0.55 + 0.45 * point_conf)
+
+    score_cut = float(max(0.65, m["stereotypy_score"].quantile(0.75)))
+    revisit_cut = float(max(1.15, m["revisit_ratio"].quantile(0.40)))
+    reversal_den_cut = float(max(0.07, m["reversal_density"].quantile(0.35)))
+
+    # Cam17/18: stricter base thresholds to avoid false positives on incomplete trajectories.
+    cam_revisit_cut = float(max(revisit_cut, 3.0))
+    cam_reversal_den_cut = float(max(reversal_den_cut, 0.20))
+    cam_robust_cov_min = 0.45
+    cam_cov_min = 0.50
+    cam_min_duration = 15.0
+    cam_min_shuttle = 1.0
+
+    # Single recurrence accepted: one end-to-end transition with loop-like revisits.
+    base_rule = (
+        (m["stereotypy_score"] >= score_cut)
+        & (m["shuttle_transitions"] >= 1.0)
+        & (
+            (~m["is_cam_17_18"])
+            | (m["shuttle_transitions"] >= cam_min_shuttle)
+        )
+        & (
+            (~m["is_cam_17_18"] & (m["revisit_ratio"] >= revisit_cut))
+            | (m["is_cam_17_18"] & (m["revisit_ratio"] >= cam_revisit_cut))
+        )
+        & (
+            (~m["is_cam_17_18"] & ((m["reversals"] >= 2.0) | (m["reversal_density"] >= reversal_den_cut)))
+            | (m["is_cam_17_18"] & ((m["reversals"] >= 2.0) | (m["reversal_density"] >= cam_reversal_den_cut)))
+        )
+        & (
+            (~m["is_cam_17_18"] & (m["robust_coverage"] >= 0.045))
+            | (m["is_cam_17_18"] & (m["robust_coverage"] >= cam_robust_cov_min))
+        )
+        & (
+            (~m["is_cam_17_18"])
+            | (m["coverage"] >= cam_cov_min)
+        )
+        & (
+            (~m["is_cam_17_18"] | (m["duration_sec"] >= cam_min_duration))
+        )
+        & (m["elongation"] >= 1.15)
+    )
+    short_window = m["duration_sec"] <= np.where(m["is_cam_17_18"], 60.0, 70.0)
+    short_guard = (
+        (m["shuttle_transitions"] >= 2.0)
+        & (m["reversals"] >= 3.0)
+        & (m["robust_coverage"] >= np.where(m["is_cam_17_18"], 0.45, 0.065))
+        & (
+            (m["revisit_ratio"] >= float(max(1.20, revisit_cut)))
+            | (m["is_cam_17_18"] & (m["revisit_ratio"] >= max(3.0, cam_revisit_cut)))
+        )
+    )
+    strong_recurrence_override = (
+        (m["shuttle_transitions"] >= 2.0)
+        & (m["revisit_ratio"] >= 8.0)
+        & (m["reversals"] >= 80.0)
+        & (m["reversal_density"] >= 0.20)
+        & (m["robust_coverage"] >= 0.18)
+        & (m["duration_sec"] >= 70.0)
+    )
+    m["gate_base"] = base_rule
+    m["gate_short_guard"] = short_guard
+    m["gate_override"] = strong_recurrence_override
+    m["is_stereotypy"] = (base_rule & (~short_window | short_guard)) | strong_recurrence_override
+
+    # Prevent degenerate all/none labeling in very small samples.
+    if len(m) < 4:
+        m["is_stereotypy"] = (
+            (m["stereotypy_score"] >= 0.65)
+            & (m["shuttle_transitions"] >= 1)
+            & (m["revisit_ratio"] >= 1.15)
+            & ((m["reversals"] >= 2) | (m["reversal_density"] >= 0.07))
+            & (m["robust_coverage"] >= 0.05)
+            & (m["elongation"] >= 1.10)
+        )
+
+    out = out.merge(
+        m[["panel_key", "stereotypy_score", "is_stereotypy", "gate_base", "gate_short_guard", "gate_override"]],
+        on="panel_key",
+        how="left",
+        suffixes=("", "_new"),
+    )
+    out["stereotypy_score"] = out["stereotypy_score_new"].combine_first(out["stereotypy_score"]).fillna(0.0).infer_objects(copy=False)
+    out["is_stereotypy"] = out["is_stereotypy_new"].combine_first(out["is_stereotypy"]).fillna(False).infer_objects(copy=False)
+    out["gate_base"] = out["gate_base_new"].combine_first(out["gate_base"]).fillna(False).infer_objects(copy=False)
+    out["gate_short_guard"] = out["gate_short_guard_new"].combine_first(out["gate_short_guard"]).fillna(False).infer_objects(copy=False)
+    out["gate_override"] = out["gate_override_new"].combine_first(out["gate_override"]).fillna(False).infer_objects(copy=False)
+    out = out.drop(
+        columns=[
+            "stereotypy_score_new",
+            "is_stereotypy_new",
+            "gate_base_new",
+            "gate_short_guard_new",
+            "gate_override_new",
+        ]
+    )
+    return out
 
 
 def _timestamp_snaps_from_points(
@@ -1485,11 +1837,7 @@ def _plot_world_heatmap_by_behaviour(
             spine.set_color("white")
         ax.grid(False)
 
-        cbar = fig.colorbar(hb, ax=ax, pad=0.02, fraction=0.046)
-        cbar.set_label("Density (log scale)", color="white", rotation=270, labelpad=16)
-        cbar.ax.yaxis.set_tick_params(color="white")
-        cbar.outline.set_edgecolor("white")
-        plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
+        # No legend/colorbar for this plot.
 
     for j in range(n, len(axes_arr)):
         axes_arr[j].axis("off")
@@ -1500,6 +1848,451 @@ def _plot_world_heatmap_by_behaviour(
     fig.savefig(out_path, facecolor=fig.get_facecolor(), bbox_inches="tight")
     plt.close(fig)
 
+
+def _plot_world_time_ordered_trajectory(
+    df_traj: pd.DataFrame,
+    out_path: Path,
+    title: str,
+) -> None:
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"]).sort_values("timestamp")
+    if d.empty:
+        return
+
+    t = d["timestamp"]
+    dt = (t - t.min()).dt.total_seconds().to_numpy()
+    dt_range = max(float(dt.max()), 1e-9)
+    t_norm = dt / dt_range
+
+    x = d["world_x"].to_numpy(dtype=float)
+    y = d["world_y"].to_numpy(dtype=float)
+
+    breaks = np.zeros(len(x), dtype=bool)
+    if len(x) >= 2:
+        gaps = np.diff(dt)
+        jumps = np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+        breaks[1:] = (gaps > 10.0) | (jumps > 20.0)
+
+    fig = plt.figure(figsize=(10, 7), dpi=180, facecolor="black")
+    ax = fig.add_subplot(111, facecolor="black")
+
+    ax.hexbin(
+        x,
+        y,
+        gridsize=140,
+        bins="log",
+        cmap="Greys",
+        mincnt=1,
+        alpha=0.30,
+    )
+
+    sc = None
+    start = 0
+    for i in range(1, len(x) + 1):
+        if i == len(x) or breaks[i]:
+            xs = x[start:i]
+            ys = y[start:i]
+            ts = t_norm[start:i]
+            if len(xs) >= 2:
+                ax.plot(xs, ys, linewidth=2.0, alpha=0.9)
+            sc = ax.scatter(xs, ys, c=ts, s=10.0, cmap="turbo", alpha=0.95, linewidths=0)
+            start = i
+
+    ax.set_title("")
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(colors="white")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_color("white")
+
+    # No legend/colorbar for this plot.
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor(), bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_world_heatmap_standing_walking_by_hour(
+    df_traj: pd.DataFrame,
+    out_dir: Path,
+    label_root: Path | None,
+    title: str,
+    night_start: pd.Timestamp,
+    night_end: pd.Timestamp,
+    bin_hours: float,
+    behaviors: Iterable[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if bin_hours <= 0:
+        raise ValueError("bin_hours must be positive")
+
+    behaviors_to_show = _resolve_hourly_traj_behaviors(behaviors)
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"])
+    d = d[d["behavior_label"].isin(behaviors_to_show)]
+    d = d[(d["timestamp"] >= night_start) & (d["timestamp"] <= night_end)]
+    stereotypy_cols = ["start_timestamp", "end_timestamp", "date", "camera_ids", "real_camera_ids", "track_filenames", "stereotypy_score"]
+    debug_cols = [
+        "start_timestamp",
+        "end_timestamp",
+        "behavior_label",
+        "n_points",
+        "duration_sec",
+        "coverage",
+        "robust_coverage",
+        "elongation",
+        "revisit_ratio",
+        "reversals",
+        "reversal_density",
+        "shuttle_transitions",
+        "stereotypy_score",
+        "gate_base",
+        "gate_short_guard",
+        "gate_override",
+        "is_stereotypy",
+    ]
+    if d.empty:
+        return pd.DataFrame(columns=stereotypy_cols), pd.DataFrame(columns=debug_cols)
+
+    x_min, x_max = float(d["world_x"].min()), float(d["world_x"].max())
+    y_min, y_max = float(d["world_y"].min()), float(d["world_y"].max())
+    bg_info = _get_submap_background()
+    use_map_bg = False #bg_info is not None
+    if use_map_bg:
+        im_sub, t_sub_from_world2 = bg_info
+        sub_h, sub_w = int(im_sub.shape[0]), int(im_sub.shape[1])
+
+    def _interval_step(vmin: float, vmax: float) -> int:
+        span = max(0.0, float(vmax) - float(vmin))
+        if span <= 0.0:
+            return 5
+        step = int(round(span / 8.0))
+        return int(min(15, max(5, step)))
+
+    bin_delta = pd.Timedelta(hours=float(bin_hours))
+    time_edges = pd.date_range(start=night_start, end=night_end, freq=bin_delta)
+    if len(time_edges) == 0 or time_edges[-1] < night_end:
+        time_edges = time_edges.append(pd.DatetimeIndex([night_end]))
+    if len(time_edges) < 2:
+        time_edges = pd.DatetimeIndex([night_start, night_end])
+
+    n_bins = len(time_edges) - 1
+    cmap_for = _trajectory_behaviour_cmap_map()
+    out_root = label_root if label_root is not None else out_dir
+    valid_time_bins: list[tuple[pd.Timestamp, pd.Timestamp, pd.DataFrame]] = []
+    stereotypy_events: list[dict] = []
+    panel_rows: list[dict] = []
+    for r in range(n_bins):
+        b_start = time_edges[r]
+        b_end = time_edges[r + 1]
+        in_bin = (d["timestamp"] >= b_start) & (d["timestamp"] < b_end if r < (n_bins - 1) else d["timestamp"] <= b_end)
+        d_bin = d[in_bin]
+        if d_bin.empty:
+            continue
+        valid_time_bins.append((b_start, b_end, d_bin))
+
+        for beh in behaviors_to_show:
+            g = d_bin[d_bin["behavior_label"] == beh]
+            if g.empty:
+                continue
+
+            panel_key = f"{b_start.isoformat()}|{b_end.isoformat()}|{beh}"
+            g_for_stereotypy = g
+            ## compute metrics -- for cam16/19, cam17/18 differently
+            cam_ids = _get_camera_pairs(g_for_stereotypy)
+            cam_ids_list: list[int] = []
+            if cam_ids is not None:
+                cam_ids_list = sorted(pd.Series(cam_ids).dropna().astype(int).unique().tolist())
+            cam_ids_str = ",".join(str(cid) for cid in cam_ids_list)
+            axis_xlim_override = (x_min, x_max)
+            axis_ylim_override = (y_min, y_max)
+            is_cam_17_18=False
+            if cam_ids is not None and cam_ids.isin({17, 18}).any():
+                is_cam_17_18 = True
+                # Cam17/18 digit-8 patterns sit slightly down/right; use fixed axis for metrics.
+                axis_xlim_override = (-65.0, -50.0)
+                axis_ylim_override = (-60.0, -45.0)
+                in_bounds = (
+                    (g_for_stereotypy["world_x"] >= axis_xlim_override[0])
+                    & (g_for_stereotypy["world_x"] <= axis_xlim_override[1])
+                    & (g_for_stereotypy["world_y"] >= axis_ylim_override[0])
+                    & (g_for_stereotypy["world_y"] <= axis_ylim_override[1])
+                )
+                g_for_stereotypy = g_for_stereotypy[in_bounds].copy()
+            metrics = _stereotypy_metrics(
+                g_for_stereotypy,
+                axis_xlim=axis_xlim_override,
+                axis_ylim=axis_ylim_override,
+            )
+            panel_rows.append({
+                "panel_key": panel_key,
+                "b_start": b_start,
+                "b_end": b_end,
+                "behavior_label": str(beh),
+                "camera_ids": cam_ids_str,
+                "points": g.copy(),
+                "stereotypy_points": g_for_stereotypy.copy(),
+                **metrics,
+            })
+
+    if not panel_rows:
+        return pd.DataFrame(columns=stereotypy_cols), pd.DataFrame(columns=debug_cols)
+
+    metrics_df = pd.DataFrame(
+        [{k: v for k, v in row.items() if k not in {"points", "stereotypy_points"}} for row in panel_rows]
+    )
+    metrics_scored = _apply_dynamic_stereotypy_flags(metrics_df, is_cam_17_18=is_cam_17_18)
+    debug_df = metrics_scored.copy()
+    debug_df = debug_df.rename(columns={"b_start": "start_timestamp", "b_end": "end_timestamp"})
+    debug_df = debug_df[[
+        "start_timestamp",
+        "end_timestamp",
+        "behavior_label",
+        "camera_ids",
+        "n_points",
+        "duration_sec",
+        "coverage",
+        "robust_coverage",
+        "elongation",
+        "revisit_ratio",
+        "reversals",
+        "reversal_density",
+        "shuttle_transitions",
+        "stereotypy_score",
+        "gate_base",
+        "gate_short_guard",
+        "gate_override",
+        "is_stereotypy",
+    ]].copy()
+    flag_map = metrics_scored.set_index("panel_key")["is_stereotypy"].to_dict()
+    score_map = metrics_scored.set_index("panel_key")["stereotypy_score"].to_dict()
+
+    for row in panel_rows:
+        b_start = pd.Timestamp(row["b_start"])
+        b_end = pd.Timestamp(row["b_end"])
+        beh = str(row["behavior_label"])
+        g = row["points"]
+        g_for_stereotypy = row["stereotypy_points"]
+        panel_key = str(row["panel_key"])
+        is_stereotypy = bool(flag_map.get(panel_key, False))
+        stereo_score = float(score_map.get(panel_key, 0.0))
+        if is_stereotypy and beh == "walking":
+            snaps = _timestamp_snaps_from_points(
+                g_for_stereotypy,
+                gap_seconds=3.0,
+                min_duration_seconds=1.0,
+                merge_gap_seconds=60.0,
+            )
+            if not snaps:
+                snaps = [(pd.Timestamp(b_start), pd.Timestamp(b_end))]
+            for snap_start, snap_end in snaps:
+                g_snap = g_for_stereotypy[
+                    (g_for_stereotypy["timestamp"] >= snap_start) & (g_for_stereotypy["timestamp"] <= snap_end)
+                ].copy()
+                cam_ids: list[str] = []
+                if "camera_id" in g_snap.columns:
+                    cam_ids = sorted(pd.Series(g_snap["camera_id"]).dropna().astype(str).unique().tolist())
+                track_tags: list[str] = []
+                if "track_filename" in g_snap.columns and "camera_id" in g_snap.columns:
+                    track_pairs = (
+                        g_snap[["track_filename", "camera_id"]]
+                        .dropna()
+                        .astype(str)
+                        .drop_duplicates()
+                    )
+                    track_tags = sorted(
+                        f"{row1['track_filename']}_{row1['camera_id']}"
+                        for _, row1 in track_pairs.iterrows()
+                    )
+                stereotypy_events.append({
+                    "start_timestamp": pd.Timestamp(snap_start),
+                    "end_timestamp": pd.Timestamp(snap_end),
+                    "date": pd.Timestamp(snap_start).strftime("%Y%m%d"),
+                    "camera_ids": ",".join(cam_ids),
+                    "real_camera_ids": ",".join(cam_ids),
+                    "track_filenames": ",".join(track_tags),
+                    "stereotypy_score": round(stereo_score, 4),
+                })
+
+        # Save one PNG per behavior per hour only when there are valid points.
+        time_label = f"{b_start:%H:%M}-{b_end:%H:%M}"
+        label_dir = out_root / ("is_strotypy" if is_stereotypy else "not_strotypy")
+        label_dir.mkdir(parents=True, exist_ok=True)
+        slot_png = label_dir / f"{title}_{beh}_{b_start:%Y%m%d_%H%M%S}_{b_end:%Y%m%d_%H%M%S}.png"
+        fig_single, ax_single = plt.subplots(figsize=(6, 6), dpi=180, facecolor="black")
+        ax_single.set_facecolor("black")
+        if use_map_bg:
+            xs, ys = _world_to_submap_xy(
+                g["world_x"].to_numpy(dtype=float),
+                g["world_y"].to_numpy(dtype=float),
+                t_sub_from_world2,
+                sub_w,
+                sub_h,
+            )
+            if len(xs) == 0:
+                plt.close(fig_single)
+                continue
+            ax_single.imshow(im_sub, zorder=0)
+            hb_single = ax_single.hexbin(
+                xs,
+                ys,
+                gridsize=120,
+                bins="log",
+                cmap=cmap_for.get(beh, "Greys"),
+                mincnt=1,
+                alpha=0.78,
+                zorder=1,
+            )
+            ax_single.set_xlim(0, sub_w)
+            ax_single.set_ylim(sub_h, 0)
+            ax_single.xaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+            ax_single.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+        else:
+            hb_single = ax_single.hexbin(
+                g["world_x"].to_numpy(),
+                g["world_y"].to_numpy(),
+                gridsize=120,
+                bins="log",
+                cmap=cmap_for.get(beh, "Greys"),
+                mincnt=1,
+                alpha=0.90,
+            )
+            ax_single.set_xlim(x_min, x_max)
+            ax_single.set_ylim(y_min, y_max)
+        ax_single.set_aspect("equal", adjustable="box")
+        if use_map_bg:
+            ax_single.xaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+            ax_single.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+        else:
+            ax_single.xaxis.set_major_locator(MultipleLocator(_interval_step(x_min, x_max)))
+            ax_single.yaxis.set_major_locator(MultipleLocator(_interval_step(y_min, y_max)))
+        ax_single.set_title("")
+        # if is_stereotypy:
+        #     ax_single.text(
+        #         0.98,
+        #         1.01,
+        #         f"stereotypy ({stereo_score:.2f})",
+        #         color="#FF2624",
+        #         fontsize=10,
+        #         fontweight="bold",
+        #         ha="right",
+        #         va="bottom",
+        #         transform=ax_single.transAxes,
+        #     )
+        ax_single.set_xlabel("")
+        ax_single.set_ylabel("")
+        ax_single.tick_params(colors="white")
+        ax_single.set_xticks([])
+        ax_single.set_yticks([])
+        for spine in ax_single.spines.values():
+            spine.set_color("white")
+        ax_single.grid(False)
+        # No legend/colorbar for this plot.
+        fig_single.tight_layout()
+        fig_single.savefig(slot_png, facecolor=fig_single.get_facecolor(), bbox_inches="tight")
+        plt.close(fig_single)
+
+    if not valid_time_bins:
+        return pd.DataFrame(columns=stereotypy_cols), debug_df
+
+    # ncols = max(1, len(behaviors_to_show))
+    # nrows = len(valid_time_bins)
+    # panel_w = 5.2
+    # panel_h = 4.6
+    # dpi = 180
+    # fig_w = max(11.0, panel_w * ncols)
+    # # Keep each saved image well under Agg's per-dimension pixel limit.
+    # max_rows_per_page = max(1, int(np.floor(65000.0 / (panel_h * dpi))))
+    # page_ranges: list[tuple[int, int]] = []
+    # for page_start in range(0, nrows, max_rows_per_page):
+    #     page_end = min(nrows, page_start + max_rows_per_page)
+    #     page_ranges.append((page_start, page_end))
+
+    # out_path.parent.mkdir(parents=True, exist_ok=True)
+    # multi_page = len(page_ranges) > 1
+    # for page_idx, (row_start, row_end) in enumerate(page_ranges, start=1):
+    #     page_bins = valid_time_bins[row_start:row_end]
+    #     page_rows = len(page_bins)
+    #     fig_h = max(5.0, panel_h * page_rows)
+    #     fig, axes = plt.subplots(
+    #         nrows=page_rows,
+    #         ncols=ncols,
+    #         figsize=(fig_w, fig_h),
+    #         dpi=dpi,
+    #         facecolor="black",
+    #         gridspec_kw={"wspace": 0.28, "hspace": 0.36},
+    #     )
+    #     axes_arr = np.array(axes, dtype=object).reshape(page_rows, ncols)
+
+    #     for r, (b_start, b_end, d_bin) in enumerate(page_bins):
+    #         time_label = f"{b_start:%H:%M}-{b_end:%H:%M}"
+    #         for c, beh in enumerate(behaviors_to_show):
+    #             ax = axes_arr[r, c]
+    #             ax.set_facecolor("black")
+    #             g = d_bin[d_bin["behavior_label"] == beh]
+    #             if g.empty:
+    #                 ax.axis("off")
+    #                 continue
+
+    #             ax.set_xlim(x_min, x_max)
+    #             ax.set_ylim(y_min, y_max)
+    #             ax.set_aspect("equal", adjustable="box")
+    #             ax.xaxis.set_major_locator(MultipleLocator(_interval_step(x_min, x_max)))
+    #             ax.yaxis.set_major_locator(MultipleLocator(_interval_step(y_min, y_max)))
+    #             ax.set_xlabel("world_x", color="white")
+    #             ax.set_ylabel("world_y", color="white")
+    #             ax.tick_params(colors="white")
+    #             for spine in ax.spines.values():
+    #                 spine.set_color("white")
+    #             ax.grid(False)
+    #             ax.set_title(f"{LABEL_DISPLAY.get(beh, beh)} | {time_label}", color="white", fontsize=9)
+    #             if bool(stereotypy_flags_by_panel.get((b_start, b_end, str(beh)), False)):
+    #                 ax.text(
+    #                     0.98,
+    #                     1.01,
+    #                     "stereotypy",
+    #                     color="#FF2624",
+    #                     fontsize=9,
+    #                     fontweight="bold",
+    #                     ha="right",
+    #                     va="bottom",
+    #                     transform=ax.transAxes,
+    #                 )
+
+    #             hb = ax.hexbin(
+    #                 g["world_x"].to_numpy(),
+    #                 g["world_y"].to_numpy(),
+    #                 gridsize=120,
+    #                 bins="log",
+    #                 cmap=cmap_for.get(beh, "Greys"),
+    #                 mincnt=1,
+    #                 alpha=0.90,
+    #             )
+    #             cbar = fig.colorbar(hb, ax=ax, pad=0.01, fraction=0.040)
+    #             cbar.ax.yaxis.set_tick_params(color="white")
+    #             cbar.outline.set_edgecolor("white")
+    #             plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
+
+    #     page_title = title if not multi_page else f"{title} (page {page_idx}/{len(page_ranges)})"
+    #     fig.suptitle(page_title, color="white", y=0.985, fontsize=16)
+    #     fig.subplots_adjust(top=0.965, bottom=0.04, left=0.05, right=0.98)
+    #     if page_idx == 1:
+    #         page_out = out_path
+    #     else:
+    #         page_out = out_path.with_name(f"{out_path.stem}_p{page_idx:02d}{out_path.suffix}")
+    #     fig.savefig(page_out, facecolor=fig.get_facecolor())
+    #     plt.close(fig)
+    if not stereotypy_events:
+        return pd.DataFrame(columns=stereotypy_cols), debug_df
+    out_flags = pd.DataFrame(stereotypy_events)
+    out_flags = out_flags.drop_duplicates(
+        subset=["start_timestamp", "end_timestamp", "date", "camera_ids", "real_camera_ids", "track_filenames"]
+    )
+    out_flags = out_flags.sort_values(["start_timestamp", "end_timestamp"]).reset_index(drop=True)
+    return out_flags, debug_df
 
 
 def _plot_trajectory_heatmaps_for_date(
@@ -1512,6 +2305,7 @@ def _plot_trajectory_heatmaps_for_date(
     night_end: pd.Timestamp,
     bin_hours: float,
     traj_hourly_behaviors: Iterable[str] | None = None,
+    label_root: Path | None = None,
 ) -> tuple[Path, Path, pd.DataFrame, pd.DataFrame] | None:
     df_traj = _build_identity_trajectory_points(source_bouts, refined_bouts)
     if df_traj.empty:
@@ -1524,7 +2318,20 @@ def _plot_trajectory_heatmaps_for_date(
         out_path=heat_path,
         title=heat_path.name.replace(".png", ""),
     )
+    # _plot_world_time_ordered_trajectory(
+    #     df_traj=df_traj,
+    #     out_path=traj_heat_path,
+    #     title=traj_heat_path.name.replace(".png", ""),
+    # )
     
+    # if "camera_id" in df_traj.columns:
+    #     cam_ids = df_traj["camera_id"].map(_camera_id_to_int).dropna().astype(int)
+    #     camera_ids = sorted(cam_ids.unique().tolist())
+    # else:
+    #     camera_ids = []
+    # if 17 in camera_ids or 18 in camera_ids:
+    #     bin_hours = 1 / 15
+
     stereotypy_flags, stereotypy_debug = _plot_world_heatmap_standing_walking_bin(
         df_traj=df_traj,
         out_dir=out_dir / "trajs",
@@ -1667,7 +2474,7 @@ def _ensure_and_load_gt_segments(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate per-date ethogram CSV with exact behavior start/end timestamps")
+    parser = argparse.ArgumentParser(description="Compute activity budget per night from bout summary CSVs")
     parser.add_argument(
         "--record_root",
         type=str,
@@ -1687,21 +2494,27 @@ def parse_args() -> argparse.Namespace:
         help="Optional direct path to one night_bout_summary directory. Overrides --record_root for single-root runs.",
     )
     parser.add_argument(
-        "--date",
-        required=True,
-        help="Date to process, e.g. 2026-02-05 or 20260205.",
+        "--dates",
+        nargs="+",
+        help="Dates to process, e.g. 2026-02-04 2026-02-05. If omitted, process all available dates.",
     )
     parser.add_argument(
         "--out_root",
         type=str,
-        default="/media/mu/zoo_vision/post_processing/analysis/activity_budgets-perday",
-        help="Output root directory for generated CSVs.",
+        default="/media/ElephantsWD/elephants/activity_budgets-map",
+        help="Output root directory for activity budget CSVs and plots",
     )
     parser.add_argument(
         "--individual_group",
         type=str,
         default="Thai",
         help="Optional keyword to filter bout summary CSV files. Default is 'Thai'.",
+    )
+    parser.add_argument(
+        "--bin_minutes",
+        type=int,
+        default=10,
+        help="Bin size in minutes for the ethogram-style stacked bar plot.",
     )
     parser.add_argument(
         "--standing_merge_gap_sec",
@@ -1730,7 +2543,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bin_hours",
         type=float,
-        default=1/30,  ## digit-8 patterns: 2-min 
+        default=1/30,  ## digit-8 patterns: 2-min (cam016/019 ) or 4-min (cam017/018) bins work well; 
         help="Hour bin size for standing/walking trajectory heatmaps across the night.",
     )
     parser.add_argument(
@@ -1740,17 +2553,34 @@ def parse_args() -> argparse.Namespace:
         help="Behaviors to include in hourly trajectory heatmaps (default: standing walking).",
     )
     parser.add_argument(
-        "--plotting",
+        "--gt_root",
+        type=str,
+        default="/media/mu/zoo_vision/data/GT_id_behavior/behavior_GTs",
+        help="Root directory for GT CSV files. Files are read/written under <gt_root>/<individual_group>/.",
+    )
+    parser.add_argument(
+        "--extract_video",
         action="store_true",
-        help="If set, save ethogram and trajectory plots.",
+        help="If set, export stereotypy event videos under <out_root>/videos from merged stereotypy CSV.",
     )
     return parser.parse_args()
 
 
-def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None:
+def run_analysis(args: argparse.Namespace) -> None:
     out_root = Path(args.out_root)
-    if plotting is None:
-        plotting = bool(getattr(args, "plotting", False))
+    merged_stereotypy_csv = out_root / f"{args.individual_group}_stereotypy_flags_all_nights.csv"
+    if args.extract_video and merged_stereotypy_csv.exists():
+        manifest_csv = export_stereotypy_event_videos_from_csv(
+            stereotypy_csv=merged_stereotypy_csv,
+            out_root=out_root,
+            individual_group=args.individual_group,
+        )
+        if manifest_csv is not None:
+            print(f"Saved: {manifest_csv}")
+        else:
+            print(f"No videos exported from: {merged_stereotypy_csv}")
+        return
+
     record_roots = _resolve_record_roots(args)
     source_configs = _build_source_configs(record_roots, args.output_dir)
 
@@ -1758,77 +2588,131 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
         if not output_dir.exists():
             raise FileNotFoundError(f"Output directory not found: {output_dir}")
 
-    date = normalize_date(args.date)
+    if args.dates:
+        dates = [normalize_date(d) for d in args.dates]
+    else:
+        all_dates = set()
+        for output_dir, _ in source_configs:
+            all_dates.update(get_available_dates(output_dir))
+        dates = sorted(all_dates)
+    if not dates:
+        raise FileNotFoundError("No date folders found in the selected input roots")
+
     filename_keyword = args.individual_group if args.individual_group else None
-    csv_sources: list[tuple[Path, Path]] = []
-    other_groups: list[str] = []
-    group1_candidates: list[str] = []
-    cam_ids_from_bouts: set[int] = set()
+    gt_dir = Path(args.gt_root) / args.individual_group
+
+    by_date: dict[str, list[tuple[Path, Path]]] = {}
+    by_date_other_groups: dict[str, set[str]] = {}
+    by_date_group1: dict[str, set[str]] = {}
+    by_date_camera_ids: dict[str, set[int]] = {}
     for output_dir, track_dir in source_configs:
         bouts = get_bout_csvs(
             output_dir=output_dir,
-            dates=[date],
+            dates=dates,
             filename_keyword=filename_keyword,
             strict=False,
         )
-        for _, csv_path, group1, other_group, camera_ids_txt in bouts:
-            csv_sources.append((csv_path, track_dir))
-            if str(group1).strip() and str(group1).strip().lower() != "unknown":
-                group1_candidates.append(str(group1).strip())
-            if str(other_group).strip() and str(other_group).strip().lower() != "unknown":
-                other_groups.append(str(other_group).strip())
+        for date, csv_path, group1, other_group, camera_ids_txt in bouts:
+            by_date.setdefault(date, []).append((csv_path, track_dir))
+            grp1 = str(group1).strip()
+            if grp1 and grp1.lower() != "unknown":
+                by_date_group1.setdefault(date, set()).add(grp1)
+            grp = str(other_group).strip()
+            if grp and grp.lower() != "unknown":
+                by_date_other_groups.setdefault(date, set()).add(grp)
             if str(camera_ids_txt).strip():
                 for token in str(camera_ids_txt).split(","):
                     token = token.strip()
                     if token.isdigit():
-                        cam_ids_from_bouts.add(int(token))
+                        by_date_camera_ids.setdefault(date, set()).add(int(token))
 
-    if not csv_sources:
-        raise FileNotFoundError(f"No bout summary CSV files found for date={date}")
+    if not by_date:
+        raise FileNotFoundError("No bout summary CSV files found for selected roots/dates")
 
-    output_stem = _per_date_output_stem(csv_sources, args.individual_group)
-    group1_title = ", ".join(sorted(set(group1_candidates))) if group1_candidates else str(args.individual_group)
-    other_group_title = ", ".join(sorted(set(other_groups))) if other_groups else "unknown"
-    bouts, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
-        csv_sources=csv_sources,
-        individual_label=args.individual_group,
-        standing_merge_gap_sec=args.standing_merge_gap_sec,
-        walking_bin_minutes=args.walking_bin_minutes,
-        walking_bin_distance_threshold=args.walking_bin_distance_threshold,
-        movement_step_clip=args.movement_step_clip,
-    )
-    if not has_nonempty_source_csv:
-        raise ValueError(f"All source CSVs for date={date} are empty.")
+    all_night_segments: list[pd.DataFrame] = []
+    all_night_gt_segments: list[pd.DataFrame] = []
+    all_budgets: list[pd.DataFrame] = []
+    all_stereotypy_flags: list[pd.DataFrame] = []
+    group_info_by_date: dict[str, dict[str, str]] = {}
 
-    max_ts = None
-    if not bouts.empty:
-        max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
-    night_start, night_end = _night_window(date, max_ts)
-    labels = _build_timeline_labels(bouts, night_start, night_end)
+    for date, csv_sources in sorted(by_date.items()):
+        ### no 2025-0501, 2025-10-15 - wrong timestamp
+        if date in ("20250501", "20251015", "20251030"):
+            print(f"Skipping date {date} due to known timestamp issues in source CSVs.")
+            continue
+        # ## DEBUG
+        # if date not in ("20260204", "20260205"):
+        #     continue
+        
 
-    out_dir = out_root / date
-    out_csv_dir = out_dir / "csvs"
-    out_csv_dir.mkdir(parents=True, exist_ok=True)
-    out_fig_dir = out_dir / "figures"
-    out_fig_dir.mkdir(parents=True, exist_ok=True)
+        output_stem = _per_date_output_stem(csv_sources, args.individual_group)
+        group1_title = ", ".join(sorted(by_date_group1.get(date, set()))) or str(args.individual_group)
+        other_group_title = ", ".join(sorted(by_date_other_groups.get(date, set()))) or "unknown"
+        gt_stem = _remove_date_suffix(output_stem, date)
+        bouts, standing_diag, source_bouts, has_nonempty_source_csv = _load_bouts_for_date(
+            csv_sources=csv_sources,
+            individual_label=args.individual_group,
+            standing_merge_gap_sec=args.standing_merge_gap_sec,
+            walking_bin_minutes=args.walking_bin_minutes,
+            walking_bin_distance_threshold=args.walking_bin_distance_threshold,
+            movement_step_clip=args.movement_step_clip,
+        )
+        if not has_nonempty_source_csv:
+            print(f"Skipped date {date}: all bout summary CSVs are empty; no analysis outputs created.")
+            continue
+        max_ts = None
+        if not bouts.empty:
+            max_ts = max(bouts["end_time"].max(), bouts["start_time"].max())
 
-    final_stereotypy_windows = pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
-    cam_ids = sorted(set(cam_ids_from_bouts))
-    group_info_csv = out_csv_dir / "group_info.csv"
-    pd.DataFrame(
-        [
-            {
-                "date": str(date),
-                "group1": str(group1_title),
-                "group2": str(other_group_title),
-                "camera_ids": ",".join(str(int(c)) for c in sorted(set(cam_ids))),
-            }
-        ]
-    ).to_csv(group_info_csv, index=False)
-    print(f"Saved: {group_info_csv}")
-    can_run_stereotypy = args.individual_group == "Thai"
-    traj_paths = None
-    if plotting:
+        night_start, night_end = _night_window(date, max_ts)
+        gt_csv = gt_dir / f"{gt_stem}_{date}.csv"
+        gt_segments, gt_created = _ensure_and_load_gt_segments(
+            gt_csv=gt_csv,
+            date=date,
+            individual_label=args.individual_group,
+            night_start=night_start,
+            night_end=night_end,
+        )
+        if not gt_segments.empty:
+            gt_segments_plot = gt_segments.copy()
+            gt_segments_plot["date"] = date
+            gt_segments_plot["offset_start_sec"] = (gt_segments_plot["start_time"] - night_start).dt.total_seconds()
+            gt_segments_plot["offset_end_sec"] = (gt_segments_plot["end_time"] - night_start).dt.total_seconds()
+            all_night_gt_segments.append(gt_segments_plot)
+        cam_ids = sorted(by_date_camera_ids.get(date, set()))
+        labels = _build_timeline_labels(bouts, night_start, night_end)
+
+        out_dir = out_root / date
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_csv_dir = out_dir / "csvs"
+        out_csv_dir.mkdir(parents=True, exist_ok=True)
+        out_fig_dir = out_dir / "figures"
+        out_fig_dir.mkdir(parents=True, exist_ok=True)
+
+        final_stereotypy_windows = pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
+        group_info_csv = out_csv_dir / "group_info.csv"
+        pd.DataFrame(
+            [
+                {
+                    "date": str(date),
+                    "group1": str(group1_title),
+                    "group2": str(other_group_title),
+                    "group1_camera_ids": ",".join(str(int(c)) for c in sorted(set(cam_ids))),
+                }
+            ]
+        ).to_csv(group_info_csv, index=False)
+        group_info_by_date[str(date)] = {
+            "group1": str(group1_title),
+            "group2": str(other_group_title),
+            "group1_camera_ids": ",".join(str(int(c)) for c in sorted(set(cam_ids))),
+        }
+        print(f"Saved: {group_info_csv}")
+
+        plot_path = None
+
+        ethogram_path = out_fig_dir / f"{output_stem}_activity_ethogram_{args.bin_minutes}min.png"
+        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        
         traj_paths = _plot_trajectory_heatmaps_for_date(
             source_bouts=source_bouts,
             refined_bouts=bouts,
@@ -1839,94 +2723,191 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
             night_end=night_end,
             bin_hours=args.bin_hours,
             traj_hourly_behaviors=args.traj_hourly_behaviors,
+            label_root=out_root,
         )
         if traj_paths is not None:
             print(f"Saved: {traj_paths[0]}")
-
-    if can_run_stereotypy:
-        if traj_paths is not None:
+            # print(f"Saved: {traj_paths[1]}")
             stereotypy_flags = traj_paths[2]
             stereotypy_debug = traj_paths[3]
-        else:
-            df_traj = _build_identity_trajectory_points(source_bouts, bouts)
-            stereotypy_flags, stereotypy_debug = _plot_world_heatmap_standing_walking_bin(
-                df_traj=df_traj,
-                out_dir=out_csv_dir,
-                title=output_stem,
-                night_start=night_start,
-                night_end=night_end,
-                bin_hours=args.bin_hours,
-                behaviors=args.traj_hourly_behaviors,
-            )
-        if not stereotypy_debug.empty:
-            stereotypy_debug, final_stereotypy_windows = _finalize_stereotypy_from_debug(
-                stereotypy_debug,
-                min_consecutive_bins=2,   ## observed from raw-video, so if >4min of walking in digit-8 pattern, it's stereotypy
-            )
-            debug_csv = out_csv_dir / f"{output_stem}_stereotypy_debug.csv"
-            stereotypy_debug.to_csv(debug_csv, index=False)
-            print(f"Saved: {debug_csv}")
-        if not final_stereotypy_windows.empty:
-            final_windows_csv = out_csv_dir / f"{output_stem}_stereotypy_final_windows.csv"
-            final_stereotypy_windows.to_csv(final_windows_csv, index=False)
-            print(f"Saved: {final_windows_csv}")
-            labels = _apply_stereotypy_windows_to_labels(
-                labels=labels,
-                start=night_start,
-                end=night_end,
-                df_stereotypy_windows=final_stereotypy_windows,
-            )
-            for _, row in final_stereotypy_windows.iterrows():
-                print(f"stereotypy: {row['start_time']} -> {row['end_time']}")
-        if not stereotypy_flags.empty:
-            stereotypy_csv = out_csv_dir / f"{output_stem}_stereotypy_flags.csv"
-            stereotypy_flags.to_csv(stereotypy_csv, index=False)
-            print(f"Saved: {stereotypy_csv}")
-    else:
-        print(
-            "Skipping stereotypy detection: supported only for individual_group='Thai' "
-        )
+            if not stereotypy_debug.empty:
+                stereotypy_debug, final_stereotypy_windows = _finalize_stereotypy_from_debug(
+                    stereotypy_debug,
+                    min_consecutive_bins=2,
+                )
+                debug_csv = out_csv_dir / f"{output_stem}_stereotypy_debug.csv"
+                stereotypy_debug.to_csv(debug_csv, index=False)
+                print(f"Saved: {debug_csv}")
+                if not final_stereotypy_windows.empty:
+                    final_windows_csv = out_csv_dir / f"{output_stem}_stereotypy_final_windows.csv"
+                    final_stereotypy_windows.to_csv(final_windows_csv, index=False)
+                    print(f"Saved: {final_windows_csv}")
+                    labels = _apply_stereotypy_windows_to_labels(
+                        labels=labels,
+                        start=night_start,
+                        end=night_end,
+                        df_stereotypy_windows=final_stereotypy_windows,
+                    )
+                    if not stereotypy_flags.empty:
+                        sf = stereotypy_flags.copy()
+                        sf["start_timestamp"] = pd.to_datetime(sf["start_timestamp"], errors="coerce")
+                        sf["end_timestamp"] = pd.to_datetime(sf["end_timestamp"], errors="coerce")
+                        keep_mask = np.zeros(len(sf), dtype=bool)
+                        for i, row in sf.iterrows():
+                            s = row["start_timestamp"]
+                            e = row["end_timestamp"]
+                            if pd.isna(s) or pd.isna(e):
+                                continue
+                            overlaps = (
+                                (final_stereotypy_windows["start_time"] < e)
+                                & (final_stereotypy_windows["end_time"] > s)
+                            )
+                            keep_mask[i] = bool(overlaps.any())
+                        stereotypy_flags = sf[keep_mask].copy()
+                else:
+                    stereotypy_flags = pd.DataFrame(columns=stereotypy_flags.columns if not stereotypy_flags.empty else [])
+            if not stereotypy_flags.empty:
+                stereotypy_csv = out_csv_dir / f"{output_stem}_stereotypy_flags.csv"
+                stereotypy_flags.to_csv(stereotypy_csv, index=False)
+                print(f"Saved: {stereotypy_csv}")
+                flags_all = stereotypy_flags.copy()
+                flags_all["individual"] = args.individual_group
+                all_stereotypy_flags.append(flags_all)
+        
+        
+        budget = _summarize_labels(labels)
+        budget["duration_min"] = budget["duration_sec"] / 60.0
+        budget["duration_hr"] = budget["duration_sec"] / 3600.0
+        budget["percent"] = budget["duration_sec"] / budget["duration_sec"].sum() * 100.0
+        budget["night_start"] = night_start
+        budget["night_end"] = night_end
+        budget["date"] = date
+        all_budgets.append(budget)
 
-    segments = _labels_to_segments(labels, night_start)
-    ethogram_csv = out_csv_dir / f"{output_stem}_ethogram.csv"
-    ethogram = save_ethogram_csv(
-        identity_id=args.individual_group,
-        segments=segments,
-        out_csv=ethogram_csv,
-    )
-    print(f"Saved: {ethogram_csv}")
-    pie_plot = out_fig_dir / f"{output_stem}_activity_budget_pie.png"
-    budget_from_ethogram = analyze_ethogram_and_plot_activity_budget(
-        ethogram_csv=ethogram_csv,
-        out_plot=pie_plot,
-        date=date,
-        camera_ids=cam_ids,
-        other_group=other_group_title,
-        label_display_map=LABEL_DISPLAY,
-        label_color_map=LABEL_COLORS,
-    )
-    print(f"Saved: {pie_plot}")
-    pie_budget_csv = out_csv_dir / f"{output_stem}_activity_budget_from_ethogram.csv"
-    budget_from_ethogram.to_csv(pie_budget_csv, index=False)
-    print(f"Saved: {pie_budget_csv}")
-    if plotting:
-        ethogram_plot = out_fig_dir / f"{output_stem}_ethogram.png"
-        ethogram_title = f"{output_stem} Activity Ethogram {date} ({night_start:%H:%M}–{night_end:%H:%M})"
+        save_csvs = True ### TODO
+        if save_csvs:
+            out_csv = out_csv_dir / f"{output_stem}_activity_budget.csv"
+            budget.to_csv(out_csv, index=False)
+
+            timeline = _aggregate_timeline(labels, night_start, args.bin_minutes)
+            timeline["date"] = date
+            timeline_csv = out_csv_dir / f"{output_stem}_activity_timeline_{args.bin_minutes}min.csv"
+            timeline.to_csv(timeline_csv, index=False)
+            standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
+            standing_diag.to_csv(standing_diag_csv, index=False)
+
+            print(f"Saved: {out_csv}")
+            print(f"Saved: {timeline_csv}")
+            print(f"Saved: {standing_diag_csv}")
+
+        segments = _labels_to_segments(labels, night_start)
+        ethogram_csv = out_csv_dir / f"{output_stem}_ethogram.csv"
+        save_ethogram_csv(
+            identity_id=args.individual_group,
+            segments=segments,
+            out_csv=ethogram_csv,
+        )
+        print(f"Saved: {ethogram_csv}")
+        pie_plot = out_fig_dir / f"{output_stem}_activity_budget_pie.png"
+        budget_from_ethogram = analyze_ethogram_and_plot_activity_budget(
+            ethogram_csv=ethogram_csv,
+            out_plot=pie_plot,
+            date=date,
+            camera_ids=cam_ids,
+            other_group=other_group_title,
+            label_display_map=LABEL_DISPLAY,
+            label_color_map=LABEL_COLORS,
+        )
+        print(f"Saved: {pie_plot}")
+        pie_budget_csv = out_csv_dir / f"{output_stem}_activity_budget_from_ethogram.csv"
+        budget_from_ethogram.to_csv(pie_budget_csv, index=False)
+        print(f"Saved: {pie_budget_csv}")
+        segments["date"] = date
+        segments["offset_start_sec"] = (segments["start_time"] - night_start).dt.total_seconds()
+        segments["offset_end_sec"] = (segments["end_time"] - night_start).dt.total_seconds()
+        # Keep y-axis dates in the all-night plot only for nights with actual bouts.
+        if not bouts.empty:
+            all_night_segments.append(segments)
         _plot_activity_timeline(
             segments,
-            ethogram_plot,
+            ethogram_path,
             ethogram_title,
-            df_gt_segments=None,
+            df_gt_segments=gt_segments,
             df_stereotypy_segments=final_stereotypy_windows,
         )
-        print(f"Saved: {ethogram_plot}")
+        print(f"Saved: {ethogram_path}")
+        if gt_created:
+            print(f"Created empty GT template: {gt_csv}")
 
-    standing_diag_csv = out_csv_dir / f"{output_stem}_standing_walking_diagnostics.csv"
-    standing_diag.to_csv(standing_diag_csv, index=False)
-    print(f"Saved: {standing_diag_csv}")
+    if all_night_segments or all_night_gt_segments:
+        all_segments = pd.concat(all_night_segments, ignore_index=True) if all_night_segments else pd.DataFrame()
+        if not all_segments.empty:
+            all_segments_csv = out_root / f"{args.individual_group}_activity_segments_all_nights.csv"
+            all_segments.to_csv(all_segments_csv, index=False)
+            print(f"Saved: {all_segments_csv}")
 
-    for _, row in ethogram[ethogram["label"].isin(["walking", "stereotypy"])].iterrows():
-        print(f"{row['label']}: {row['start_dt']} -> {row['end_dt']}")
+            budget_wide = (
+                all_segments
+                .groupby(["date", "behavior_label"], as_index=False)["duration_sec"]
+                .sum()
+                .pivot(index="date", columns="behavior_label", values="duration_sec")
+                .fillna(0.0)
+            )
+            for label in LABEL_ORDER:
+                if label not in budget_wide.columns:
+                    budget_wide[label] = 0.0
+            budget_wide = budget_wide.reset_index()
+            for label in LABEL_ORDER:
+                budget_wide.rename(columns={label: f"{label}_duration_sec"}, inplace=True)
+            duration_cols = [f"{label}_duration_sec" for label in LABEL_ORDER]
+            budget_wide["total_duration"] = budget_wide[duration_cols].sum(axis=1)
+            budget_wide["other_group"] = budget_wide["date"].astype(str).map(
+                lambda d: str(group_info_by_date.get(d, {}).get("group2", "unknown"))
+            )
+            budget_wide["camera_info"] = budget_wide["date"].astype(str).map(
+                lambda d: str(group_info_by_date.get(d, {}).get("group1_camera_ids", "unknown"))
+            )
+            ordered_cols = ["date", *duration_cols, "other_group", "camera_info", "total_duration"]
+            budget_wide = budget_wide[ordered_cols].sort_values("date").reset_index(drop=True)
+            full_budget_csv = out_root / f"{args.individual_group}_activity_budget_all_nights_full.csv"
+            budget_wide.to_csv(full_budget_csv, index=False)
+            print(f"Saved: {full_budget_csv}")
+
+        all_ethogram_path = out_root / f"{args.individual_group}_activity_ethogram_all_nights.png"
+        all_ethogram_title = f"{args.individual_group} Activity Ethogram Across Nights"
+        all_gt_segments = pd.concat(all_night_gt_segments, ignore_index=True) if all_night_gt_segments else pd.DataFrame()
+        _plot_activity_timeline_multi_night(
+            all_segments,
+            all_ethogram_path,
+            all_ethogram_title,
+            df_gt_segments_all=all_gt_segments,
+        )
+        print(f"Saved: {all_ethogram_path}")
+
+        if not all_segments.empty:
+            all_ethogram_pie_path = out_root / f"{args.individual_group}_activity_ethogram_all_nights_with_pies.png"
+            all_ethogram_pie_title = f"{args.individual_group} Activity Ethogram + Budget Across Nights"
+            _plot_activity_timeline_with_pie_multi_night(
+                all_segments,
+                all_ethogram_pie_path,
+                all_ethogram_pie_title,
+                group_info_by_date=group_info_by_date,
+            )
+            print(f"Saved: {all_ethogram_pie_path}")
+
+    if all_stereotypy_flags:
+        merged_stereotypy = pd.concat(all_stereotypy_flags, ignore_index=True)
+        merged_stereotypy = merged_stereotypy.sort_values(["date", "start_timestamp"]).reset_index(drop=True)
+        merged_stereotypy.to_csv(merged_stereotypy_csv, index=False)
+        print(f"Saved: {merged_stereotypy_csv}")
+        if args.extract_video:
+            manifest_csv = export_stereotypy_event_videos_from_csv(
+                stereotypy_csv=merged_stereotypy_csv,
+                out_root=out_root,
+                individual_group=args.individual_group,
+            )
+            if manifest_csv is not None:
+                print(f"Saved: {manifest_csv}")
 
 
 if __name__ == "__main__":
