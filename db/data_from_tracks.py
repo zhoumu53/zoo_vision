@@ -19,6 +19,9 @@ BEHAVIOURS_TO_ID = {
     "01_standing": 1,
     "02_sleeping_left": 2,
     "03_sleeping_right": 3,
+    "walking": 4,
+    "stereotypy": 5,
+    "no_observation": 6,
 }
 
 CAMERA_TO_ID = {
@@ -30,6 +33,8 @@ CAMERA_TO_ID = {
 TYPO = {
     'Fahra': 'Farha',
 }
+
+INVALID_IDENTITY_LABELS = ['confused', 'invalid', 'unknown', '', 'Invalid']
 
 pbar_manager = enlighten.get_manager()
 
@@ -188,8 +193,7 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
 
 def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     camera_id = CAMERA_TO_ID[camera]
-    if individual == 'confused' or individual == 'invalid' or individual == '' or individual == 'unknown':
-        individual = 'Invalid'
+    individual = normalize_identity_label(individual)
     individual_id = INDIVIDUALS_TO_ID[individual]
     df_track = merge_track_behavior(track_file)
     row_count = len(df_track)
@@ -255,6 +259,28 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
         )
 
 
+def normalize_identity_label(identity_label: str) -> str:
+    """Convert identity label to standardized name, handling typos and invalid labels."""
+    if not identity_label or str(identity_label).strip() == '':
+        return 'Invalid'
+    
+    identity_label = str(identity_label).strip()
+    
+    # Check if it's an invalid label
+    if identity_label.lower() in [label.lower() for label in INVALID_IDENTITY_LABELS]:
+        return 'Invalid'
+    
+    # Apply typo corrections
+    identity_label = TYPO.get(identity_label, identity_label)
+    
+    # Validate against known identities
+    if identity_label not in INDIVIDUALS_TO_ID:
+        print(f"Warning: Unknown identity label '{identity_label}', mapping to 'Invalid'")
+        return 'Invalid'
+    
+    return identity_label
+
+
 def load_individual_from_csv(track_file: Path) -> str:
     df_track = pd.read_csv(track_file)
     row_count = len(df_track)
@@ -263,7 +289,7 @@ def load_individual_from_csv(track_file: Path) -> str:
     if "identity_label" not in df_track.columns:
         return "Invalid"
     individual = df_track["identity_label"].mode()[0]
-    return individual
+    return normalize_identity_label(individual)
 
 
 def load_behaviour_from_csv(track_file: Path) -> str:
@@ -321,8 +347,57 @@ def list_track_files_for_night(camera_dir: Path,
     return track_files
       
 
+def load_ethogram_for_individual(db_cursor, ethogram_csv: Path, individual_name: str):
+    """Load ethogram data from CSV and insert into database."""
+    if not ethogram_csv.exists():
+        print(f"Warning: Ethogram file not found: {ethogram_csv}")
+        return
+    
+    individual_name = normalize_identity_label(individual_name)
+    individual_id = INDIVIDUALS_TO_ID[individual_name]
+    
+    df_ethogram = pd.read_csv(ethogram_csv)
+    if df_ethogram.empty:
+        print(f"Warning: Empty ethogram CSV: {ethogram_csv}")
+        return
+    required_cols = ['start_dt', 'end_dt', 'label']
+    if not all(col in df_ethogram.columns for col in required_cols):
+        print(f"Warning: Ethogram CSV missing required columns: {ethogram_csv}")
+        print(f"  Expected: {required_cols}, Got: {list(df_ethogram.columns)}")
+        return
+    
+    df_ethogram['start_dt'] = pd.to_datetime(df_ethogram['start_dt'], errors='coerce')
+    df_ethogram['end_dt'] = pd.to_datetime(df_ethogram['end_dt'], errors='coerce')
+    
+    df_ethogram = df_ethogram.dropna(subset=['start_dt', 'end_dt'])
+    
+    inserted_count = 0
+    for _, row in df_ethogram.iterrows():
+        behavior_label = str(row['label']).strip().lower()
+        
+        if behavior_label not in BEHAVIOURS_TO_ID:
+            print(f"Warning: Unknown behavior label '{behavior_label}', skipping")
+            continue
+        
+        behaviour_id = BEHAVIOURS_TO_ID[behavior_label]
+        start_dt = row['start_dt']
+        end_dt = row['end_dt']
+        
+        db_cursor.execute(
+            """
+            INSERT INTO ethogram(identity_id, behaviour_id, start_dt, end_dt)
+            VALUES(%s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (individual_id, behaviour_id, start_dt, end_dt)
+        )
+        inserted_count += 1
+    
+    print(f"  Loaded {inserted_count} ethogram records for {individual_name}")
+
+
 def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Timestamp, end_timestamp: pd.Timestamp):
-    """Delete all observations and tracks for a specific night before re-inserting."""
+    """Delete all observations, tracks, and ethogram data for a specific night before re-inserting."""
     
     # Convert date string to datetime objects for the night range
     if '-' not in date:
@@ -354,7 +429,17 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
     
     print(f"Deleting existing data for night: {night_start} to {night_end}")
     
-    # First delete observations for tracks in this time range
+    # Delete ethogram data
+    db_cursor.execute(
+        """
+        DELETE FROM ethogram
+        WHERE start_dt >= %s AND start_dt < %s
+        """,
+        (night_start, night_end)
+    )
+    deleted_ethogram = db_cursor.rowcount
+    
+    # Delete observations for tracks in this time range
     db_cursor.execute(
         """
         DELETE FROM observations
@@ -377,7 +462,7 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
     )
     deleted_tracks = db_cursor.rowcount
     
-    print(f"Deleted {deleted_observations} observations and {deleted_tracks} tracks")
+    print(f"Deleted {deleted_ethogram} ethogram records, {deleted_observations} observations and {deleted_tracks} tracks")
 
 
 def main(args):
@@ -452,6 +537,27 @@ def main(args):
                     individual,
                     track_file,
                 )
+        ### Load ethogram data from analysis results
+        analysis_root = root_dir.parent / 'demo' / 'night_bout_summary' / date.replace('-', '')
+        
+        if analysis_root.exists():
+            for individual_dir in analysis_root.iterdir():
+                if not individual_dir.is_dir():
+                    continue
+                
+                individual_name = individual_dir.name
+                ethogram_csv = individual_dir / 'csvs' / 'ethogram.csv'
+                
+                if ethogram_csv.exists():
+                    print(f"  Loading ethogram for: {individual_name}")
+                    load_ethogram_for_individual(db_cursor, ethogram_csv, individual_name)
+                else:
+                    print(f"  No ethogram found for: {individual_name}")
+        else:
+            print(f"\nWarning: Analysis directory not found: {analysis_root}")
+            print(f"  Skipping ethogram loading for date {date}")
+                
+                
     db_connection.commit()
 
 

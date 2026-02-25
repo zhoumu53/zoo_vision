@@ -49,19 +49,27 @@ python $PROJECT_ROOT/post_processing/tools/run_post_processing_full_night.py --d
                                           --height 600 --width 1060 \
                                           --cam1619-individuals "$cam1619_individuals" \
                                           --cam1718-individuals "$cam1718_individuals" \
-                                          --start_timestamp 18 \
+                                          --start_timestamp 16 \
                                           --end_timestamp 8 \
                                           --cross-camera-matching \
                                           --run-stitching &>> "$LOG_FILE"
 
 echo "Feature extraction and stitching completed for date: $DATE"
+
+##### ETHOGRAMS ###########
+echo "Running ethogram analysis for date: $DATE"
+python $PROJECT_ROOT/post_processing/analysis/activity_budget_analysis_per_day.py --date "$DATE" \
+                                          --record_root "$RECORD_ROOT" &>> "$LOG_FILE"
+
+echo "Ethogram analysis completed for date: $DATE"
+
 ##### UPDATE DB FROM TRACKS ###########
 dates=("$DATE")
 
 LOG_FILE="$LOG_DIR/db_log_at_$(date +"%Y%m%d_%H%M%S").log"
 echo "Updating DB for dates: ${dates[*]} - logging to: $LOG_FILE"
 python $PROJECT_ROOT/db/data_from_tracks.py --dir "$RECORD_ROOT"/tracks \
-    --start_timestamp 18 \
+    --start_timestamp 16 \
     --end_timestamp 8 \
     --id_col 'identity_label' \
     --dates "${dates[@]}" &>> "$LOG_FILE"
