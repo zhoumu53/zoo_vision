@@ -39,7 +39,10 @@ INSERT INTO behaviours(id, name)
 	(0, 'Invalid'),
 	(1, 'Standing'),
 	(2, 'Sleep-Left side'),
-	(3, 'Sleep-Right side');
+	(3, 'Sleep-Right side'),
+	(4, 'Walking'),
+	(5, 'Stereotypy'),
+	(6, 'No observation');
 
 --------------------------------------------------------------
 -- Real-time inputs
@@ -73,6 +76,16 @@ CREATE INDEX ON observations (time);
 
 --------------------------------------------------------------
 -- Processed
+CREATE TABLE ethogram (
+    id              int PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    identity_id     int NOT NULL REFERENCES identities,
+    behaviour_id    int NOT NULL REFERENCES behaviours,
+    start_dt        timestamptz NOT NULL,
+    end_dt          timestamptz NOT NULL
+);
+CREATE INDEX ON ethogram (identity_id, start_dt);
+CREATE INDEX ON ethogram (start_dt);
+
 CREATE TABLE summary_per_behaviour (
 	identity_id     int NOT NULL REFERENCES identities,
 	time            timestamptz NOT NULL, -- Aggregated to minutes
@@ -92,7 +105,7 @@ CREATE TABLE summary_per_visibility (
 -- Permissions
 CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
-GRANT INSERT ON tracks,observations,summary_per_behaviour,summary_per_visibility TO zoo_vision;
+GRANT INSERT ON tracks,observations,ethogram,summary_per_behaviour,summary_per_visibility TO zoo_vision;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO zoo_vision;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public to zoo_vision;
 

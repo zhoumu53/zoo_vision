@@ -382,6 +382,8 @@ def main():
                 if 'behavior_label_raw' in bout_summary_df.columns:
                     # Filter out invalid behavior labels before saving
                     bout_summary_df = bout_summary_df[bout_summary_df['behavior_label_raw'] != '00_invalid']
+                elif 'behavior_label_stage1' in bout_summary_df.columns:
+                    bout_summary_df = bout_summary_df[bout_summary_df['behavior_label_stage1'] != '00_invalid']
                 elif 'behavior_label_old' in bout_summary_df.columns:
                     bout_summary_df = bout_summary_df[bout_summary_df['behavior_label_old'] != '00_invalid']
                 bout_summary_df.to_csv(bout_summary_out, index=False)

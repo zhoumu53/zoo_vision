@@ -875,9 +875,12 @@ def _is_sleep_label(lbl: str) -> bool:
     return isinstance(lbl, str) and ("sleep" in lbl.lower())
 
 
-def _get_behavior_label_col(df: pd.DataFrame) -> str:
+def _get_raw_behavior_label_col(df: pd.DataFrame) -> str:
+    "Find the most raw behavior label column available in the DataFrame, with a preference order."
     if "behavior_label_raw" in df.columns:
         return "behavior_label_raw"
+    if "behavior_label_stage1" in df.columns:
+        return "behavior_label_stage1"
     if "behavior_label_old" in df.columns:
         return "behavior_label_old"
     return "behavior_label"
@@ -937,14 +940,14 @@ def _select_reid_frame_indices_from_behavior_csv(
     df = norm_timestamp(df)
     df = df.dropna(subset=["timestamp"]).reset_index(drop=True)
 
-    lbl_col = _get_behavior_label_col(df)
+    lbl_col = _get_raw_behavior_label_col(df)
     if lbl_col not in df.columns:
         return []
 
     if "behavior_conf" not in df.columns:
-        df["behavior_conf"] = 1.0
+        df["behavior_conf"] = -1.0
     if "quality_label" not in df.columns:
-        df["quality_label"] = "good"
+        df["quality_label"] = "bad"
 
     labels = df[lbl_col].astype(str)
     conf = pd.to_numeric(df["behavior_conf"], errors="coerce").fillna(0.0)
@@ -1530,16 +1533,39 @@ def smooth_behavior_cross_camera(
             continue
         changed = False
 
-        if "behavior_label_raw" in df.columns:
-            if "behavior_label" in df.columns and "behavior_label_old" not in df.columns:
-                df["behavior_label_old"] = df["behavior_label"]
+        ### make sure we do smooth for earlier version (only _raw & _old labels, no _stage1 labels)
+        ### if _stage1 labels exist, we assume they are the snapshot of single-cam smoothed labels from the first run, and we keep using them as the basis for cross-cam smoothing in subsequent runs, instead of raw or old legacy labels.
+        ### if _old labels exist but no _stage1, we use _old as the basis for cross-cam smoothing, and we create _stage1 snapshot from them for future runs.
+        has_label = "behavior_label" in df.columns
+        has_stage1 = "behavior_label_stage1" in df.columns
+        has_old_legacy = "behavior_label_old" in df.columns   ### from early versions, before we had _stage1 snapshot, but after we had _old_legacy column to store the original raw labels before any smoothing.
+        has_raw = "behavior_label_raw" in df.columns
+
+        # init run: snapshot current (single-cam smoothed) labels.
+        if has_label and not has_stage1:
+            df["behavior_label_stage1"] = df["behavior_label"].astype(str)
+            changed = True
+            has_stage1 = True
+
+        # re-runs: start cross-camera smoothing from stage1 snapshot, not raw.
+        if has_stage1:
+            stage1_vals = df["behavior_label_stage1"].astype(str)
+            if (not has_label) or (not df["behavior_label"].astype(str).equals(stage1_vals)):
+                df["behavior_label"] = stage1_vals
                 changed = True
-            raw_vals = df["behavior_label_raw"].astype(str)
-            if "behavior_label" not in df.columns or not df["behavior_label"].astype(str).equals(raw_vals):
-                df["behavior_label"] = raw_vals
+        elif has_old_legacy:  # fallback for early versions missing _stage1 snapshot but having _old legacy column.
+            old_vals = df["behavior_label_old"].astype(str)
+            if (not has_label) or (not df["behavior_label"].astype(str).equals(old_vals)):
+                df["behavior_label"] = old_vals
                 changed = True
-        elif "behavior_label" in df.columns and "behavior_label_old" not in df.columns:
-            df["behavior_label_old"] = df["behavior_label"]
+        elif has_raw and not has_label:
+            # Fallback for legacy files missing behavior_label.
+            df["behavior_label"] = df["behavior_label_raw"].astype(str)
+            changed = True
+        
+        ## in the end, we won't keep _old if exists (but only keep _stage1 as the snapshot for future runs)
+        if has_old_legacy:
+            df.drop(columns=["behavior_label_old"], inplace=True, errors="ignore")
             changed = True
 
         if changed:
@@ -1599,12 +1625,213 @@ def smooth_behavior_cross_camera(
             track_corrections[tf] = track_corrections.get(tf, 0) + n
 
     bout_df = summarize_behavior_bouts(all_tracklets, logger=logger)
+    track_to_beh_csv: dict[str, Path] = {}
+    for t in all_tracklets:
+        tf = t.get("track_filename", "")
+        csvp = t.get("track_csv_path", "")
+        if not tf or not csvp:
+            continue
+        beh = Path(csvp).with_name(Path(csvp).stem + "_behavior.csv")
+        if beh.exists():
+            track_to_beh_csv[tf] = beh
+
+    bout_df, n_bout_conflict_fixed, bout_track_corrections = _smooth_bout_conflicts(
+        bout_df,
+        track_to_beh_csv=track_to_beh_csv,
+        min_context_seconds=0.0,
+        max_gap_seconds=max(cfg.shortbout_max_seconds, 60.0),
+        focus_keyword="sleeping",
+        logger=logger,
+    )
+    for tf, nfix in bout_track_corrections.items():
+        track_corrections[tf] = track_corrections.get(tf, 0) + int(nfix)
+    if n_bout_conflict_fixed > 0:
+        logger.info("Cross-camera bout conflict smoothing fixed %d short outlier bouts.", n_bout_conflict_fixed)
     return track_corrections, bout_df
 
 
 # --------------------------------------------------------------------------- #
 # Behavior bout summary
 # --------------------------------------------------------------------------- #
+
+def _smooth_bout_conflicts(
+    bout_df: pd.DataFrame,
+    *,
+    track_to_beh_csv: Optional[dict[str, Path]] = None,
+    min_context_seconds: float = 0.0,
+    max_gap_seconds: float = 300.0,
+    focus_keyword: Optional[str] = "sleeping",
+    logger: Optional[logging.Logger] = None,
+) -> tuple[pd.DataFrame, int, dict[str, int]]:
+    """Smooth short outlier behavior bouts across cameras per individual.
+
+    Example:
+        sleeping_right (20m) -> sleeping_left (2m) -> sleeping_right (30m)
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    if bout_df is None or bout_df.empty:
+        return bout_df, 0, {}
+    if "behavior_label" not in bout_df.columns or "start_time" not in bout_df.columns or "end_time" not in bout_df.columns:
+        return bout_df, 0, {}
+
+    out = bout_df.copy()
+    out["start_time"] = pd.to_datetime(out["start_time"], errors="coerce")
+    out["end_time"] = pd.to_datetime(out["end_time"], errors="coerce")
+    out = out.dropna(subset=["start_time", "end_time"]).copy()
+    if out.empty:
+        return out, 0, {}
+
+    invalid_ids = {"", "unknown", "invalid", "spurious", "confused"}
+    if "identity_label" in out.columns:
+        id_vals = out["identity_label"].astype(str).str.strip()
+    else:
+        id_vals = pd.Series([""] * len(out), index=out.index)
+
+    if "cross_cam_stitched_id" in out.columns:
+        xcsid_vals = out["cross_cam_stitched_id"]
+    else:
+        xcsid_vals = pd.Series([np.nan] * len(out), index=out.index)
+
+    if "cross_cam_id" in out.columns:
+        xcid_vals = out["cross_cam_id"]
+    else:
+        xcid_vals = pd.Series([np.nan] * len(out), index=out.index)
+
+    subject_keys: list[str] = []
+    for i in out.index:
+        idv = id_vals.loc[i]
+        if idv and idv.lower() not in invalid_ids:
+            subject_keys.append(f"id:{idv}")
+            continue
+        xv = xcsid_vals.loc[i]
+        if pd.notna(xv):
+            subject_keys.append(f"xcsid:{xv}")
+            continue
+        cv = xcid_vals.loc[i]
+        if pd.notna(cv):
+            subject_keys.append(f"xcid:{cv}")
+            continue
+        subject_keys.append(f"row:{i}")
+    out["_subject_key"] = subject_keys
+
+    out = out.sort_values(["_subject_key", "start_time", "end_time"], kind="mergesort").copy()
+    labels = out["behavior_label"].astype(str).copy()
+    fixed = 0
+    focus = (focus_keyword or "").strip().lower()
+    fixes: list[dict] = []
+
+    def _row_duration_seconds(idx: int) -> float:
+        if "duration_s" in out.columns and pd.notna(out.loc[idx, "duration_s"]):
+            return float(out.loc[idx, "duration_s"])
+        return float((out.loc[idx, "end_time"] - out.loc[idx, "start_time"]).total_seconds())
+
+    for _, g in out.groupby("_subject_key", sort=False):
+        idx = g.index.to_list()
+        if len(idx) < 3:
+            continue
+
+        for _ in range(10):
+            changed = 0
+            for j in range(1, len(idx) - 1):
+                i_prev = idx[j - 1]
+                i_cur = idx[j]
+                i_next = idx[j + 1]
+
+                prev_lbl = str(labels.loc[i_prev])
+                cur_lbl = str(labels.loc[i_cur])
+                next_lbl = str(labels.loc[i_next])
+
+                if cur_lbl == "00_invalid":
+                    continue
+                if prev_lbl != next_lbl or cur_lbl == prev_lbl:
+                    continue
+
+                dur_cur = _row_duration_seconds(i_cur)
+                dur_prev = _row_duration_seconds(i_prev)
+                dur_next = _row_duration_seconds(i_next)
+
+                if float(min_context_seconds) > 0.0:
+                    if dur_prev < float(min_context_seconds) or dur_next < float(min_context_seconds):
+                        continue
+                if (dur_prev + dur_next) <= (2.0 * dur_cur):
+                    continue
+
+                gap_prev = float((out.loc[i_cur, "start_time"] - out.loc[i_prev, "end_time"]).total_seconds())
+                gap_next = float((out.loc[i_next, "start_time"] - out.loc[i_cur, "end_time"]).total_seconds())
+                if gap_prev > float(max_gap_seconds) or gap_next > float(max_gap_seconds):
+                    continue
+
+                if focus:
+                    if focus not in prev_lbl.lower() or focus not in cur_lbl.lower():
+                        continue
+
+                labels.loc[i_cur] = prev_lbl
+                fixes.append(
+                    {
+                        "row_idx": int(i_cur),
+                        "track_filename": str(out.loc[i_cur, "track_filename"]) if "track_filename" in out.columns else "",
+                        "start_time": out.loc[i_cur, "start_time"],
+                        "end_time": out.loc[i_cur, "end_time"],
+                        "old_label": cur_lbl,
+                        "new_label": prev_lbl,
+                    }
+                )
+                changed += 1
+
+            fixed += changed
+            if changed == 0:
+                break
+
+    if fixed > 0:
+        out["behavior_label"] = labels
+        if "duration_s" in out.columns:
+            out["duration_s"] = (out["end_time"] - out["start_time"]).dt.total_seconds().round(1)
+
+    track_frame_corrections: dict[str, int] = {}
+    if fixes and track_to_beh_csv:
+        fixes_by_track: dict[str, list[dict]] = defaultdict(list)
+        for fx in fixes:
+            tf = fx.get("track_filename", "")
+            if tf:
+                fixes_by_track[tf].append(fx)
+
+        for tf, tf_fixes in fixes_by_track.items():
+            beh_csv = track_to_beh_csv.get(tf)
+            if beh_csv is None or not Path(beh_csv).exists():
+                continue
+            df = _safe_read_csv(Path(beh_csv))
+            if df is None or df.empty:
+                continue
+            if "timestamp" not in df.columns or "behavior_label" not in df.columns:
+                continue
+
+            df = norm_timestamp(df)
+            lbl = df["behavior_label"].astype(str).copy()
+            changed_frames = 0
+
+            for fx in tf_fixes:
+                t0 = pd.Timestamp(fx["start_time"])
+                t1 = pd.Timestamp(fx["end_time"])
+                old_lbl = str(fx["old_label"])
+                new_lbl = str(fx["new_label"])
+                mask = (df["timestamp"] >= t0) & (df["timestamp"] <= t1)
+                mask &= (lbl == old_lbl)
+                n = int(mask.sum())
+                if n <= 0:
+                    continue
+                lbl.loc[mask] = new_lbl
+                changed_frames += n
+
+            if changed_frames > 0:
+                df["behavior_label"] = lbl.values
+                df.to_csv(beh_csv, index=False)
+                track_frame_corrections[tf] = track_frame_corrections.get(tf, 0) + changed_frames
+
+    out = out.drop(columns=["_subject_key"], errors="ignore")
+    out = out.sort_values(["start_time", "end_time"], kind="mergesort").reset_index(drop=True)
+    return out, int(fixed), track_frame_corrections
+
 
 def summarize_behavior_bouts(
     tracklets: list[dict],
@@ -1915,9 +2142,6 @@ def run_cross_camera_matching_v2(
     )
     if not bad_lbl.empty:
         logger.warning("Detected identity_label concurrency violations:\n%s", bad_lbl.to_string(index=False))
-
-    # TODO - post-processing with bout_df
-    ### 
 
 
     for cam_id in camera_ids:

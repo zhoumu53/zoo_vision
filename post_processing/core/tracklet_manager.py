@@ -694,6 +694,8 @@ class TrackletManager:
                         # TODO -- now voting based on good quality frames + high confidence behavior + no 'standing' 
                         if 'behavior_label_raw' in df_behavior.columns:
                             old_behavior_label = 'behavior_label_raw'
+                        elif 'behavior_label_stage1' in df_behavior.columns:
+                            old_behavior_label = 'behavior_label_stage1'
                         elif 'behavior_label_old' in df_behavior.columns:
                             old_behavior_label = 'behavior_label_old'
                         else:
