@@ -13,3 +13,6 @@ export FASTRTPS_DEFAULT_PROFILES_FILE="$PWD/zoo_vision_ros2/src/fast_dds_config.
 export LD_LIBRARY_PATH=$PWD/build/RelWithDebInfo/src/zoo_msgs:${LD_LIBRARY_PATH}
 export CLICOLOR_FORCE=1 # Enable color on ninja build 
 export PYTHONPATH="$PYTHONPATH:$PWD"
+
+# Log time in datetime format
+export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] {date_time_with_ms} [{name}]: {message}"
