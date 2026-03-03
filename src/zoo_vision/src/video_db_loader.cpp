@@ -217,6 +217,9 @@ cv::Mat3b VideoDBLoader::loadImage(CameraData &cameraData, zoo_msgs::msg::Image1
   int tries = 0;
   bool ok = false;
   while (tries < MAX_TRIES && !ok) {
+    if (tries > 0) {
+      RCLCPP_ERROR(get_logger(), "Loading image failed from %s, retrying (#%d)", cameraData.currentVideo_->videoFile.c_str(), tries);
+    }
     ok = cvVideo.read(image);
     tries++;
   }
@@ -285,8 +288,10 @@ void VideoDBLoader::onTimer() {
     }
     if (cameraData.videoStream_.has_value()) {
       ProfileSection s{"skipFrames"};
+      cv::Mat3b dummy;
       for (int i = 0; i < skipFrameCount_; ++i) {
-        cameraData.videoStream_->grab();
+        // Note: using grab() should be faster but resulted in a memory leak!!! 
+        cameraData.videoStream_->read(dummy);
       }
     }
     {
