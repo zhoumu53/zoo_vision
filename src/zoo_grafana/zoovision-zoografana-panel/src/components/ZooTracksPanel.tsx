@@ -6,6 +6,7 @@ import { useStyles2 } from '@grafana/ui';
 const { DateTime } = require("luxon");
 
 const NO_IMAGE_JPG = require('../img/no_image.jpg');
+const NO_IMAGE_16_9_JPG = require('../img/no_image_16_9.jpg');
 
 const DEFAULT_TIMESTAMP = "2025-11-15 19:08:22.308000000";
 const CAMERAS = ["zag_elp_cam_017", "zag_elp_cam_018", "zag_elp_cam_016", "zag_elp_cam_019"];
@@ -104,9 +105,18 @@ const getStyles = () => {
       border: 1px solid;
       background-color: #00000000;
     `,
-    verticalCell: css`
+    trackImagesCell: css`
       vertical-align: top;
-      max-width: 10%;
+      width: 20%;
+      height: 100px;
+    `,
+    cameraImagesCell: css`
+      width: 20%;
+      height: 100px;
+      aspect-ratio: 16 / 9;
+      border-style: solid;
+      border-width: thin;
+      border-color: gray;
     `,
     heatmapImg: css`
       width: 20%;
@@ -185,7 +195,7 @@ async function fetchCameraImages(url: string, abortSignal: any, setState: (state
       return;
     }
     console.log("Error fetching %s: %s", url, err);
-    new_state = { isLoading: false, image: NO_IMAGE_JPG };
+    new_state = { isLoading: false, image: NO_IMAGE_16_9_JPG };
   }
   setState(new_state);
 }
@@ -263,7 +273,6 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, width, heig
 
   const makeTrackImages = (cameraIndex: number) => {
     return <>
-      <div>Tracks</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)} >Loading</div>
 
@@ -285,7 +294,6 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, width, heig
   };
   const makeCameraImages = (cameraIndex: number) => {
     return <>
-      <div>Source</div>
       <div className={cx(styles.trackImageContainer)}>
         <div className={cx(trackImages[cameraIndex].isLoading ? styles.grayMaskDiv : styles.hiddenDiv)}>Loading</div>
         {trackImages[cameraIndex].detections.map((detection, index) =>
@@ -329,13 +337,13 @@ export const ZooTracksPanel: React.FC<Props> = ({ eventBus, options, width, heig
           <th colSpan={2}><h2>Sand box ohne</h2></th>
         </tr>
         <tr>
-          {CAMERAS.map((cameraName) => <td key={cameraName} className={cx(styles.verticalCell)}>{cameraName}</td>)}
+          {CAMERAS.map((cameraName) => <td key={cameraName}>{cameraName}</td>)}
         </tr>
         <tr>
-          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.verticalCell)}>{makeTrackImages(index)}</td>)}
+          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.trackImagesCell)}>{makeTrackImages(index)}</td>)}
         </tr>
         <tr>
-          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.verticalCell)}>{makeCameraImages(index)}</td>)}
+          {CAMERAS.map((_, index) => <td key={index} className={cx(styles.cameraImagesCell)}>{makeCameraImages(index)}</td>)}
         </tr>
       </table>
 

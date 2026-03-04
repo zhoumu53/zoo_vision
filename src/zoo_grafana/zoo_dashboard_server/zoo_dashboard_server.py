@@ -195,7 +195,7 @@ async def test_track_image_get(query_args: TrackImagesParams):
 async def camera_image(camera: str, timestamp: datetime):
     image = await find_camera_image(camera, timestamp)
     if image is None:
-        with open("static/no_image.jpg", "rb") as f:
+        with open("static/no_image_16_9.jpg", "rb") as f:
             raw_bytes = io.BytesIO(f.read())
     else:
         raw_bytes = compress_jpeg(Image.fromarray(image))
