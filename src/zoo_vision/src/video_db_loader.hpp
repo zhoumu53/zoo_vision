@@ -45,7 +45,7 @@ private:
     cv::Size2i frameSize;
     std::vector<VideoInfo>::const_iterator currentVideo_;
     std::optional<Clock::time_point> videoStartTime_;
-    std::optional<cv::VideoCapture> videoStream_;
+    std::unique_ptr<cv::VideoCapture> videoStream_;
 
     ImageRateLimiter *rateLimiter;
     std::shared_ptr<rclcpp::Publisher<zoo_msgs::msg::Image12m>> publisher_;
