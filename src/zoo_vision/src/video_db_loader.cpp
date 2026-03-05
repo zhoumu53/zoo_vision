@@ -126,7 +126,7 @@ void VideoDBLoader::loadVideoDatabase(const std::filesystem::path &database,
 
 void VideoDBLoader::openVideo(const std::string & /*cameraName*/, CameraData &cameraData, const VideoInfo &info) {
   std::unique_ptr<cv::VideoCapture> pcvVideo = std::make_unique<cv::VideoCapture>();
-  auto &cvVideo=*pcvVideo;
+  auto &cvVideo = *pcvVideo;
   const bool ok = cvVideo.open(info.videoFile);
   if (ok) {
     cameraData.frameSize = cv::Size2i{static_cast<int>(cvVideo.get(cv::CAP_PROP_FRAME_WIDTH)),
@@ -199,7 +199,7 @@ cv::Mat3b VideoDBLoader::loadImage(CameraData &cameraData, zoo_msgs::msg::Image1
     return cv::Mat3b{};
   }
 
-  CHECK_FALSE(cameraData.videoStream_==nullptr);
+  CHECK_FALSE(cameraData.videoStream_ == nullptr);
 
   msg.header.stamp =
       rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(replayNow_.time_since_epoch()).count());
@@ -219,9 +219,10 @@ cv::Mat3b VideoDBLoader::loadImage(CameraData &cameraData, zoo_msgs::msg::Image1
   bool ok = false;
   while (tries < MAX_TRIES && !ok) {
     if (tries > 0) {
-      RCLCPP_ERROR(get_logger(), "Loading image failed from %s, retrying (#%d)", cameraData.currentVideo_->videoFile.c_str(), tries);
+      RCLCPP_ERROR(get_logger(), "Loading image failed from %s, retrying (#%d)",
+                   cameraData.currentVideo_->videoFile.c_str(), tries);
     }
-    image  = wrapMat3bFromMsg(msg);
+    image = wrapMat3bFromMsg(msg);
     ok = cvVideo.read(image);
     tries++;
   }
@@ -266,7 +267,7 @@ void VideoDBLoader::onTimer() {
     if (cameraData.videoStream_ == nullptr && cameraData.currentVideo_ != cameraData.videoList_.end()) {
       loadNextVideo(cameraName, cameraData);
     }
-    if (cameraData.videoStream_== nullptr) {
+    if (cameraData.videoStream_ == nullptr) {
       // No video to load, ignore camera from now on
       continue;
     }
@@ -278,7 +279,7 @@ void VideoDBLoader::onTimer() {
       ProfileSection s{"loadImage"};
 
       image = loadImage(cameraData, *msg);
-      if (cameraData.videoStream_== nullptr) {
+      if (cameraData.videoStream_ == nullptr) {
         loadNextVideo(cameraName, cameraData);
         image = loadImage(cameraData, *msg);
         if (image.empty()) {
@@ -289,7 +290,7 @@ void VideoDBLoader::onTimer() {
     if (image.empty()) {
       continue;
     }
-    if (cameraData.videoStream_!= nullptr) {
+    if (cameraData.videoStream_ != nullptr) {
       ProfileSection s{"skipFrames"};
       for (int i = 0; i < skipFrameCount_; ++i) {
         cameraData.videoStream_->grab();
@@ -303,7 +304,7 @@ void VideoDBLoader::onTimer() {
       msg->header.frame_id = frameIndex;
     }
 
-    if (!newReplayTime.has_value() && cameraData.videoStream_!= nullptr) {
+    if (!newReplayTime.has_value() && cameraData.videoStream_ != nullptr) {
       // Calculate replay time based on how much we've advanced in the video
       const auto offsetMs = cameraData.videoStream_->get(cv::CAP_PROP_POS_MSEC);
       newReplayTime = *cameraData.videoStartTime_ + std::chrono::milliseconds(static_cast<int64_t>(offsetMs));
