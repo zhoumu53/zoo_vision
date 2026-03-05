@@ -31,18 +31,19 @@ INSERT INTO identities(id, name, color)
 
 CREATE TABLE behaviours (
     id              int PRIMARY KEY,
-    name            text NOT NULL
+    name            text NOT NULL,
+    column_name     text NOT NULL
 );
 
 INSERT INTO behaviours(id, name)
 	VALUES 
-	(0, 'Invalid'),
-	(1, 'Standing'),
-	(2, 'Sleep-Left side'),
-	(3, 'Sleep-Right side'),
-	(4, 'Walking'),
-	(5, 'Stereotypy'),
-	(6, 'No observation');
+	(0, 'Invalid', 'invalid'),
+	(1, 'Standing', 'standing'),
+	(2, 'Sleep-Left side', 'sleep_left_side'),
+	(3, 'Sleep-Right side', 'sleep_right_side'),
+	(4, 'Walking', 'walking'),
+	(5, 'Stereotypy', 'stereotypy'),
+	(6, 'No observation', 'no_observation');
 
 --------------------------------------------------------------
 -- Real-time inputs
@@ -87,12 +88,19 @@ CREATE INDEX ON ethogram (identity_id, start_dt);
 CREATE INDEX ON ethogram (start_dt);
 
 CREATE TABLE summary_per_behaviour (
-	identity_id     int NOT NULL REFERENCES identities,
-	time            timestamptz NOT NULL, -- Aggregated to minutes
-	is_standing     bool NOT NULL,    
-	is_on_left_side bool NULL,
+	identity_id      int NOT NULL REFERENCES identities,
+	time             timestamptz NOT NULL, -- Aggregated to 1s
+	invalid          int,
+	standing         int,
+	sleep_left_side  int,
+	sleep_right_side int,
+	walking          int,
+	stereotypy       int,
+	no_observation   int,
 	PRIMARY KEY (identity_id, time)
 );
+CREATE INDEX ON summary_per_behaviour (identity_id, time);
+CREATE INDEX ON summary_per_behaviour (time);
 
 CREATE TABLE summary_per_visibility (
 	identity_id     int NOT NULL REFERENCES identities,
@@ -102,7 +110,16 @@ CREATE TABLE summary_per_visibility (
 );
 
 --------------------------------------------------------------
+-- Extensions
+CREATE EXTENSION IF NOT EXISTS tablefunc; -- enables crosstab for pivoting
+
+--------------------------------------------------------------
 -- Permissions
+CREATE USER zoo_admin SUPERUSER PASSWORD 'asdf';
+GRANT CONNECT ON DATABASE zoo_vision TO zoo_admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO zoo_admin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public to zoo_vision;
+
 CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
 GRANT INSERT ON tracks,observations,ethogram,summary_per_behaviour,summary_per_visibility TO zoo_vision;

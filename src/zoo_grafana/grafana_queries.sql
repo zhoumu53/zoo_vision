@@ -70,3 +70,38 @@ FROM  (
    CROSS JOIN (SELECT id,name FROM identities WHERE id!=0) ti
    LEFT JOIN cte USING (time_bined, id)
 ORDER  BY s.time_bined;
+################################
+select coalesce(max(time), timestamptz '1972-01-01')+interval '1 second'
+from summary_per_behaviour
+
+insert into  summary_per_behaviour 
+select identity_id, datetime, invalid, standing, sleep_left_side, sleep_right_side, walking, stereotypy, no_observation
+FROM  crosstab(
+$$
+SELECT To_char(identity_id, '999')
+              || To_char(time_bined, 'YYYY-MM-DD HH12:MI:SS') ,
+       *
+FROM   (
+                  SELECT     identity_id ,
+                             date_bin('10 second', o.time, timestamptz '1970-01-01') AS time_bined ,
+                             b.column_name AS behaviour ,
+                             count(*)                                                AS value
+                  FROM       observations                                            AS o
+                  INNER JOIN tracks                                                  AS t
+                  ON         t.id=o.track_id
+                  INNER JOIN behaviours AS b
+                  ON         o.behaviour_id=b.id
+                  WHERE      o.time > (now() - interval '2 days')
+                  GROUP BY   identity_id,
+                             time_bined,
+                             behaviour
+                  ORDER BY   identity_id,
+                             time_bined,
+                             behaviour )
+$$,
+$$
+SELECT   column_name AS behaviour
+FROM     behaviours
+ORDER BY NAME
+$$ ) AS summary ( row_name varchar, identity_id int, datetime timestamptz, invalid int, standing int, sleep_left_side int, sleep_right_side int, walking int, stereotypy int, no_observation int )
+on conflict do nothing

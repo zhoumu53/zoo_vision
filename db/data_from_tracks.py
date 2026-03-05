@@ -31,70 +31,71 @@ CAMERA_TO_ID = {
     "zag_elp_cam_019": 3,
 }
 TYPO = {
-    'Fahra': 'Farha',
+    "Fahra": "Farha",
 }
 
-INVALID_IDENTITY_LABELS = ['confused', 'invalid', 'unknown', '', 'Invalid']
+INVALID_IDENTITY_LABELS = ["confused", "invalid", "unknown", "", "Invalid"]
 
 pbar_manager = enlighten.get_manager()
-
 
 
 def load_identity_labels_from_json(
     record_root: Path,
     cam_id: str,
-    date : str,
+    date: str,
     start_datetime: pd.Timestamp,
     end_datetime: pd.Timestamp,
-    id_col: str = "voted_track_label", ### now using voted labels before fixing the stitching issue
+    id_col: str = "voted_track_label",  ### now using voted labels before fixing the stitching issue
 ) -> pd.DataFrame:
     """
     Load identity labels from stitched tracklets JSON files.
-    
+
     Returns:
-        DataFrame with columns: track_filename, stitched_label, voted_track_label, 
+        DataFrame with columns: track_filename, stitched_label, voted_track_label,
                                 smoothed_label, identity_label
     """
     import json
-    
+
     # Format date string (assuming date is in format "YYYY-MM-DD")
     date_str = date
     # add '-' to date string if not present
-    if '-' not in date_str:
+    if "-" not in date_str:
         date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-    
+
     # Format time strings from timestamps
     start_time_str = start_datetime.strftime("%H%M%S")
     end_time_str = end_datetime.strftime("%H%M%S")
-    ## 
+    ##
     all_labels = []
 
-    json_dir = record_root / 'demo' / f'zag_elp_cam_{cam_id}' / date_str
-    json_pattern = f'stitched_tracklets_cam{cam_id}_{start_time_str}_{end_time_str}.json'
-    
+    json_dir = record_root / "demo" / f"zag_elp_cam_{cam_id}" / date_str
+    json_pattern = (
+        f"stitched_tracklets_cam{cam_id}_{start_time_str}_{end_time_str}.json"
+    )
+
     # Find the JSON file
     json_files = list(json_dir.glob(json_pattern))
     # print(f"Searching for JSON files in: {json_dir} with pattern: {json_pattern}")
     if not json_files:
-        json_files = list(json_dir.glob(f'*.json'))
+        json_files = list(json_dir.glob(f"*.json"))
 
     if not json_files:
         print(f"Warning: No JSON file found for camera {cam_id} at {json_dir}")
         return pd.DataFrame()
-    
+
     json_path = json_files[0]
     print(f"Loading identity labels from: {json_path}")
-    
+
     # Load JSON
-    with open(json_path, 'r') as f:
+    with open(json_path, "r") as f:
         tracklets_data = json.load(f)
-    
+
     track_file2_label = {}
     for tracklet in tracklets_data:
-        if tracklet['invalid_flag']:
+        if tracklet["invalid_flag"]:
             continue
-        track_file2_label[tracklet['track_filename']] = tracklet.get(id_col, 'Invalid')
-        
+        track_file2_label[tracklet["track_filename"]] = tracklet.get(id_col, "Invalid")
+
     return track_file2_label
 
 
@@ -112,16 +113,27 @@ def get_args_parser(add_help=True):
         "--dates", type=str, nargs="+", help="Specific dates to process", default=None
     )
     parser.add_argument(
-        "--start_timestamp", type=str, help="Start timestamp for processing, e.g., '180000'", required=True
+        "--start_timestamp",
+        type=str,
+        help="Start timestamp for processing, e.g., '180000'",
+        required=True,
     )
     parser.add_argument(
-        "--end_timestamp", type=str, help="End timestamp for processing, e.g., '080000'", required=True
+        "--end_timestamp",
+        type=str,
+        help="End timestamp for processing, e.g., '080000'",
+        required=True,
     )
     parser.add_argument(
-        "--id_col", type=str, default="stitched_label", help="Column name in JSON for identity labels (default: 'stitched_label')"
+        "--id_col",
+        type=str,
+        default="stitched_label",
+        help="Column name in JSON for identity labels (default: 'stitched_label')",
     )
     parser.add_argument(
-        "--delete-existing-night", action='store_true', help="Delete existing data for the night before inserting new data"
+        "--delete-existing-night",
+        action="store_true",
+        help="Delete existing data for the night before inserting new data",
     )
     parser.set_defaults(delete_existing_night=False)
     return parser
@@ -146,36 +158,35 @@ def filter_bad_tracks(df_track: pd.DataFrame) -> pd.DataFrame:
     if len(df_track) < 100 or duration.total_seconds() < 90:
         return pd.DataFrame()
     # if 70% bad quality frames, or low confidence frames, also filter out the track
-    if 'behavior_label_raw' in df_track.columns:
-        old_behavior_label = 'behavior_label_raw'
-    elif 'behavior_label_old' in df_track.columns:
-        old_behavior_label = 'behavior_label_old'
+    if "behavior_label_raw" in df_track.columns:
+        old_behavior_label = "behavior_label_raw"
+    elif "behavior_label_old" in df_track.columns:
+        old_behavior_label = "behavior_label_old"
     else:
-        old_behavior_label = 'behavior_label'
-                            
-    if 'quality_label' in df_track.columns:
+        old_behavior_label = "behavior_label"
+
+    if "quality_label" in df_track.columns:
         # '00_invalid'
-        bad_quality_frames = ((df_track['quality_label'] == 'bad') | (df_track[old_behavior_label] == '00_invalid')).sum()
+        bad_quality_frames = (
+            (df_track["quality_label"] == "bad")
+            | (df_track[old_behavior_label] == "00_invalid")
+        ).sum()
         if bad_quality_frames / len(df_track) > 0.7:
             return pd.DataFrame()
     return df_track
 
 
 def norm_timestamp(df) -> pd.DataFrame:
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"],
-        format="mixed",
-        errors="coerce"
-    )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], format="mixed", errors="coerce")
     df["timestamp"] = df["timestamp"].dt.floor("ms")
     return df
-        
+
 
 def merge_track_behavior(track_file: Path) -> pd.DataFrame:
     df_track = pd.read_csv(track_file)
     if df_track.empty:
         return pd.DataFrame()
-    columns = ['frame_id', 'timestamp', 'score', 'world_x', 'world_y']
+    columns = ["frame_id", "timestamp", "score", "world_x", "world_y"]
     behavior_file = track_file.with_name(track_file.stem + "_behavior.csv")
     if not behavior_file.exists():
         return pd.DataFrame()
@@ -184,8 +195,8 @@ def merge_track_behavior(track_file: Path) -> pd.DataFrame:
         return pd.DataFrame()
     df_track = norm_timestamp(df_track)
     df_behavior = norm_timestamp(df_behavior)
-    df_merged = pd.merge(df_track[columns], df_behavior, on='timestamp', how='left')
-    df_merged = filter_bad_tracks(df_merged)        
+    df_merged = pd.merge(df_track[columns], df_behavior, on="timestamp", how="left")
+    df_merged = filter_bad_tracks(df_merged)
     if df_merged.empty:
         return pd.DataFrame()
     return df_merged
@@ -199,19 +210,20 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
     row_count = len(df_track)
     if row_count == 0:
         return
-    
+
     ### filter out bad quality frames if any, or low confidence frames
-    if 'quality_label' in df_track.columns:
-        if 'behavior_label_raw' in df_track.columns:
-            old_behavior_label = 'behavior_label_raw'
-        elif 'behavior_label_old' in df_track.columns:
-            old_behavior_label = 'behavior_label_old'
+    if "quality_label" in df_track.columns:
+        if "behavior_label_raw" in df_track.columns:
+            old_behavior_label = "behavior_label_raw"
+        elif "behavior_label_old" in df_track.columns:
+            old_behavior_label = "behavior_label_old"
         else:
-            old_behavior_label = 'behavior_label'
-        df_track = df_track[ (df_track[old_behavior_label] != '00_invalid')
-                            & (df_track['quality_label'] == 'good')
-                            & (df_track['behavior_conf'].astype(float) >= 0.7)
-                            ]
+            old_behavior_label = "behavior_label"
+        df_track = df_track[
+            (df_track[old_behavior_label] != "00_invalid")
+            & (df_track["quality_label"] == "good")
+            & (df_track["behavior_conf"].astype(float) >= 0.7)
+        ]
         row_count = len(df_track)
         if row_count == 0:
             return
@@ -261,23 +273,25 @@ def log_track(db_cursor, camera: str, individual: str, track_file: Path):
 
 def normalize_identity_label(identity_label: str) -> str:
     """Convert identity label to standardized name, handling typos and invalid labels."""
-    if not identity_label or str(identity_label).strip() == '':
-        return 'Invalid'
-    
+    if not identity_label or str(identity_label).strip() == "":
+        return "Invalid"
+
     identity_label = str(identity_label).strip()
-    
+
     # Check if it's an invalid label
     if identity_label.lower() in [label.lower() for label in INVALID_IDENTITY_LABELS]:
-        return 'Invalid'
-    
+        return "Invalid"
+
     # Apply typo corrections
     identity_label = TYPO.get(identity_label, identity_label)
-    
+
     # Validate against known identities
     if identity_label not in INDIVIDUALS_TO_ID:
-        print(f"Warning: Unknown identity label '{identity_label}', mapping to 'Invalid'")
-        return 'Invalid'
-    
+        print(
+            f"Warning: Unknown identity label '{identity_label}', mapping to 'Invalid'"
+        )
+        return "Invalid"
+
     return identity_label
 
 
@@ -305,140 +319,146 @@ def load_behaviour_from_csv(track_file: Path) -> str:
 
 def normalize_time_string(time_str: str) -> str:
     """Convert various time formats to HHMMSS format.
-    
+
     Handles: 18, 1800, 180000, 18:00:00 -> all convert to 180000
     """
     # Remove colons if present
-    time_str = time_str.replace(':', '')
-    
+    time_str = time_str.replace(":", "")
+
     # Pad to 6 digits (HHMMSS)
     if len(time_str) == 1:
-        time_str = time_str.zfill(2) + '0000'  # "18" -> "180000"
+        time_str = time_str.zfill(2) + "0000"  # "18" -> "180000"
     elif len(time_str) == 2:
-        time_str = time_str + '0000'  # "18" -> "180000"
+        time_str = time_str + "0000"  # "18" -> "180000"
     elif len(time_str) == 4:
-        time_str = time_str + '00'  # "1800" -> "180000"
+        time_str = time_str + "00"  # "1800" -> "180000"
     elif len(time_str) == 6:
         pass  # Already correct format
     else:
         raise ValueError(f"Invalid time format: {time_str}")
-    
+
     return time_str
 
-def list_track_files_for_night(camera_dir: Path, 
-                               date: str) -> list[Path]:
+
+def list_track_files_for_night(camera_dir: Path, date: str) -> list[Path]:
     """List all track files for a given night (date + time range)"""
     track_files = []
     date_str = date
     # add '-' to date string if not present
-    if '-' not in date_str:
+    if "-" not in date_str:
         date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     date_dir = camera_dir / date_str
     next_date = (pd.to_datetime(date_str) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     next_date_dir = camera_dir / next_date
     # List files from date_dir
-    
+
     if date_dir.exists():
         track_files.extend(list(date_dir.glob("*.csv")))
     # List files from next_date_dir
     if next_date_dir.exists():
         track_files.extend(list(next_date_dir.glob("*.csv")))
-        
+
     return track_files
-      
+
 
 def load_ethogram_for_individual(db_cursor, ethogram_csv: Path, individual_name: str):
     """Load ethogram data from CSV and insert into database."""
     if not ethogram_csv.exists():
         print(f"Warning: Ethogram file not found: {ethogram_csv}")
         return
-    
+
     individual_name = normalize_identity_label(individual_name)
     individual_id = INDIVIDUALS_TO_ID[individual_name]
-    
+
     df_ethogram = pd.read_csv(ethogram_csv)
     if df_ethogram.empty:
         print(f"Warning: Empty ethogram CSV: {ethogram_csv}")
         return
-    required_cols = ['start_dt', 'end_dt', 'label']
+    required_cols = ["start_dt", "end_dt", "label"]
     if not all(col in df_ethogram.columns for col in required_cols):
         print(f"Warning: Ethogram CSV missing required columns: {ethogram_csv}")
         print(f"  Expected: {required_cols}, Got: {list(df_ethogram.columns)}")
         return
-    
-    df_ethogram['start_dt'] = pd.to_datetime(df_ethogram['start_dt'], errors='coerce')
-    df_ethogram['end_dt'] = pd.to_datetime(df_ethogram['end_dt'], errors='coerce')
-    
-    df_ethogram = df_ethogram.dropna(subset=['start_dt', 'end_dt'])
-    
+
+    df_ethogram["start_dt"] = pd.to_datetime(df_ethogram["start_dt"], errors="coerce")
+    df_ethogram["end_dt"] = pd.to_datetime(df_ethogram["end_dt"], errors="coerce")
+
+    df_ethogram = df_ethogram.dropna(subset=["start_dt", "end_dt"])
+
     inserted_count = 0
     for _, row in df_ethogram.iterrows():
-        behavior_label = str(row['label']).strip().lower()
-        
+        behavior_label = str(row["label"]).strip().lower()
+
         if behavior_label not in BEHAVIOURS_TO_ID:
             print(f"Warning: Unknown behavior label '{behavior_label}', skipping")
             continue
-        
+
         behaviour_id = BEHAVIOURS_TO_ID[behavior_label]
-        start_dt = row['start_dt']
-        end_dt = row['end_dt']
-        
+        start_dt = row["start_dt"]
+        end_dt = row["end_dt"]
+
         db_cursor.execute(
             """
             INSERT INTO ethogram(identity_id, behaviour_id, start_dt, end_dt)
             VALUES(%s, %s, %s, %s)
             ON CONFLICT DO NOTHING
             """,
-            (individual_id, behaviour_id, start_dt, end_dt)
+            (individual_id, behaviour_id, start_dt, end_dt),
         )
         inserted_count += 1
-    
+
     print(f"  Loaded {inserted_count} ethogram records for {individual_name}")
 
 
-def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Timestamp, end_timestamp: pd.Timestamp):
+def delete_existing_data_for_night(
+    db_cursor, date: str, start_timestamp: pd.Timestamp, end_timestamp: pd.Timestamp
+):
     """Delete all observations, tracks, and ethogram data for a specific night before re-inserting."""
-    
+
     # Convert date string to datetime objects for the night range
-    if '-' not in date:
+    if "-" not in date:
         date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-    
+
     date_dt = pd.to_datetime(date)
-    
+
     # Night starts at start_time on date and ends at end_time next day
     night_start = date_dt + pd.Timedelta(
         hours=start_timestamp.hour,
         minutes=start_timestamp.minute,
-        seconds=start_timestamp.second
+        seconds=start_timestamp.second,
     )
-    
+
     if end_timestamp < start_timestamp:
         # End time is on next day
-        night_end = date_dt + pd.Timedelta(days=1) + pd.Timedelta(
-            hours=end_timestamp.hour,
-            minutes=end_timestamp.minute,
-            seconds=end_timestamp.second
+        night_end = (
+            date_dt
+            + pd.Timedelta(days=1)
+            + pd.Timedelta(
+                hours=end_timestamp.hour,
+                minutes=end_timestamp.minute,
+                seconds=end_timestamp.second,
+            )
         )
     else:
         # End time is on same day
         night_end = date_dt + pd.Timedelta(
             hours=end_timestamp.hour,
             minutes=end_timestamp.minute,
-            seconds=end_timestamp.second
+            seconds=end_timestamp.second,
         )
-    
+
     print(f"Deleting existing data for night: {night_start} to {night_end}")
-    
+
     # Delete ethogram data
     db_cursor.execute(
         """
         DELETE FROM ethogram
         WHERE start_dt >= %s AND start_dt < %s
         """,
-        (night_start, night_end)
+        (night_start, night_end),
     )
     deleted_ethogram = db_cursor.rowcount
-    
+
     # Delete observations for tracks in this time range
     db_cursor.execute(
         """
@@ -448,21 +468,76 @@ def delete_existing_data_for_night(db_cursor, date: str, start_timestamp: pd.Tim
             WHERE start_time >= %s AND start_time < %s
         )
         """,
-        (night_start, night_end)
+        (night_start, night_end),
     )
     deleted_observations = db_cursor.rowcount
-    
+
     # Then delete the tracks themselves
     db_cursor.execute(
         """
         DELETE FROM tracks
         WHERE start_time >= %s AND start_time < %s
         """,
-        (night_start, night_end)
+        (night_start, night_end),
     )
     deleted_tracks = db_cursor.rowcount
-    
-    print(f"Deleted {deleted_ethogram} ethogram records, {deleted_observations} observations and {deleted_tracks} tracks")
+
+    print(
+        f"Deleted {deleted_ethogram} ethogram records, {deleted_observations} observations and {deleted_tracks} tracks"
+    )
+
+
+def summarize_observations(db_cursor):
+    print(f"Summarizing data for the last two days")
+    db_cursor.execute(
+        """
+        INSERT INTO  summary_per_behaviour 
+        SELECT identity_id, datetime, invalid, standing, sleep_left_side, sleep_right_side, walking, stereotypy, no_observation
+        FROM  crosstab(
+        $$
+        SELECT To_char(identity_id, '999')
+                    || To_char(time_bined, 'YYYY-MM-DD HH12:MI:SS') ,
+            *
+        FROM   (
+                        SELECT     identity_id ,
+                                    date_bin('10 second', o.time, timestamptz '1970-01-01') AS time_bined ,
+                                    b.column_name AS behaviour ,
+                                    count(*)                                                AS value
+                        FROM       observations                                            AS o
+                        INNER JOIN tracks                                                  AS t
+                        ON         t.id=o.track_id
+                        INNER JOIN behaviours AS b
+                        ON         o.behaviour_id=b.id
+                        WHERE      o.time > (now() - interval '2 days')
+                        GROUP BY   identity_id,
+                                    time_bined,
+                                    behaviour
+                        ORDER BY   identity_id,
+                                    time_bined,
+                                    behaviour )
+        $$,
+        $$
+        SELECT   column_name AS behaviour
+        FROM     behaviours
+        ORDER BY NAME
+        $$ ) AS summary (
+        row_name varchar,
+        identity_id int,
+        datetime timestamptz,
+        invalid int,
+        standing int,
+        sleep_left_side int,
+        sleep_right_side int,
+        walking int,
+        stereotypy int,
+        no_observation int
+        )
+        ON CONFLICT DO NOTHING
+        """
+    )
+    row_count = db_cursor.rowcount
+
+    print(f"Inserted {row_count}    records into summary_per_behaviour table")
 
 
 def main(args):
@@ -473,11 +548,11 @@ def main(args):
         all_dates = args.dates
     else:
         all_dates = gather_all_nights(root_dir)
-    
+
     # Normalize and convert timestamp strings to pd.Timestamp
     start_timestamp = normalize_time_string(args.start_timestamp)
     end_timestamp = normalize_time_string(args.end_timestamp)
-    
+
     start_timestamp = pd.to_datetime(start_timestamp, format="%H%M%S")
     end_timestamp = pd.to_datetime(end_timestamp, format="%H%M%S")
 
@@ -491,18 +566,20 @@ def main(args):
     pbar = pbar_manager.counter(
         total=len(all_dates), desc="Processing nights", unit="night"
     )
-    
+
     ### upload data from one night (date)
     for date in pbar(all_dates):
         ## date format if YYYYMMDD -> YYYY-MM-DD
-        if '-' not in date:
+        if "-" not in date:
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-        
+
         # DELETE existing data for this night BEFORE inserting new data to avoid duplicates
         if args.delete_existing_night:
-            delete_existing_data_for_night(db_cursor, date, start_timestamp, end_timestamp)
+            delete_existing_data_for_night(
+                db_cursor, date, start_timestamp, end_timestamp
+            )
         db_connection.commit()
-        
+
         for camera_dir in root_dir.glob("*"):
             camera = camera_dir.name
             track_files = list_track_files_for_night(camera_dir, date)
@@ -510,18 +587,18 @@ def main(args):
             ### one night data are saved in one json file
             trackfile2labels = load_identity_labels_from_json(
                 record_root=root_dir.parent,
-                cam_id=camera.split('_')[-1],
-                date = date,
+                cam_id=camera.split("_")[-1],
+                date=date,
                 start_datetime=start_timestamp,
                 end_datetime=end_timestamp,
-                id_col= args.id_col,
+                id_col=args.id_col,
             )
             pbar2 = pbar_manager.counter(
                 total=len(track_files), desc="Processing tracks", unit="track"
             )
             for track_file in pbar2(track_files):
                 # skip behavior files, and part_ files
-                if '_behavior' in track_file.stem or 'part_' in track_file.stem:
+                if "_behavior" in track_file.stem or "part_" in track_file.stem:
                     continue
 
                 individual = trackfile2labels.get(track_file.stem, None)
@@ -538,26 +615,29 @@ def main(args):
                     track_file,
                 )
         ### Load ethogram data from analysis results
-        analysis_root = root_dir.parent / 'demo' / 'night_bout_summary' / date.replace('-', '')
-        
+        analysis_root = (
+            root_dir.parent / "demo" / "night_bout_summary" / date.replace("-", "")
+        )
+
         if analysis_root.exists():
             for individual_dir in analysis_root.iterdir():
                 if not individual_dir.is_dir():
                     continue
-                
+
                 individual_name = individual_dir.name
-                ethogram_csv = individual_dir / 'csvs' / 'ethogram.csv'
-                
+                ethogram_csv = individual_dir / "csvs" / "ethogram.csv"
+
                 if ethogram_csv.exists():
                     print(f"  Loading ethogram for: {individual_name}")
-                    load_ethogram_for_individual(db_cursor, ethogram_csv, individual_name)
+                    load_ethogram_for_individual(
+                        db_cursor, ethogram_csv, individual_name
+                    )
                 else:
                     print(f"  No ethogram found for: {individual_name}")
         else:
             print(f"\nWarning: Analysis directory not found: {analysis_root}")
             print(f"  Skipping ethogram loading for date {date}")
-                
-                
+
     db_connection.commit()
 
 
