@@ -87,9 +87,22 @@ CREATE TABLE ethogram (
 CREATE INDEX ON ethogram (identity_id, start_dt);
 CREATE INDEX ON ethogram (start_dt);
 
+CREATE TABLE ethogram_summary (
+     identity_id      INT NOT NULL,
+     time_bined       TIMESTAMPTZ NOT NULL,
+     invalid          INT NOT NULL,
+     standing         INT NOT NULL,
+     sleep_left_side  INT NOT NULL,
+     sleep_right_side INT NOT NULL,
+     walking          INT NOT NULL,
+     stereotypy       INT NOT NULL,
+     no_observation   INT NOT NULL,
+	 PRIMARY KEY (identity_id, time_bined)
+) 
+
 CREATE TABLE summary_per_behaviour (
 	identity_id      int NOT NULL REFERENCES identities,
-	time             timestamptz NOT NULL, -- Aggregated to 1s
+	time_bined       timestamptz NOT NULL, -- Aggregated to 1s
 	invalid          int,
 	standing         int,
 	sleep_left_side  int,
@@ -97,16 +110,16 @@ CREATE TABLE summary_per_behaviour (
 	walking          int,
 	stereotypy       int,
 	no_observation   int,
-	PRIMARY KEY (identity_id, time)
+	PRIMARY KEY (identity_id, time_bined)
 );
 CREATE INDEX ON summary_per_behaviour (identity_id, time);
 CREATE INDEX ON summary_per_behaviour (time);
 
 CREATE TABLE summary_per_visibility (
 	identity_id     int NOT NULL REFERENCES identities,
-	time            timestamptz NOT NULL, -- Aggregated to seconds
+	time_bined      timestamptz NOT NULL, -- Aggregated to seconds
 	location        point NULL,
-	PRIMARY KEY (identity_id, time)
+	PRIMARY KEY (identity_id, time_bined)
 );
 
 --------------------------------------------------------------
@@ -122,7 +135,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public to zoo_vision;
 
 CREATE USER zoo_vision PASSWORD 'asdf';
 GRANT CONNECT ON DATABASE zoo_vision TO zoo_vision;
-GRANT INSERT ON tracks,observations,ethogram,summary_per_behaviour,summary_per_visibility TO zoo_vision;
+GRANT INSERT ON ALL TABLES IN SCHEMA public TO zoo_vision;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO zoo_vision;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public to zoo_vision;
 

@@ -492,7 +492,15 @@ def summarize_observations(db_cursor):
     db_cursor.execute(
         """
         INSERT INTO  summary_per_behaviour 
-        SELECT identity_id, datetime, invalid, standing, sleep_left_side, sleep_right_side, walking, stereotypy, no_observation
+        SELECT identity_id
+        , time_bined
+        , COALESCE(invalid,0) AS invalid
+        , COALESCE(standing, 0) AS standing
+        , COALESCE(sleep_left_side, 0) AS sleep_left_side
+        , COALESCE(sleep_right_side, 0) AS sleep_right_side
+        , COALESCE(walking, 0) AS walking
+        , COALESCE(stereotypy, 0) AS stereotypy
+        , COALESCE(no_observation, 0) AS no_observation
         FROM  crosstab(
         $$
         SELECT To_char(identity_id, '999')
@@ -536,9 +544,74 @@ def summarize_observations(db_cursor):
         """
     )
     row_count = db_cursor.rowcount
+    print(f"Inserted {row_count} records into summary_per_behaviour table")
 
-    print(f"Inserted {row_count}    records into summary_per_behaviour table")
+    db_cursor.execute(
+        """
+        INSERT INTO ethogram_summary
+        SELECT identity_id,
+            time_bined,
+            COALESCE(invalid, 0)          AS invalid,
+            COALESCE(standing, 0)         AS standing,
+            COALESCE(sleep_left_side, 0)  AS sleep_left_side,
+            COALESCE(sleep_right_side, 0) AS sleep_right_side,
+            COALESCE(walking, 0)          AS walking,
+            COALESCE(stereotypy, 0)       AS stereotypy,
+            COALESCE(no_observation, 0)   AS no_observation
+        FROM   crosstab( 
+        $$
+        SELECT          To_char(i.id, '999')
+                                        || To_char(time_bined, 'YYYY-MM-DD HH12:MI:SS') AS row_name,
+                        i.id                                                            AS identity_id,
+                        time_bined ,
+                        b.column_name           AS behaviour ,
+                        Cast(Count(*)>0 AS INT) AS value
+        FROM            (
+                            SELECT generate_series(timestamptz now()-interval '2 days', now(), interval '1 minute') AS time_bined ) AS tt
+        CROSS JOIN      identities i
+        LEFT OUTER JOIN ethogram AS e
+        ON              e.identity_id = i.id
+        AND             tt.time_bined BETWEEN e.start_dt AND             e.end_dt
+        LEFT OUTER JOIN behaviours AS b
+        ON              e.behaviour_id = b.id
+        GROUP BY        i.id,
+                        time_bined,
+                        behaviour
+        ORDER BY        i.id,
+                        time_bined,
+                        behaviour
+        $$,
+        $$
+        SELECT   column_name AS behaviour
+        FROM     behaviours b
+        ORDER BY id 
+        $$) AS summary ( row_name text, identity_id int, time_bined timestamptz, invalid int, standing int, sleep_left_side int, sleep_right_side int, walking int, stereotypy int, no_observation int )
+        ON conflict do nothing
+        """)
+    row_count = db_cursor.rowcount
+    print(f"Inserted {row_count} records into ethogram_summary table")
 
+    db_cursor.execute(
+        """
+        INSERT INTO summary_per_visibility
+        SELECT identity_id, time_bined, location
+        FROM (
+        SELECT t.identity_id
+            , date_bin('1 second', o.time, TIMESTAMP '1970-01-01') AS time_bined
+            , count(*) as observation_count
+            , point(avg(location[0]), avg(location[1])) as location
+        FROM observations AS o
+        INNER JOIN tracks AS t ON t.id=o.track_id 
+        INNER JOIN identities AS i on t.identity_id=i.id
+        WHERE  o.time BETWEEN now()-INTERVAL '2 days' AND now() AND
+               EXTRACT(EPOCH from t.end_time-t.start_time) > 1
+        GROUP  BY t.id, t.camera_id, t.identity_id, time_bined
+        )
+        WHERE observation_count > 1
+        ON CONFLICT DO NOTHING
+        """)
+    row_count = db_cursor.rowcount
+    print(f"Inserted {row_count} records into summary_per_visibility table")
 
 def main(args):
     root_dir: Path = args.dir

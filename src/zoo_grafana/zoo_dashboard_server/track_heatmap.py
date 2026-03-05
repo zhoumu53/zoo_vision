@@ -74,33 +74,20 @@ def make_map_heatmap(
 
     # Load detections
     sql = """
-WITH cte AS (
-  SELECT 
-      t.camera_id
-    , t.identity_id
-    , date_bin('1 second', o.time, TIMESTAMP %(start_timestamp)s) AS time_bined
-    , count(*) as observation_count
-    , avg(location[0]) as location_x
-    , avg(location[1]) as location_y
-  FROM observations AS o
-  INNER JOIN tracks AS t ON t.id=o.track_id 
-  INNER JOIN identities AS i on t.identity_id=i.id
-  WHERE  o.time BETWEEN TIMESTAMP %(start_timestamp)s AND TIMESTAMP %(end_timestamp)s
-        and EXTRACT(EPOCH from t.end_time-t.start_time) > 1
-  GROUP  BY t.id, t.camera_id, t.identity_id, time_bined
-)
-SELECT location_x, location_y FROM cte
-WHERE cte.observation_count > 1
+  SELECT location[0] as location_x, location[1] as location_y
+  FROM summary_per_visibility
+  WHERE  time_bined BETWEEN TIMESTAMP %(start_timestamp)s AND TIMESTAMP %(end_timestamp)s
 """
     sql_args: dict[str, Any] = {
         "start_timestamp": start_timestamp,
         "end_timestamp": end_timestamp,
     }
     if camera_ids:
-        sql += " and cte.camera_id = ANY(%(camera_ids)s)"
-        sql_args["camera_ids"] = camera_ids
+        raise RuntimeError("Camera ids not supported with summary table")
+        # sql += " and cte.camera_id = ANY(%(camera_ids)s)"
+        # sql_args["camera_ids"] = camera_ids
     if identity_ids:
-        sql += " and cte.identity_id = ANY(%(identity_ids)s)"
+        sql += " and identity_id = ANY(%(identity_ids)s)"
         sql_args["identity_ids"] = identity_ids
     with psycopg2.connect(
         "dbname=zoo_vision user=grafanareader password=asdf"
