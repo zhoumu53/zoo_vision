@@ -217,7 +217,7 @@ def main():
     print("df_to_process", df_to_process)
     df = df[df['IDs'].map(lambda x: x != '[]')]
     summary = build_paired_summary(df)
-    summary.to_csv("/media/mu/zoo_vision/data/semi_gts/paired_summary.csv", index=False)
+    summary.to_csv("/media/mu/zoo_vision/data/semi_gts/paired_summary_test.csv", index=False)
     print(summary)
 
 if __name__ == "__main__":

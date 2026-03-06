@@ -22,7 +22,7 @@ for path in (PROJECT_ROOT, POSE_REID_ROOT):
 
 GT_IMAGES_DIR = '/media/ElephantsWD/elephants/reid_gt_cleaned_data'
 # SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox.csv'
-SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox_2026-01-19.csv'
+SEMI_GT_ID_CSV = '/media/mu/zoo_vision/data/semi_gts/raw/elephants_sandbox_2026-02.csv'
 
 
 ROOM_PAIRS = {

@@ -369,8 +369,8 @@ def _finalize_stereotypy_from_debug(
         return pd.DataFrame(), pd.DataFrame(columns=["start_time", "end_time", "behavior_label"])
 
     dbg = df_debug.copy()
-    dbg["start_timestamp"] = pd.to_datetime(dbg["start_timestamp"], errors="coerce")
-    dbg["end_timestamp"] = pd.to_datetime(dbg["end_timestamp"], errors="coerce")
+    dbg["start_timestamp"] = pd.to_datetime(dbg["start_timestamp"], format="mixed", errors="coerce")
+    dbg["end_timestamp"] = pd.to_datetime(dbg["end_timestamp"], format="mixed", errors="coerce")
     dbg["final_stereotypy"] = False
 
     walk = dbg[(dbg["behavior_label"] == "walking") & dbg["start_timestamp"].notna() & dbg["end_timestamp"].notna()].copy()
@@ -806,7 +806,7 @@ def _read_track_points(
         return cache[track_csv]
 
     pts = df[["timestamp", "world_x", "world_y"]].copy()
-    pts["timestamp"] = pd.to_datetime(pts["timestamp"], errors="coerce")
+    pts["timestamp"] = pd.to_datetime(pts["timestamp"], format="mixed", errors="coerce")
     pts = pts.dropna(subset=["timestamp", "world_x", "world_y"]).sort_values("timestamp")
     cache[track_csv] = pts
     return pts
@@ -1125,8 +1125,8 @@ def _load_bouts_for_date(
         if df.empty:
             continue
 
-        df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
-        df["end_time"] = pd.to_datetime(df["end_time"], errors="coerce")
+        df["start_time"] = pd.to_datetime(df["start_time"], format="mixed", errors="coerce")
+        df["end_time"] = pd.to_datetime(df["end_time"], format="mixed", errors="coerce")
         df = df.dropna(subset=["start_time", "end_time"])
         if df.empty:
             continue
@@ -1356,7 +1356,7 @@ def _timestamp_snaps_from_points(
 ) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     if points is None or points.empty or "timestamp" not in points.columns:
         return []
-    ts = pd.to_datetime(points["timestamp"], errors="coerce").dropna().sort_values().drop_duplicates()
+    ts = pd.to_datetime(points["timestamp"], format="mixed", errors="coerce").dropna().sort_values().drop_duplicates()
     if ts.empty:
         return []
 
@@ -1403,7 +1403,7 @@ def _plot_world_heatmap_by_behaviour(
     title: str,
 ) -> None:
     d = df_traj.copy()
-    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d["timestamp"] = pd.to_datetime(d["timestamp"], format="mixed", errors="coerce")
     d = d.dropna(subset=["timestamp", "world_x", "world_y"])
     d = d[d["behavior_label"].isin(TRAJ_HEATMAP_LABELS)]
     if d.empty:
@@ -1716,6 +1716,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If set, save ethogram and trajectory plots.",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="If set, overwrite existing analysis results. Otherwise, skip dates that have already been processed.",
+    )
     return parser.parse_args()
 
 
@@ -1730,17 +1735,31 @@ def _process_individual_from_csv(
     args: argparse.Namespace,
     plotting: bool,
     folder_name: str | None = None,
+    overwrite: bool = False,
 ) -> None:
     """Process a single individual from a bout CSV file.
     
     Args:
         folder_name: Optional folder name to use instead of individual_label.
                      Used for 'invalid' identity labels like 'confused'.
+        overwrite: If False and output files exist, skip processing.
     """
-    csv_sources = [(csv_path, track_dir)]
-    
     # Use folder_name for output directories, individual_label for filtering data
     output_name = folder_name if folder_name else individual_label
+    
+    # Check if analysis has already been run (unless overwrite=True)
+    if not overwrite:
+        out_base = output_dir / date / output_name
+        out_csv_dir = out_base / "csvs"
+        ethogram_csv = out_csv_dir / "ethogram.csv"
+        activity_budget_csv = out_csv_dir / "activity_budget.csv"
+        
+        # Check if key output files exist
+        if ethogram_csv.exists() and activity_budget_csv.exists():
+            print(f"  ⏭ Skipping {individual_label} (already processed, use --overwrite to reprocess)")
+            return
+    
+    csv_sources = [(csv_path, track_dir)]
     
     # Parse camera IDs
     cam_ids_from_bouts: set[int] = set()
@@ -1926,7 +1945,11 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
     )
     
     if not bouts:
-        raise FileNotFoundError(f"No bout summary CSV files found for date={date}")
+        print(f"\n⚠ Warning: No bout summary CSV files found for date={date}")
+        if args.individual_group:
+            print(f"  (No files matching individual_group='{args.individual_group}')")
+        print("  Skipping this date.\n")
+        return
     
     print(f"\nFound {len(bouts)} bout CSV file(s) for date {date}")
     
@@ -2014,6 +2037,7 @@ def run_analysis(args: argparse.Namespace, plotting: bool | None = None) -> None
                 args=args,
                 plotting=plotting,
                 folder_name=folder_name,
+                overwrite=args.overwrite,
             )
             total_individuals += 1
     
