@@ -11,7 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tqdm
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, MaxNLocator
+from matplotlib.patches import Patch
+import json
 
 try:
     from post_processing.analysis.stereotype_classifier.inference import (
@@ -29,7 +31,402 @@ CAMERA_ROOM_PAIRS: dict[int, int] = {
     18: 17,
 }
 
+
+CAMERA_TO_ROOM_LABEL: dict[int, str] = {
+    16: "Enclosure1 (w/o pool)",
+    19: "Enclosure1 (w/o pool)",
+    17: "Enclosure2 (w. pool)",
+    18: "Enclosure2 (w. pool)",
+}
+
 _RAW_VIDEO_RE = re.compile(r"ZAG-ELP-CAM-(\d{3})-(\d{8})-(\d{6})-")
+
+
+VALID_LABELS = {
+    "01_standing",
+    "02_sleeping_left",
+    "03_sleeping_right",
+    "walking",
+    "stereotypy",
+}
+
+LABEL_ORDER = [
+    "01_standing",
+    "walking",
+    "02_sleeping_left",
+    "03_sleeping_right",
+    "stereotypy",
+    "no_observation",
+]
+
+LABEL_DISPLAY = {
+    "01_standing": "standing",
+    "02_sleeping_left": "lateral recumbancy (left)",
+    "03_sleeping_right": "lateral recumbancy (right)",
+    "no_observation": "outside / no observation",
+    "walking": "locomotion",
+    "stereotypy": "route tracking",
+}
+
+
+LABEL_COLORS = {
+    "02_sleeping_left": "#5FB13E",
+    "03_sleeping_right": "#FF9A2A",
+    "no_observation": "#F1F1F1",
+    "stereotypy": "#FF2624",
+    "01_standing": "#8a00ac",
+    "walking": "#c372cb",
+}
+
+GT_LABEL_COLORS = {
+    "02_sleeping_left": "#539B32",
+    "03_sleeping_right": "#FFC300",
+}
+
+GT_LABEL_MAP = {
+    "sleep_left": "02_sleeping_left",
+    "sleeping_left": "02_sleeping_left",
+    "left_sleep": "02_sleeping_left",
+    "sleep_right": "03_sleeping_right",
+    "sleeping_right": "03_sleeping_right",
+    "right_sleep": "03_sleeping_right",
+    "standing": "01_standing",
+    "stand": "01_standing",
+    "walking": "walking",
+    "walk": "walking",
+    "stereotypy": "stereotypy",
+}
+
+TRAJ_HEATMAP_LABELS = [
+    "01_standing",
+    "walking",
+    "02_sleeping_left",
+    "03_sleeping_right",
+]
+
+TRAJ_STANDING_WALKING_LABELS = [
+    "01_standing",
+    "walking",
+]
+
+LABEL_PRIORITY = {
+    "no_observation": 0,
+    "01_standing": 1,
+    "02_sleeping_left": 2,
+    "03_sleeping_right": 2,
+    "walking": 3,
+    "stereotypy": 4,
+}
+
+STEREOTYPY_CAMERA_IDS = {16, 19}   ### now the stereotypy only for 016-019, the trajs from 017-018 are not good enough for stereotypy analysis
+
+
+STEREOTYPY_MODEL_CHECKPOINT = Path(
+    "/media/mu/zoo_vision/post_processing/analysis/stereotype_classifier/model.pt"
+)
+_STEREOTYPY_BUNDLE: Any = None
+
+
+
+def _trajectory_behaviour_cmap_map() -> dict[str, str]:
+    return {
+        "01_standing": "Spectral",
+        "02_sleeping_left": "summer",
+        "03_sleeping_right": "Wistia",
+        "walking": "cool",
+        "stereotypy": "cool",
+    }
+
+
+def _get_submap_background() -> tuple[np.ndarray, np.ndarray] | None:
+    """Load submap image + world->submap transform using track_heatmap settings."""
+    repo_root = Path(__file__).resolve().parents[2]
+    floorplan_path = repo_root / "data" / "kkep_floorplan.png"
+    config_path = repo_root / "data" / "config.json"
+    if not floorplan_path.exists() or not config_path.exists():
+        return None
+
+    try:
+        with config_path.open() as f:
+            cfg = json.load(f)
+        t_map_from_world2 = np.asarray(cfg["map"]["T_map_from_world2"], dtype=float)
+        
+    except Exception as exc:
+        print(f"Warning: failed to load map background ({exc}); fallback to world_x/world_y heatmap.")
+        return None
+    im_map = cv2.imread(str(floorplan_path))
+    if im_map.ndim == 3 and im_map.shape[2] > 3:
+        im_map = im_map[:, :, :3]
+
+    submap_x = 1450
+    submap_y = 1300
+    submap_w = 1250
+    submap_h = 900
+    submap_scale = 0.25
+
+    im_sub = im_map[
+        submap_y : (submap_y + submap_h),
+        submap_x : (submap_x + submap_w) :,
+    ]
+    im_sub = cv2.resize(
+        im_sub,
+        dsize=None,
+        fx=submap_scale,
+        fy=submap_scale,
+        interpolation=cv2.INTER_AREA,
+    )
+    cv2.cvtColor(im_sub, cv2.COLOR_BGR2RGB, im_sub)
+
+    t_sub_from_world2 = (
+        np.array(
+            [
+                [submap_scale, 0.0, -submap_scale * submap_x],
+                [0.0, submap_scale, -submap_scale * submap_y],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
+        @ t_map_from_world2
+    )
+    return im_sub, t_sub_from_world2
+
+
+def _world_to_submap_xy(
+    world_x: np.ndarray,
+    world_y: np.ndarray,
+    t_sub_from_world2: np.ndarray,
+    sub_w: int,
+    sub_h: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if len(world_x) == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    pts_h = np.column_stack((world_x.astype(float), world_y.astype(float), np.ones(len(world_x), dtype=float)))
+    map_h = (t_sub_from_world2 @ pts_h.T).T
+    u = map_h[:, 0]
+    v = map_h[:, 1]
+    valid = (u >= 0.0) & (u < float(sub_w)) & (v >= 0.0) & (v < float(sub_h))
+    return u[valid], v[valid]
+
+
+def plot_world_heatmap_by_behaviour_after_stereotypy(
+    df_traj: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    night_start: pd.Timestamp | None = None,
+    night_end: pd.Timestamp | None = None,
+    df_stereotypy_windows: pd.DataFrame | None = None,
+    separate: bool = True,
+) -> None:
+    """Plot world heatmap by behavior using final stereotypy windows."""
+
+    d = df_traj.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
+    d = d.dropna(subset=["timestamp", "world_x", "world_y"])
+    if d.empty:
+        return
+
+    if night_start is not None:
+        d = d[d["timestamp"] >= pd.Timestamp(night_start)]
+    if night_end is not None:
+        d = d[d["timestamp"] <= pd.Timestamp(night_end)]
+    if d.empty:
+        return
+
+    if df_stereotypy_windows is not None and not df_stereotypy_windows.empty:
+        windows = df_stereotypy_windows.copy()
+        windows["start_time"] = pd.to_datetime(windows["start_time"], errors="coerce")
+        windows["end_time"] = pd.to_datetime(windows["end_time"], errors="coerce")
+        windows = windows.dropna(subset=["start_time", "end_time"])
+        if not windows.empty:
+            for _, row in windows.iterrows():
+                s = pd.Timestamp(row["start_time"])
+                e = pd.Timestamp(row["end_time"])
+                if s >= e:
+                    continue
+                in_window = (d["timestamp"] >= s) & (d["timestamp"] < e)
+                d.loc[in_window & (d["behavior_label"] == "walking"), "behavior_label"] = "stereotypy"
+
+    behaviors_order = [*TRAJ_HEATMAP_LABELS, "stereotypy"]
+    d = d[d["behavior_label"].isin(behaviors_order)]
+    if d.empty:
+        return
+
+    cmap_for = _trajectory_behaviour_cmap_map()
+    bg_info = _get_submap_background()
+    use_map_bg = bg_info is not None
+    if use_map_bg:
+        im_sub, t_sub_from_world2 = bg_info
+        sub_h, sub_w = int(im_sub.shape[0]), int(im_sub.shape[1])
+    else:
+        x_min, x_max = float(d["world_x"].min()), float(d["world_x"].max())
+        y_min, y_max = float(d["world_y"].min()), float(d["world_y"].max())
+
+    def _render_labels(label_group: list[str], save_path: Path, panel_title: str) -> None:
+        gg = d[d["behavior_label"].isin(label_group)].copy()
+        if gg.empty:
+            return
+        fig, ax = plt.subplots(1, 1, figsize=(9, 7), dpi=300, facecolor="black")
+        ax.set_facecolor("black")
+
+        if use_map_bg:
+            ax.imshow(im_sub, zorder=0)
+
+        plotted_any = False
+        for beh in label_group:
+            g = gg[gg["behavior_label"] == beh]
+            if g.empty:
+                continue
+            if use_map_bg:
+                xs, ys = _world_to_submap_xy(
+                    g["world_x"].to_numpy(dtype=float),
+                    g["world_y"].to_numpy(dtype=float),
+                    t_sub_from_world2,
+                    sub_w,
+                    sub_h,
+                )
+                if len(xs) == 0:
+                    continue
+                ax.hexbin(
+                    xs,
+                    ys,
+                    gridsize=140,
+                    bins="log",
+                    cmap=cmap_for.get(str(beh), "Greys"),
+                    mincnt=1,
+                    alpha=0.78,
+                    zorder=1,
+                )
+                plotted_any = True
+            else:
+                ax.hexbin(
+                    g["world_x"].to_numpy(),
+                    g["world_y"].to_numpy(),
+                    gridsize=140,
+                    bins="log",
+                    cmap=cmap_for.get(str(beh), "Greys"),
+                    mincnt=1,
+                    alpha=0.85,
+                )
+                plotted_any = True
+
+        if not plotted_any:
+            plt.close(fig)
+            return
+
+        if use_map_bg:
+            ax.set_xlim(0, sub_w)
+            ax.set_ylim(sub_h, 0)
+            ax.set_aspect("equal", adjustable="box")
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+        else:
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+
+        ax.set_title(panel_title, color="white")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_color("white")
+        ax.grid(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        # Legend only for merged sleeping panel (left vs right).
+        if set(label_group) == {"02_sleeping_left", "03_sleeping_right"}:
+            legend_handles = [
+                Patch(facecolor=LABEL_COLORS["02_sleeping_left"], edgecolor="none", label=LABEL_DISPLAY["02_sleeping_left"]),
+                Patch(facecolor=LABEL_COLORS["03_sleeping_right"], edgecolor="none", label=LABEL_DISPLAY["03_sleeping_right"]),
+            ]
+            ax.legend(handles=legend_handles, ncol=1, frameon=False, loc="upper right")
+
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, facecolor=fig.get_facecolor(), bbox_inches="tight", dpi=300)
+        plt.close(fig)
+
+    if separate:
+        stem = out_path.stem
+        suffix = out_path.suffix if out_path.suffix else ".png"
+        group_defs: list[tuple[str, list[str], str]] = [
+            ("standing", ["01_standing"], LABEL_DISPLAY.get("01_standing", "standing")),
+            ("walking", ["walking"], LABEL_DISPLAY.get("walking", "walking")),
+            ("stereotypy", ["stereotypy"], LABEL_DISPLAY.get("stereotypy", "stereotypy")),
+            (
+                "sleeping",
+                ["02_sleeping_left", "03_sleeping_right"],
+                f"{LABEL_DISPLAY.get('02_sleeping_left', 'sleeping left')} + {LABEL_DISPLAY.get('03_sleeping_right', 'sleeping right')}",
+            ),
+        ]
+        for tag, labels, label_txt in group_defs:
+            if not d["behavior_label"].isin(labels).any():
+                continue
+            out_i = out_path.with_name(f"{stem}_{tag}{suffix}")
+            if 'lateral' in label_txt:
+                label_txt = "lateral recumbancy"
+            _render_labels(labels, out_i, f"Trajectory ({label_txt})")
+    else:
+        _render_labels([b for b in behaviors_order if (d["behavior_label"] == b).any()], out_path, title)
+
+
+def camera_ids_to_room_label_text(camera_ids: object) -> str:
+    """Map camera id(s) to room label(s) for display text.
+
+    If input already looks like room-label text (no pure numeric camera ids),
+    it is returned unchanged to avoid double conversion.
+    """
+    if camera_ids is None:
+        return "unknown"
+    if isinstance(camera_ids, float) and pd.isna(camera_ids):
+        return "unknown"
+
+    cams: list[int] = []
+    passthrough_txt = ""
+
+    if isinstance(camera_ids, str):
+        txt = camera_ids.strip()
+        if not txt:
+            return "unknown"
+        passthrough_txt = txt
+        parts = [p.strip() for p in re.split(r"[,;|/]+", txt) if p.strip()]
+        for part in parts:
+            for token in part.split():
+                if token.isdigit():
+                    cams.append(int(token))
+    elif isinstance(camera_ids, Iterable):
+        raw_items: list[str] = []
+        for item in camera_ids:
+            if item is None:
+                continue
+            item_txt = str(item).strip()
+            if not item_txt:
+                continue
+            raw_items.append(item_txt)
+            if item_txt.isdigit():
+                cams.append(int(item_txt))
+        passthrough_txt = ",".join(raw_items)
+    else:
+        txt = str(camera_ids).strip()
+        if txt.isdigit():
+            cams.append(int(txt))
+        passthrough_txt = txt
+
+    cams = sorted(set(cams))
+    if not cams:
+        return passthrough_txt if passthrough_txt else "unknown"
+
+    room_labels: list[str] = []
+    unknown_cam_labels: list[str] = []
+    for cam in cams:
+        room_label = CAMERA_TO_ROOM_LABEL.get(int(cam))
+        if room_label:
+            if room_label not in room_labels:
+                room_labels.append(room_label)
+        else:
+            unknown_cam_labels.append(f"cam {int(cam):03d}")
+
+    labels = room_labels + unknown_cam_labels
+    return ", ".join(labels) if labels else "unknown"
 
 
 @dataclass(frozen=True)
@@ -663,10 +1060,14 @@ def analyze_ethogram_and_plot_activity_budget(
                 .sort_values("duration_min", ascending=False)
                 .reset_index(drop=True)
             )
-            total_min = float(budget["duration_min"].sum())
-            budget["percentage"] = (
-                budget["duration_min"] / total_min * 100.0 if total_min > 0 else 0.0
+            # Calculate percentage based on observed time only (exclude no_observation)
+            observed_min = float(
+                budget[budget["label"] != "no_observation"]["duration_min"].sum()
             )
+            if observed_min > 0:
+                budget["percentage"] = budget["duration_min"] / observed_min * 100.0
+            else:
+                budget["percentage"] = 0.0
 
     if camera_ids is None:
         camera_txt = "unknown"
@@ -676,19 +1077,20 @@ def analyze_ethogram_and_plot_activity_budget(
         camera_txt = ",".join(str(int(c)) for c in sorted(set(int(c) for c in camera_ids)))
         if not camera_txt:
             camera_txt = "unknown"
+    camera_txt = camera_ids_to_room_label_text(camera_txt)
 
     other_group_txt = str(other_group).strip() if other_group is not None else ""
     if not other_group_txt:
         other_group_txt = "unknown"
     total_hours = budget["duration_min"].sum() / 60.0
     title = (
-        f"{title_prefix} {date}, \n camera ids {camera_txt}\n"
+        f"{title_prefix} {date}, \n room {camera_txt}\n"
         f"total {total_hours:.1f} hours\n"
         f"other group {other_group_txt}\n"
     )
     out_plot.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(7, 7), dpi=160)
+    fig, ax = plt.subplots(figsize=(7, 7), dpi=300)
     if budget.empty:
         ax.text(0.5, 0.5, "No valid observations", ha="center", va="center", fontsize=12)
         ax.axis("off")
@@ -734,9 +1136,235 @@ def analyze_ethogram_and_plot_activity_budget(
         ax.axis("equal")
     ax.set_title(title)
     fig.tight_layout(pad=0.4)
-    fig.savefig(out_plot, dpi=160, bbox_inches="tight")
+    fig.savefig(out_plot, dpi=300, bbox_inches="tight")
     plt.close(fig)
     return budget
+
+
+def plot_hourly_activity_budget_radial(
+    ethograms_by_date: dict[str, pd.DataFrame],
+    out_path: Path,
+    title: str,
+    label_order: list[str] | None = None,
+    label_display_map: dict[str, str] | None = None,
+    label_color_map: dict[str, str] | None = None,
+    start_hour: int = 18,
+    end_hour: int = 6,
+) -> pd.DataFrame:
+    """Plot average activity budget per hour (across dates) as a radial stacked bar chart.
+
+    Returns a long-form dataframe with mean minutes per behavior per hour.
+    """
+    if not ethograms_by_date:
+        raise ValueError("No ethogram data provided for radial activity budget plot")
+    if start_hour == end_hour:
+        raise ValueError("start_hour and end_hour must define a non-empty interval")
+
+    labels = list(label_order) if label_order is not None else list(LABEL_ORDER)
+    if "no_observation" in labels:
+        labels = [l for l in labels if l != "no_observation"]
+    if not labels:
+        labels = [l for l in LABEL_ORDER if l != "no_observation"]
+
+    def _build_hour_edges(base_date_txt: str) -> tuple[pd.Timestamp, pd.DatetimeIndex]:
+        base_date = pd.to_datetime(base_date_txt, format="%Y%m%d", errors="coerce")
+        if pd.isna(base_date):
+            raise ValueError(f"Invalid date string: {base_date_txt}")
+        night_start = pd.Timestamp(base_date) + pd.Timedelta(hours=int(start_hour))
+        if end_hour <= start_hour:
+            n_hours = (24 - int(start_hour)) + int(end_hour)
+            night_end = pd.Timestamp(base_date) + pd.Timedelta(days=1, hours=int(end_hour))
+        else:
+            n_hours = int(end_hour - start_hour)
+            night_end = pd.Timestamp(base_date) + pd.Timedelta(hours=int(end_hour))
+        edges = pd.date_range(start=night_start, end=night_end, freq="1h")
+        if len(edges) != n_hours + 1:
+            edges = pd.DatetimeIndex([night_start + pd.Timedelta(hours=h) for h in range(n_hours + 1)])
+        return night_start, edges
+
+    rows: list[dict] = []
+    for date_txt, eth in ethograms_by_date.items():
+        if eth is None or eth.empty:
+            continue
+        if not {"start_dt", "end_dt", "label"}.issubset(eth.columns):
+            continue
+        e = eth.copy()
+        e["start_dt"] = pd.to_datetime(e["start_dt"], errors="coerce")
+        e["end_dt"] = pd.to_datetime(e["end_dt"], errors="coerce")
+        e = e.dropna(subset=["start_dt", "end_dt", "label"])
+        if e.empty:
+            continue
+
+        night_start, hour_edges = _build_hour_edges(date_txt)
+        n_hours = len(hour_edges) - 1
+        for h_idx in range(n_hours):
+            h_start = pd.Timestamp(hour_edges[h_idx])
+            h_end = pd.Timestamp(hour_edges[h_idx + 1])
+            for beh in labels:
+                seg = e[e["label"].astype(str) == str(beh)]
+                if seg.empty:
+                    overlap_sec = 0.0
+                else:
+                    s = seg["start_dt"].clip(lower=h_start, upper=h_end)
+                    t = seg["end_dt"].clip(lower=h_start, upper=h_end)
+                    overlap = (t - s).dt.total_seconds()
+                    overlap_sec = float(overlap[overlap > 0].sum())
+                rows.append(
+                    {
+                        "date": str(date_txt),
+                        "hour_idx": int(h_idx),
+                        "hour_label": f"{h_start:%H}:00-{h_end:%H}:00",
+                        "behavior_label": str(beh),
+                        "minutes": float(overlap_sec / 60.0),
+                    }
+                )
+
+    if not rows:
+        raise ValueError("No valid hourly overlaps found in provided ethograms")
+
+    df_hourly = pd.DataFrame(rows)
+    agg = (
+        df_hourly.groupby(["hour_idx", "hour_label", "behavior_label"], as_index=False)["minutes"]
+        .mean()
+        .sort_values(["hour_idx", "behavior_label"])
+        .reset_index(drop=True)
+    )
+
+    hour_labels = agg[["hour_idx", "hour_label"]].drop_duplicates().sort_values("hour_idx")
+    hours = hour_labels["hour_idx"].to_numpy(dtype=int)
+    n_hours = len(hours)
+    n_behaviors = len(labels)
+    
+    # Extract actual hour from hour_label (e.g., "18:00-19:00" -> 18)
+    # Map to 12-hour clock positions: 18->6, 19->7, ..., 23->11, 0->12, 1->1, ..., 5->5
+    hour_to_clock = {}
+    hour_to_label = {}
+    for _, row in hour_labels.iterrows():
+        h_idx = int(row["hour_idx"])
+        h_label = str(row["hour_label"])
+        actual_hour = int(h_label.split(":")[0])  # Extract hour from "HH:00-HH:00"
+        # Map to 12-hour clock: 0/24->0 (12 o'clock), 1->1, ..., 11->11, 12->0, 13->1, etc.
+        clock_pos = actual_hour % 12
+        hour_to_clock[h_idx] = clock_pos
+        hour_to_label[h_idx] = h_label.split("-")[0]
+    
+    fig, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(12, 10), dpi=300)
+    ax.set_theta_zero_location("N")  # theta=0 at North (12 o'clock)
+    ax.set_theta_direction(-1)  # Clockwise direction
+
+    # Width of each behavior wedge at each clock position
+    clock_width = 2.0 * np.pi / 12  # 12 positions on clock
+    behavior_width = clock_width / n_behaviors * 0.95  # 0.95 for small gaps
+    
+    behavior_present = []
+    behavior_colors = {}  # Track first color used for each behavior for legend
+    max_val = 0.0
+    
+    for hour_idx, h in enumerate(hours):
+        # Get clock position (0-11) for this hour
+        clock_pos = hour_to_clock[h]
+        # Center wedges at exact clock position: 0:00 at theta=0 (top), 1:00 at next position clockwise, etc.
+        hour_theta_center = clock_pos * clock_width
+        hour_theta_start = hour_theta_center - (n_behaviors * behavior_width) / 2
+        
+        for beh_idx, beh in enumerate(labels):
+            # Get value for this (hour, behavior) combination
+            m = agg[(agg["hour_idx"] == int(h)) & (agg["behavior_label"] == str(beh))]
+            val = float(m["minutes"].iloc[0]) if not m.empty else 0.0
+            
+            if val > 0 and beh not in behavior_present:
+                behavior_present.append(beh)
+            
+            max_val = max(max_val, val)
+            
+            color = (
+                label_color_map.get(beh, "#9E9E9E")
+                if label_color_map is not None
+                else LABEL_COLORS.get(beh, "#9E9E9E")
+            )
+            
+            # Store color for legend (keep first encounter)
+            if beh not in behavior_colors:
+                behavior_colors[beh] = color
+            
+            # Calculate theta position for this behavior wedge within the hour
+            wedge_theta = hour_theta_start + beh_idx * behavior_width
+            
+            # Draw individual wedge for this (hour, behavior)
+            ax.bar(
+                wedge_theta, 
+                val, 
+                width=behavior_width, 
+                bottom=0,  # Each wedge starts from center
+                color=color, 
+                edgecolor="white",  # White separation between wedges
+                linewidth=1.0,
+                align='edge'  # Align bars to the edge
+            )
+    
+    # Set radial limits and ticks
+    # Radius unit: "Mean minutes / hour" - max at 30 minutes
+    max_radius = 30.0
+    ax.set_ylim(0, max_radius)
+    ax.set_yticks([5, 10, 15, 20, 25, 30])
+    ax.set_yticklabels(['5', '10', '15', '20', '25', '30'], fontsize=14)
+
+    # Hour labels on x-axis (angular axis) - one label per clock position
+    # Group hours by clock position (some positions may have multiple hours from our data)
+    clock_labels = {}
+    for h_idx in hours:
+        clock_pos = hour_to_clock[h_idx]
+        if clock_pos not in clock_labels:
+            clock_labels[clock_pos] = hour_to_label[h_idx]
+    
+    # Place labels at exact clock positions: 0:00 at top (theta=0), others clockwise
+    label_positions = sorted(clock_labels.keys())
+    hour_theta_centers = [pos * clock_width for pos in label_positions]
+    tick_labels = [clock_labels[pos][0:2] for pos in label_positions]
+    ax.set_xticks(hour_theta_centers)
+    ax.set_xticklabels(tick_labels, fontsize=14, fontweight="bold")
+    
+    # Title and axis labels
+    ax.set_title(title, pad=28, fontsize=16, fontweight="bold")
+    ax.set_ylabel("", labelpad=30, fontsize=14) 
+
+    # Legend: "Behavior" title, upper right with explicit color handles
+    if behavior_present:
+        from matplotlib.patches import Patch
+        
+        legend_handles = []
+        legend_labels = []
+        # Use the original labels order (from the function parameter) for consistency
+        for b in labels:
+            if b in behavior_present:
+                # Get the correct color for this behavior
+                color = behavior_colors.get(b, "#9E9E9E")
+                # Get the display label
+                label = (
+                    label_display_map.get(b, b) if label_display_map is not None 
+                    else LABEL_DISPLAY.get(b, b)
+                )
+                legend_handles.append(Patch(facecolor=color, edgecolor='white', linewidth=1))
+                legend_labels.append(label)
+        
+        ax.legend(
+            legend_handles,
+            legend_labels, 
+            loc="upper right", 
+            bbox_to_anchor=(1.25, 1.15), 
+            frameon=True,
+            title="Behavior",
+            title_fontsize=14,
+            fontsize=10,
+            fancybox=False,
+            framealpha=0.95
+        )
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return agg
 
 
 _STEREOTYPY_MODEL_CHECKPOINT = Path(
@@ -936,7 +1564,7 @@ def _plot_world_heatmap_standing_walking_bin(
             cam_ids_str = ",".join(str(cid) for cid in cam_ids_list)
 
             slot_png = out_dir / f"{title}_{beh}_{b_start:%Y%m%d_%H%M%S}_{b_end:%Y%m%d_%H%M%S}.png"
-            fig_single, ax_single = plt.subplots(figsize=(6, 6), dpi=180, facecolor="black")
+            fig_single, ax_single = plt.subplots(figsize=(6, 6), dpi=300, facecolor="black")
             ax_single.set_facecolor("black")
             ax_single.hexbin(
                 g["world_x"].to_numpy(),
@@ -1065,3 +1693,759 @@ def _plot_world_heatmap_standing_walking_bin(
             out_flags[col] = np.nan
     out_flags = out_flags[stereotypy_cols].copy()
     return out_flags, debug_df
+
+
+def categorize_time_period(timestamp: pd.Timestamp) -> str:
+    """Categorize timestamp into time period.
+    
+    Args:
+        timestamp: Timestamp to categorize
+        
+    Returns:
+        'early_night' (18:00-00:00), 'mid_night' (00:00-05:00), or 'early_morning' (05:00-08:00)
+    """
+    hour = timestamp.hour
+    if 18 <= hour < 24:
+        return 'early_night'
+    elif 0 <= hour < 5:
+        return 'mid_night'
+    elif 5 <= hour < 8:
+        return 'early_morning'
+    else:
+        # Outside normal observation window
+        return 'outside_window'
+
+
+def analyze_stereotypy_from_ethogram(
+    ethogram_csv: Path,
+    individual_info_csv: Path | None = None,
+) -> pd.DataFrame | None:
+    """Analyze stereotypy patterns from ethogram data.
+    
+    Args:
+        ethogram_csv: Path to ethogram CSV with columns: start_dt, end_dt, label
+        individual_info_csv: Optional path to individual_info.csv with companions and camera info
+        
+    Returns:
+        DataFrame with stereotypy analysis per time period, or None if no valid data
+    """
+    if not ethogram_csv.exists():
+        return None
+    
+    # Load ethogram
+    ethogram = pd.read_csv(ethogram_csv)
+    if ethogram.empty or not {'start_dt', 'end_dt', 'label'}.issubset(ethogram.columns):
+        return None
+    
+    ethogram['start_dt'] = pd.to_datetime(ethogram['start_dt'], errors='coerce')
+    ethogram['end_dt'] = pd.to_datetime(ethogram['end_dt'], errors='coerce')
+    ethogram = ethogram.dropna(subset=['start_dt', 'end_dt', 'label'])
+    
+    if ethogram.empty:
+        return None
+    
+    # Load individual info if available
+    companions = 'unknown'
+    camera_ids = 'unknown'
+    if individual_info_csv and individual_info_csv.exists():
+        info = pd.read_csv(individual_info_csv)
+        if not info.empty:
+            companions = info.iloc[0].get('companions', 'unknown')
+            camera_ids = info.iloc[0].get('camera_ids', 'unknown')
+            
+    # Normalize companions
+    if pd.isna(companions) or str(companions).strip() == "":
+        companions = 'unknown'
+    else:
+        companions = normalize_companion_group(companions)
+    
+    # Calculate duration in seconds
+    ethogram['duration_s'] = (ethogram['end_dt'] - ethogram['start_dt']).dt.total_seconds()
+    
+    # Filter out no_observation periods for analysis
+    observed = ethogram[ethogram['label'] != 'no_observation'].copy()
+    
+    if observed.empty:
+        return None
+    
+    # Categorize by time period
+    observed['time_period'] = observed['start_dt'].apply(categorize_time_period)
+    
+    # Filter out entries outside observation window
+    observed = observed[observed['time_period'] != 'outside_window']
+    
+    if observed.empty:
+        return None
+    
+    # Analyze by time period
+    results = []
+    for period in ['early_night', 'mid_night', 'early_morning']:
+        period_data = observed[observed['time_period'] == period]
+        
+        if period_data.empty:
+            results.append({
+                'time_period': period,
+                'total_observed_duration_s': 0.0,
+                'stereotypy_duration_s': 0.0,
+                'stereotypy_percentage': 0.0,
+                'n_stereotypy_bouts': 0,
+                'companions': companions,
+                'camera_ids': camera_ids,
+            })
+            continue
+        
+        total_duration = period_data['duration_s'].sum()
+        stereotypy_data = period_data[period_data['label'] == 'stereotypy']
+        stereotypy_duration = stereotypy_data['duration_s'].sum()
+        n_stereotypy_bouts = len(stereotypy_data)
+        
+        stereotypy_pct = (stereotypy_duration / total_duration * 100) if total_duration > 0 else 0.0
+        
+        results.append({
+            'time_period': period,
+            'total_observed_duration_s': total_duration,
+            'stereotypy_duration_s': stereotypy_duration,
+            'stereotypy_percentage': stereotypy_pct,
+            'n_stereotypy_bouts': n_stereotypy_bouts,
+            'companions': companions,
+            'camera_ids': camera_ids,
+        })
+    
+    # Also add overall stats
+    total_duration = observed['duration_s'].sum()
+    stereotypy_data = observed[observed['label'] == 'stereotypy']
+    stereotypy_duration = stereotypy_data['duration_s'].sum()
+    n_stereotypy_bouts = len(stereotypy_data)
+    stereotypy_pct = (stereotypy_duration / total_duration * 100) if total_duration > 0 else 0.0
+    
+    results.append({
+        'time_period': 'overall',
+        'total_observed_duration_s': total_duration,
+        'stereotypy_duration_s': stereotypy_duration,
+        'stereotypy_percentage': stereotypy_pct,
+        'n_stereotypy_bouts': n_stereotypy_bouts,
+        'companions': companions,
+        'camera_ids': camera_ids,
+    })
+    
+    return pd.DataFrame(results)
+
+
+def aggregate_stereotypy_analysis_multi_dates(
+    output_dir: Path,
+    individual_name: str,
+    dates: list[str],
+) -> pd.DataFrame:
+    """Aggregate stereotypy analysis across multiple dates.
+    
+    Args:
+        output_dir: Root output directory containing date subdirectories
+        individual_name: Name of individual (e.g., 'Thai')
+        dates: List of date strings (YYYYMMDD format)
+        
+    Returns:
+        DataFrame with aggregated analysis per date and time period
+    """
+    all_results = []
+    
+    for date in dates:
+        date_dir = output_dir / date / individual_name
+        ethogram_csv = date_dir / 'csvs' / 'ethogram.csv'
+        individual_info_csv = date_dir / 'csvs' / 'individual_info.csv'
+        
+        if not ethogram_csv.exists():
+            print(f"  Skipping {date}: ethogram not found")
+            continue
+        
+        date_analysis = analyze_stereotypy_from_ethogram(
+            ethogram_csv=ethogram_csv,
+            individual_info_csv=individual_info_csv if individual_info_csv.exists() else None,
+        )
+        
+        if date_analysis is not None:
+            date_analysis.insert(0, 'date', date)
+            all_results.append(date_analysis)
+            print(f"  ✓ Processed {date}")
+    
+    if not all_results:
+        return pd.DataFrame()
+    
+    return pd.concat(all_results, ignore_index=True)
+
+
+def plot_stereotypy_analysis(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> None:
+    """Generate visualization plots for stereotypy analysis.
+    
+    Args:
+        df_analysis: DataFrame with stereotypy analysis data
+        out_dir: Output directory for plots
+        individual_name: Name of individual
+    """
+    if df_analysis.empty:
+        print("No data to plot")
+        return
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Stereotypy percentage by time period (overall across dates)
+    fig, ax = plt.subplots(figsize=(6, 5), dpi=300)
+    
+    # Exclude 'overall' for time period comparison
+    time_period_data = df_analysis[df_analysis['time_period'] != 'overall'].copy()
+    
+    if not time_period_data.empty:
+        # Group by time period and calculate mean
+        period_stats = time_period_data.groupby('time_period').agg({
+            'stereotypy_percentage': ['mean', 'std'],
+            'n_stereotypy_bouts': 'sum',
+            'total_observed_duration_s': 'sum',
+        }).reset_index()
+        
+        period_stats.columns = ['time_period', 'mean_pct', 'std_pct', 'total_bouts', 'total_duration']
+        period_order = ['early_night', 'mid_night', 'early_morning']
+        period_stats['time_period'] = pd.Categorical(
+            period_stats['time_period'], 
+            categories=period_order, 
+            ordered=True
+        )
+        period_stats = period_stats.sort_values('time_period')
+        
+        colors=['#FF9830', '#5794F2', '#73BF69']
+        ax.bar(
+            period_stats['time_period'],
+            period_stats['mean_pct'],
+            yerr=period_stats['std_pct'],
+            capsize=5,
+            alpha=0.5,
+            color=colors[:len(period_stats)]
+        )
+        
+        # Overlay individual data points
+        for i, period in enumerate(period_order):
+            period_values = time_period_data[time_period_data['time_period'] == period]['stereotypy_percentage']
+            if not period_values.empty:
+                # Add small random jitter for visibility
+                x_positions = np.random.normal(i, 0.04, size=len(period_values))
+                color=colors[i % len(colors)]
+                ax.scatter(x_positions, period_values, color=color, alpha=1, s=30, zorder=3, edgecolor='black', linewidth=0.5)
+        
+        ax.set_xlabel('Time Period', fontsize=12)
+        ax.set_ylabel('Mean Stereotypy Percentage (%)', fontsize=12)
+        ax.set_title(f'Route Tracing Behavior by Time Period - {individual_name}', fontsize=14)
+        ax.set_xticklabels(['\n18:00-00:00', '\n00:00-05:00', '\n05:00-08:00'])
+        ax.set_ylim(0, 100)
+        ax.grid(axis='y', alpha=0.3)
+        
+        fig.tight_layout()
+        fig.savefig(out_dir / f'{individual_name}_stereotypy_by_time_period.png', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved: {out_dir / f'{individual_name}_stereotypy_by_time_period.png'}")
+    
+    # 2. Stereotypy trends over dates
+    fig, axes = plt.subplots(figsize=(8, 5), dpi=300)
+    
+    overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+    if not overall_data.empty:
+        overall_data = overall_data.sort_values('date')
+        
+        # Stereotypy percentage over time -- no line connecting points, just markers to show variability across dates
+        axes.scatter(
+            range(len(overall_data)),
+            overall_data['stereotypy_percentage'],
+            marker='o',
+            s=60,
+            color='#F2495C',
+            edgecolor='black',
+            linewidth=0.5,
+            zorder=3
+        )
+        axes.set_xlabel('Night (Date)', fontsize=11)
+        axes.set_ylabel('Stereotypy Percentage (%)', fontsize=11)
+        axes.set_title(f'Route Tracing Percentage Over Time - {individual_name}', fontsize=13)
+        axes.set_ylim(0, 100)
+        axes.grid(True, alpha=0.3)
+        
+        # Add date labels on x-axis
+        # tick_positions = range(0, len(overall_data), max(1, len(overall_data) // 10))
+        axes.set_xticks(range(len(overall_data)))
+        axes.set_xticklabels([overall_data.iloc[i]['date'] for i in range(len(overall_data))], rotation=90, ha='right', fontsize=8)
+        
+        
+        fig.tight_layout()
+        fig.savefig(out_dir / f'{individual_name}_stereotypy_trends.png', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved: {out_dir / f'{individual_name}_stereotypy_trends.png'}")
+    
+    # 4. Stereotypy by camera location
+    if 'camera_ids' in df_analysis.columns:
+        overall_with_cameras = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+        if not overall_with_cameras.empty:
+            camera_stats = overall_with_cameras.groupby('camera_ids').agg({
+                'stereotypy_percentage': ['mean', 'std', 'count'],
+                'n_stereotypy_bouts': 'sum',
+            }).reset_index()
+            camera_stats.columns = ['camera_ids', 'mean_pct', 'std_pct', 'n_dates', 'total_bouts']
+            
+            # Filter out camera groups with very few observations
+            camera_stats = camera_stats[camera_stats['n_dates'] >= 2]
+            
+            if not camera_stats.empty:
+                fig, ax = plt.subplots(figsize=(6, 5), dpi=300)
+                
+                bar_colors = ['#FF9830', '#5794F2', '#73BF69', '#F2495C', '#B877D9', '#FFB357']
+                ax.bar(
+                    range(len(camera_stats)),
+                    camera_stats['mean_pct'],
+                    yerr=camera_stats['std_pct'],
+                    capsize=5,
+                    alpha=1,
+                    color='gray',
+                    edgecolor='black',
+                    linewidth=1
+                )
+                
+                # Overlay individual data points with different colors and markers for different companion groups
+                if 'companions' in overall_with_cameras.columns:
+                    # Get unique companion groups for marker and color assignment
+                    unique_companions = sorted(overall_with_cameras['companions'].dropna().unique())
+                    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+                    scatter_colors = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6', '#1ABC9C', '#E67E22', '#34495E', '#16A085', '#D35400']
+                    companion_to_marker = {comp: markers[idx % len(markers)] for idx, comp in enumerate(unique_companions)}
+                    companion_to_color = {comp: scatter_colors[idx % len(scatter_colors)] for idx, comp in enumerate(unique_companions)}
+                    
+                    # Track which companions have been plotted for legend
+                    plotted_companions = set()
+                    
+                    for i, camera_id in enumerate(camera_stats['camera_ids']):
+                        camera_data = overall_with_cameras[overall_with_cameras['camera_ids'] == camera_id]
+                        for companion in camera_data['companions'].dropna().unique():
+                            companion_subset = camera_data[camera_data['companions'] == companion]
+                            if not companion_subset.empty:
+                                values = companion_subset['stereotypy_percentage']
+                                x_positions = np.random.normal(i, 0.04, size=len(values))
+                                marker = companion_to_marker.get(companion, 'o')
+                                color = companion_to_color.get(companion, '#E74C3C')
+                                # Only add label for first occurrence of each companion group
+                                label = f'{companion}' if companion not in plotted_companions else ''
+                                plotted_companions.add(companion)
+                                ax.scatter(x_positions, values, color=color, 
+                                         marker=marker, alpha=0.8, s=60, zorder=3, 
+                                         edgecolor='black', linewidth=0.5, label=label)
+                else:
+                    # Fallback if no companion info
+                    for i, camera_id in enumerate(camera_stats['camera_ids']):
+                        camera_values = overall_with_cameras[overall_with_cameras['camera_ids'] == camera_id]['stereotypy_percentage']
+                        if not camera_values.empty:
+                            x_positions = np.random.normal(i, 0.04, size=len(camera_values))
+                            ax.scatter(x_positions, camera_values, color='#E74C3C', 
+                                     alpha=0.8, s=60, zorder=3, edgecolor='black', linewidth=0.5)
+                
+                ax.set_xlabel('Enclosure', fontsize=12)
+                ax.set_ylabel('Mean Stereotypy Percentage (%)', fontsize=12)
+                ax.set_title(f'Route Tracing Behavior by Enclosure Location - {individual_name}\n(Color + Marker = Social group)', fontsize=14)
+                ax.set_xticks(range(len(camera_stats)))
+                room_tick_labels = camera_stats["camera_ids"].map(camera_ids_to_room_label_text)
+                ax.set_xticklabels(room_tick_labels.astype(str), rotation=0, ha='right')
+                ax.set_ylim(0, 100)
+                ax.grid(axis='y', alpha=0.3)
+                
+                # Add legend if we have companion markers, to right top inside the plot area
+                if 'companions' in overall_with_cameras.columns and len(overall_with_cameras['companions'].dropna().unique()) > 1:
+                    ax.legend(loc='upper right', fontsize=9, framealpha=0.9, title='Social Groups', ncol=1)
+                
+                # Add count annotations
+                for i, row in enumerate(camera_stats.itertuples()):
+                    ax.text(
+                        i,
+                        row.mean_pct + (row.std_pct if not pd.isna(row.std_pct) else 0) + 1.0,
+                        f'n={row.n_dates}',
+                        ha='center',
+                        fontsize=9
+                    )
+                
+                fig.tight_layout()
+                fig.savefig(out_dir / f'{individual_name}_stereotypy_by_camera.png', dpi=300, bbox_inches='tight')
+                plt.close(fig)
+                print(f"  Saved: {out_dir / f'{individual_name}_stereotypy_by_camera.png'}")
+
+
+def statistical_analysis_stereotypy(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> dict:
+    """Perform statistical analysis to identify factors influencing stereotypy behavior.
+    
+    Uses Kruskal-Wallis test (non-parametric) and effect size calculations to determine which factors
+    (time_period, companions, room) have the strongest influence on stereotypy percentage.
+    
+    Args:
+        df_analysis: DataFrame with stereotypy analysis data
+        out_dir: Output directory for results
+        individual_name: Name of individual
+        
+    Returns:
+        Dictionary with statistical results
+    """
+    try:
+        from scipy.stats import kruskal
+    except ImportError:
+        print("Warning: scipy not available, skipping statistical analysis")
+        return {}
+    
+    # Filter to only overall data (not time_period breakdowns)
+    overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+    
+    if overall_data.empty or len(overall_data) < 3:
+        print("Insufficient data for statistical analysis (need at least 3 observations)")
+        return {}
+    
+    # Convert camera_ids to room labels
+    if 'camera_ids' in overall_data.columns:
+        overall_data['room'] = overall_data['camera_ids'].apply(camera_ids_to_room_label_text)
+    
+    results = {
+        'n_observations': len(overall_data),
+        'factors': {},
+        'summary': [],
+        'table_rows': []
+    }
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_lines = []
+    
+    report_lines.append("="*80)
+    report_lines.append(f"STATISTICAL ANALYSIS - {individual_name}")
+    report_lines.append(f"Route Tracing Behavior Across Different Factors")
+    report_lines.append("="*80)
+    report_lines.append(f"\nTotal observations: {len(overall_data)}")
+    report_lines.append(f"Mean stereotypy percentage: {overall_data['stereotypy_percentage'].mean():.2f}% (SD: {overall_data['stereotypy_percentage'].std():.2f}%)")
+    report_lines.append("")
+    report_lines.append("METHOD: Kruskal-Wallis test (non-parametric)")
+    report_lines.append("  - Appropriate for non-normal distributions or unequal variances")
+    report_lines.append("  - Tests whether groups come from the same distribution")
+    report_lines.append("")
+    report_lines.append("-"*80)
+    report_lines.append("FACTOR ANALYSIS")
+    report_lines.append("-"*80)
+    report_lines.append("")
+    
+    # Analyze each factor
+    factors_to_test = []
+    
+    # 1. Time period analysis (using non-overall data)
+    time_period_data = df_analysis[df_analysis['time_period'] != 'overall'].copy()
+    if len(time_period_data['time_period'].unique()) >= 2:
+        factors_to_test.append(('time_period', time_period_data, 'Time Period'))
+    
+    # 2. Companions analysis
+    if 'companions' in overall_data.columns:
+        companions_clean = overall_data[overall_data['companions'].notna()]
+        if len(companions_clean['companions'].unique()) >= 2:
+            factors_to_test.append(('companions', companions_clean, 'Social Group'))
+    
+    # 3. Enclosure analysis (converted from camera_ids)
+    if 'room' in overall_data.columns:
+        room_clean = overall_data[overall_data['room'].notna()]
+        if len(room_clean['room'].unique()) >= 2:
+            factors_to_test.append(('room', room_clean, 'Enclosure Location'))
+    
+    for factor_name, factor_data, factor_label in factors_to_test:
+        report_lines.append(f"\n{factor_label.upper()}")
+        report_lines.append("-" * 40)
+        
+        # Get groups
+        groups = factor_data.groupby(factor_name)['stereotypy_percentage'].apply(list)
+        group_names = list(groups.index)
+        group_values = [np.array(g) for g in groups.values if len(g) > 0]
+        
+        if len(group_values) < 2:
+            report_lines.append(f"  Skipped: Need at least 2 groups (found {len(group_values)})")
+            continue
+        
+        # Report group sizes and means
+        report_lines.append(f"  Groups: {len(group_names)}")
+        for gname, gvals in zip(group_names, group_values):
+            report_lines.append(f"    {gname}: n={len(gvals)}, mean={np.mean(gvals):.2f}%, SD={np.std(gvals):.2f}%")
+        
+        # Use Kruskal-Wallis test
+        stat, p_value = kruskal(*group_values)
+        test_name = "Kruskal-Wallis"
+        results['factors'][factor_name] = {
+            'test': 'kruskal_wallis',
+            'statistic': float(stat),
+            'p_value': float(p_value),
+            'significant': p_value < 0.05,
+            'groups': group_names
+        }
+        
+        # Calculate effect size (eta-squared)
+        total_mean = np.mean(np.concatenate(group_values))
+        ss_between = sum(len(g) * (np.mean(g) - total_mean)**2 for g in group_values)
+        ss_total = sum((v - total_mean)**2 for g in group_values for v in g)
+        eta_squared = ss_between / ss_total if ss_total > 0 else 0
+        results['factors'][factor_name]['eta_squared'] = float(eta_squared)
+        
+        # Interpret effect size
+        if eta_squared < 0.01:
+            effect_interpretation = "negligible"
+        elif eta_squared < 0.06:
+            effect_interpretation = "small"
+        elif eta_squared < 0.14:
+            effect_interpretation = "medium"
+        else:
+            effect_interpretation = "large"
+        
+        report_lines.append(f"\n  {test_name}: H={stat:.4f}, p={p_value:.4f}")
+        report_lines.append(f"    → {'SIGNIFICANT' if p_value < 0.05 else 'Not significant'} (α=0.05)")
+        report_lines.append(f"\n  Effect size (η²): {eta_squared:.4f} ({effect_interpretation})")
+        
+        results['summary'].append({
+            'factor': factor_label,
+            'p_value': float(p_value),
+            'significant': p_value < 0.05,
+            'eta_squared': float(eta_squared),
+            'effect_size': effect_interpretation
+        })
+        
+        # Add to table rows
+        results['table_rows'].append({
+            'Factor': factor_label,
+            'H-statistic': f"{stat:.4f}",
+            'p-value': f"{p_value:.4f}",
+            'Significant': 'Yes' if p_value < 0.05 else 'No',
+            'Effect Size (η²)': f"{eta_squared:.4f}",
+            'Interpretation': effect_interpretation.capitalize()
+        })
+    
+    # Generate summary table
+    if results['table_rows']:
+        report_lines.append("\n")
+        report_lines.append("="*80)
+        report_lines.append("SUMMARY TABLE")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        # Create formatted table
+        table_df = pd.DataFrame(results['table_rows'])
+        report_lines.append(table_df.to_string(index=False))
+        report_lines.append("")
+        report_lines.append("Note: Significance level α=0.05")
+        
+        # Save table as CSV
+        table_csv = out_dir / f"{individual_name}_statistical_analysis_table.csv"
+        table_df.to_csv(table_csv, index=False)
+        print(f"  ✓ Saved table: {table_csv}")
+    
+    # Rank factors by effect size
+    if results['summary']:
+        report_lines.append("\n")
+        report_lines.append("="*80)
+        report_lines.append("RANKING OF FACTORS BY INFLUENCE")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        ranked = sorted(results['summary'], key=lambda x: x['eta_squared'], reverse=True)
+        for i, item in enumerate(ranked, 1):
+            sig_marker = "***" if item['significant'] else ""
+            report_lines.append(
+                f"{i}. {item['factor']:20s} | η²={item['eta_squared']:.4f} ({item['effect_size']:10s}) | "
+                f"p={item['p_value']:.4f} {sig_marker}"
+            )
+        
+        report_lines.append("")
+        report_lines.append("*** = statistically significant at α=0.05")
+        report_lines.append("")
+        report_lines.append("Effect Size Interpretation:")
+        report_lines.append("  η² < 0.01: negligible effect")
+        report_lines.append("  η² < 0.06: small effect")
+        report_lines.append("  η² < 0.14: medium effect")
+        report_lines.append("  η² ≥ 0.14: large effect")
+        
+        # Add narrative summary
+        report_lines.append("")
+        report_lines.append("="*80)
+        report_lines.append("SUMMARY")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        # Generate narrative summary
+        sig_factors = [item for item in ranked if item['significant']]
+        if sig_factors:
+            report_lines.append(f"Analysis of {individual_name}'s route tracing behavior revealed ")
+            report_lines.append(f"{len(sig_factors)} significant factor(s) influencing stereotypy levels:")
+            report_lines.append("")
+            for i, item in enumerate(sig_factors, 1):
+                report_lines.append(
+                    f"{i}. {item['factor']} showed a {item['effect_size']} effect (η²={item['eta_squared']:.4f}, p={item['p_value']:.4f}), "
+                    f"indicating that {item['factor'].lower()} {'substantially influences' if item['eta_squared'] >= 0.14 else 'influences' if item['eta_squared'] >= 0.06 else 'modestly influences'} "
+                    f"route tracing behavior."
+                )
+            
+            # Identify the most influential factor
+            most_influential = sig_factors[0]
+            report_lines.append("")
+            report_lines.append(f"The most influential factor is {most_influential['factor']} (η²={most_influential['eta_squared']:.4f}), ")
+            report_lines.append(f"which explains approximately {most_influential['eta_squared']*100:.1f}% of the variance in stereotypy percentage.")
+        else:
+            report_lines.append(f"Analysis of {individual_name}'s route tracing behavior found no statistically ")
+            report_lines.append("significant factors among those tested (time period, social group, room location). ")
+            report_lines.append("This suggests that stereotypy levels may be relatively consistent across these conditions, ")
+            report_lines.append("or that other unmeasured factors may be more influential.")
+        
+        # Add methodological note
+        report_lines.append("")
+        report_lines.append("Methodology: Kruskal-Wallis test (non-parametric alternative to one-way ANOVA) ")
+        report_lines.append("was used due to potential non-normality or unequal variances in the data.")
+    
+    # Save report
+    report_file = out_dir / f"{individual_name}_statistical_analysis.txt"
+    with open(report_file, 'w') as f:
+        f.write('\n'.join(report_lines))
+    
+    print(f"\n{'='*80}")
+    print('\n'.join(report_lines))
+    print(f"{'='*80}")
+    print(f"\n✓ Statistical analysis saved to: {report_file}")
+    
+    return results
+
+
+# Normalize companion groups (sort names alphabetically so "Panang, Fahra" == "Fahra, Panang")
+def normalize_companion_group(companion_str):
+    if pd.isna(companion_str) or str(companion_str).strip() == '':
+        return 'unknown'
+    # Split by comma, strip whitespace, sort alphabetically, rejoin
+    names = [name.strip() for name in str(companion_str).split(',')]
+    return ', '.join(sorted(names))
+
+    
+def plot_stereotypy_factor_timelines(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> None:
+    """Plot stereotypy percentage over time with different markers for factor combinations.
+    
+    Creates 3 subplots (one per time period) showing percentage trends over dates,
+    with different markers/colors representing different factor combinations (camera + companions).
+    This allows visual isolation of different factor influences.
+    
+    Args:
+        df_analysis: DataFrame with stereotypy analysis data
+        out_dir: Output directory for plots
+        individual_name: Name of individual
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Filter out overall data, keep only time period breakdowns
+    df_plot = df_analysis[df_analysis['time_period'].isin(['early_night', 'mid_night', 'early_morning'])].copy()
+    
+    if df_plot.empty:
+        print("  Skipping factor timeline plot: No time period data available")
+        return
+    
+    # Convert date to datetime for sorting
+    df_plot['date_dt'] = pd.to_datetime(df_plot['date'], format='%Y%m%d', errors='coerce')
+    df_plot = df_plot.dropna(subset=['date_dt'])
+    df_plot = df_plot.sort_values('date_dt')
+        
+    # Get unique cameras and normalized companions for marker/color assignment
+    unique_cameras = sorted(df_plot['camera_ids'].dropna().unique())
+    unique_companions_normalized = sorted(df_plot['companions'].unique())
+    
+    # Define marker styles (one per camera)
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 'H', '+', 'x', 'd']
+    camera_to_marker = {cam: markers[i % len(markers)] for i, cam in enumerate(unique_cameras)}
+    
+    # Define colors (one per normalized companion group)
+    colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    companion_to_color = {comp: colors[i % len(colors)] for i, comp in enumerate(unique_companions_normalized)}
+    
+    # Create factor combination identifier and assign styles
+    df_plot['camera_ids_str'] = df_plot['camera_ids'].fillna('unknown')
+    
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+    
+    time_periods = ['early_night', 'mid_night', 'early_morning']
+    time_labels = {
+        'early_night': '18:00-00:00',
+        'mid_night': '00:00-05:00',
+        'early_morning': '05:00-08:00'
+    }
+    
+    for ax_idx, time_period in enumerate(time_periods):
+        ax = axes[ax_idx]
+        df_period = df_plot[df_plot['time_period'] == time_period].copy()
+        
+        if df_period.empty:
+            ax.text(0.5, 0.5, f'No data for {time_labels[time_period]}', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            ax.set_title(time_labels[time_period], fontsize=12, fontweight='bold')
+            continue
+        
+        # Create date index mapping for this time period (equal spacing)
+        unique_dates = sorted(df_period['date'].unique())
+        date_to_idx = {date: idx for idx, date in enumerate(unique_dates)}
+        df_period['x_pos'] = df_period['date'].map(date_to_idx)
+        
+        # Plot each camera + companion combination
+        plotted_labels = set()  # Track labels to avoid duplicates in legend
+        for camera in unique_cameras:
+            for companion_norm in unique_companions_normalized:
+                df_combo = df_period[
+                    (df_period['camera_ids_str'] == camera) & 
+                    (df_period['companions'] == companion_norm)
+                ]
+                if not df_combo.empty:
+                    marker = camera_to_marker.get(camera, 'o')
+                    color = companion_to_color.get(companion_norm, 'gray')
+                    # Use normalized companion name in label for consistency
+                    room_label = camera_ids_to_room_label_text(camera)
+                    label = f"{room_label} + {companion_norm}"
+                    
+                    # Use x_pos (integer index) instead of date_dt
+                    ax.plot(df_combo['x_pos'], df_combo['stereotypy_percentage'],
+                           marker=marker, 
+                           color=color,
+                           linestyle='',
+                           linewidth=1.5,
+                           markersize=8,
+                           label=label,
+                           alpha=0.7)
+                    plotted_labels.add(label)
+        
+        # Format axes
+        ax.set_ylabel('Stereotypy %', fontsize=11, fontweight='bold')
+        ax.set_title(time_labels[time_period], fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.set_ylim(0, 100)
+        
+        # Set x-axis with all date labels
+        ax.set_xlabel('Night (date)', fontsize=11, fontweight='bold')
+        ax.set_xticks(range(len(unique_dates)))
+        ax.set_xticklabels(unique_dates, rotation=90, ha='right')
+        ax.set_xlim(-0.5, len(unique_dates) - 0.5)
+        
+        # Add legend for each subplot (only if there are multiple combinations)
+        if len(plotted_labels) > 1 and not df_period.empty:
+            ax.legend(loc='upper left', fontsize=8, ncol=2, framealpha=0.9)
+    
+    # Overall title with explanation
+    title_text = f'{individual_name} - Route Tracing Timeline by Factor Combinations\n'
+    title_text += '(Marker shape = Enclosure, Color = Social Group)'
+    fig.suptitle(title_text, fontsize=14, fontweight='bold', y=0.995)
+    
+    fig.tight_layout()
+    
+    # Save figure
+    output_file = out_dir / f'{individual_name}_stereotypy_factor_timeline.png'
+    fig.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    
+    print(f"  Saved: {output_file}")

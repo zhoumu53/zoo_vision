@@ -16,7 +16,7 @@ GT_CSV = Path("/media/mu/zoo_vision/data/stereotype/gt.csv")
 IMAGE_DIR = Path("/media/mu/zoo_vision/data/stereotype/images")
 
 DATE_PATTERN = re.compile(r"(\d{8})")
-TRAIN_YEAR = "2025"
+TRAIN_YEARS = ["2025"]  # Can specify multiple years
 TEST_YEAR = "2026"
 
 
@@ -28,7 +28,7 @@ def parse_year_from_filename(filename: str) -> str:
 
 
 def load_split_samples(
-    gt_csv: Path, image_dir: Path, train_year: str, test_year: str
+    gt_csv: Path, image_dir: Path, train_years: List[str], test_year: str
 ) -> Tuple[List[Tuple[Path, str]], List[Tuple[Path, str]]]:
     train_samples: List[Tuple[Path, str]] = []
     test_samples: List[Tuple[Path, str]] = []
@@ -44,15 +44,13 @@ def load_split_samples(
             if not image_path.exists():
                 continue
 
-            if year == train_year:
+            if year in train_years:
                 train_samples.append((image_path, label))
             elif year == test_year:
                 test_samples.append((image_path, label))
 
     if not train_samples:
-        raise RuntimeError(f"No training samples found for year={train_year}")
-    if not test_samples:
-        raise RuntimeError(f"No test samples found for year={test_year}")
+        raise RuntimeError(f"No training samples found for years={train_years}")
 
     return train_samples, test_samples
 
@@ -165,7 +163,12 @@ def main() -> None:
     )
     parser.add_argument("--gt_csv", type=Path, default=GT_CSV)
     parser.add_argument("--image_dir", type=Path, default=IMAGE_DIR)
-    parser.add_argument("--train_year", type=str, default=TRAIN_YEAR)
+    parser.add_argument(
+        "--train_years",
+        type=str,
+        default=",".join(TRAIN_YEARS),
+        help="Comma-separated list of training years (e.g., '2024,2025')",
+    )
     parser.add_argument("--test_year", type=str, default=TEST_YEAR)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -186,8 +189,11 @@ def main() -> None:
     seed_everything(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Parse train_years from comma-separated string
+    train_years = [year.strip() for year in args.train_years.split(",")]
+
     train_samples, test_samples = load_split_samples(
-        args.gt_csv, args.image_dir, args.train_year, args.test_year
+        args.gt_csv, args.image_dir, train_years, args.test_year
     )
 
     class_names = sorted({label for _, label in train_samples + test_samples})
@@ -196,8 +202,7 @@ def main() -> None:
 
     transform = build_transforms(image_size=args.image_size)
     train_dataset = StereotypeDataset(train_samples, class_to_idx, transform)
-    test_dataset = StereotypeDataset(test_samples, class_to_idx, transform)
-
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -205,13 +210,18 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
     )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=torch.cuda.is_available(),
-    )
+    
+    # Create test loader only if test samples exist
+    test_loader = None
+    if test_samples:
+        test_dataset = StereotypeDataset(test_samples, class_to_idx, transform)
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=torch.cuda.is_available(),
+        )
 
     model = build_model(num_classes=len(class_names)).to(device)
     criterion = nn.CrossEntropyLoss()
@@ -220,11 +230,14 @@ def main() -> None:
     )
 
     best_test_acc = -1.0
+    best_train_loss = float('inf')
     args.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path = args.checkpoint_path.with_suffix(".json")
 
-    print(f"Train samples ({args.train_year}): {len(train_dataset)}")
-    print(f"Test samples ({args.test_year}): {len(test_dataset)}")
+    print(f"Train samples ({', '.join(train_years)}): {len(train_dataset)}")
+    print(f"Test samples ({args.test_year}): {len(test_samples) if test_samples else 0}")
+    if not test_samples:
+        print("No test samples found - will train without evaluation")
     print(f"Classes: {class_names}")
     print(f"Device: {device}")
 
@@ -232,44 +245,64 @@ def main() -> None:
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device
         )
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
-
-        print(
-            f"Epoch {epoch:02d}/{args.epochs} "
-            f"| train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
-            f"| test_loss={test_loss:.4f} test_acc={test_acc:.4f}"
-        )
-
-        if test_acc > best_test_acc:
-            best_test_acc = test_acc
+        
+        save_checkpoint = False
+        if test_loader is not None:
+            test_loss, test_acc = evaluate(model, test_loader, criterion, device)
+            print(
+                f"Epoch {epoch:02d}/{args.epochs} "
+                f"| train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
+                f"| test_loss={test_loss:.4f} test_acc={test_acc:.4f}"
+            )
+            
+            # Save based on test accuracy
+            if test_acc > best_test_acc:
+                best_test_acc = test_acc
+                save_checkpoint = True
+        else:
+            print(
+                f"Epoch {epoch:02d}/{args.epochs} "
+                f"| train_loss={train_loss:.4f} train_acc={train_acc:.4f}"
+            )
+            
+            # Save based on training loss when no test set
+            if train_loss < best_train_loss:
+                best_train_loss = train_loss
+                save_checkpoint = True
+        
+        if save_checkpoint:
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
                     "class_to_idx": class_to_idx,
                     "idx_to_class": idx_to_class,
                     "image_size": args.image_size,
-                    "train_year": args.train_year,
+                    "train_years": train_years,
                     "test_year": args.test_year,
                 },
                 args.checkpoint_path,
             )
+            metadata = {
+                "checkpoint_path": str(args.checkpoint_path),
+                "class_names": class_names,
+                "train_samples": len(train_dataset),
+                "test_samples": len(test_samples) if test_samples else 0,
+                "train_years": train_years,
+                "test_year": args.test_year,
+            }
+            if test_loader is not None:
+                metadata["best_test_acc"] = best_test_acc
+            else:
+                metadata["best_train_loss"] = best_train_loss
+            
             with metadata_path.open("w") as f:
-                json.dump(
-                    {
-                        "checkpoint_path": str(args.checkpoint_path),
-                        "best_test_acc": best_test_acc,
-                        "class_names": class_names,
-                        "train_samples": len(train_dataset),
-                        "test_samples": len(test_dataset),
-                        "train_year": args.train_year,
-                        "test_year": args.test_year,
-                    },
-                    f,
-                    indent=2,
-                )
+                json.dump(metadata, f, indent=2)
             print(f"Saved best checkpoint to {args.checkpoint_path}")
 
-    print(f"Best test accuracy: {best_test_acc:.4f}")
+    if test_loader is not None:
+        print(f"Best test accuracy: {best_test_acc:.4f}")
+    else:
+        print(f"Best train loss: {best_train_loss:.4f}")
 
 
 if __name__ == "__main__":
