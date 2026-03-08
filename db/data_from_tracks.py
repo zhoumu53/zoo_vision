@@ -531,7 +531,7 @@ def summarize_observations(db_cursor):
         $$ ) AS summary (
         row_name varchar,
         identity_id int,
-        datetime timestamptz,
+        time_bined timestamptz,
         invalid int,
         standing int,
         sleep_left_side int,
@@ -567,7 +567,7 @@ def summarize_observations(db_cursor):
                         b.column_name           AS behaviour ,
                         Cast(Count(*)>0 AS INT) AS value
         FROM            (
-                            SELECT generate_series(timestamptz now()-interval '2 days', now(), interval '1 minute') AS time_bined ) AS tt
+                            SELECT generate_series(date_trunc('minute',now())-interval '2 days', now(), interval '1 minute') AS time_bined ) AS tt
         CROSS JOIN      identities i
         LEFT OUTER JOIN ethogram AS e
         ON              e.identity_id = i.id
@@ -587,9 +587,28 @@ def summarize_observations(db_cursor):
         ORDER BY id 
         $$) AS summary ( row_name text, identity_id int, time_bined timestamptz, invalid int, standing int, sleep_left_side int, sleep_right_side int, walking int, stereotypy int, no_observation int )
         ON conflict do nothing
-        """)
-    row_count = db_cursor.rowcount
-    print(f"Inserted {row_count} records into ethogram_summary table")
+        """
+    )
+    new_row_count = db_cursor.rowcount
+
+    # The insert above generates a lot of dummy data with 0 values where there is no data in the ethogram table.
+    # This takes space for no reason. Delete it.
+    db_cursor.execute(
+        """
+        DELETE FROM ethogram_summary
+        WHERE  invalid = 0
+            AND standing = 0
+            AND sleep_left_side = 0
+            AND sleep_right_side = 0
+            AND walking = 0
+            AND stereotypy = 0
+            AND no_observation = 0 
+        """
+    )
+    extra_row_count = db_cursor.rowcount
+    print(
+        f"Inserted {new_row_count-extra_row_count} records into ethogram_summary table"
+    )
 
     db_cursor.execute(
         """
@@ -609,9 +628,11 @@ def summarize_observations(db_cursor):
         )
         WHERE observation_count > 1
         ON CONFLICT DO NOTHING
-        """)
+        """
+    )
     row_count = db_cursor.rowcount
     print(f"Inserted {row_count} records into summary_per_visibility table")
+
 
 def main(args):
     root_dir: Path = args.dir
