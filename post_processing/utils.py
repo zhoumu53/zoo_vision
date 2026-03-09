@@ -202,6 +202,41 @@ def vote_known_individuals(track_dir: Path,
     start_dt = pd.to_datetime(f"{date} {start_time}", format="%Y%m%d %H%M%S")
     end_dt = pd.to_datetime(f"{date} {end_time}", format="%Y%m%d %H%M%S")
 
+    #### filename format: 'T143814_ID000001.csv'
+    # get valid_track after start_dt
+    valid_track_files = []
+    first_match_dt = None
+    
+    for i, track_file in enumerate(track_files):
+        track_filename = track_file.stem
+        time_str = track_filename.split("_")[0][1:]  # Extract '143814' from 'T143814_ID000001'
+
+        try:
+            track_time = pd.to_datetime(time_str, format="%H%M%S")
+            track_dt = pd.to_datetime(f"{date} {track_time.time()}", format="%Y%m%d %H:%M:%S")
+            
+            # Find the first track that is >= start_dt
+            if first_match_dt is None and track_dt >= start_dt:
+                first_match_dt = track_dt
+            
+            # If we haven't found a matching track yet, skip
+            if first_match_dt is None:
+                continue
+            
+            # Case 1: first_match_dt is before end_dt - keep all tracks within [start_dt, end_dt]
+            if first_match_dt < end_dt:
+                if start_dt <= track_dt <= end_dt:
+                    valid_track_files.append(track_file)
+            # Case 2: first_match_dt is at or after end_dt - keep only first 2 tracks from first_match_dt
+            else:
+                if track_dt >= first_match_dt:
+                    valid_track_files.append(track_file)
+                    if len(valid_track_files) >= 2:
+                        break
+        except Exception:
+            continue
+    
+
     def _to_identity_name(label: str) -> str:
         if not isinstance(label, str):
             return str(label)
@@ -221,7 +256,7 @@ def vote_known_individuals(track_dir: Path,
     # First pass: collect valid tracks and build timestamp-level concurrent individual counts.
     track_infos = []
     timestamp_counts: dict[pd.Timestamp, int] = {}
-    for track_file in track_files:
+    for track_file in valid_track_files:
         track_filename = track_file.stem
         behavior_csv = track_file.parent / f"{track_filename}_behavior.csv"
         if not behavior_csv.exists():
@@ -238,11 +273,7 @@ def vote_known_individuals(track_dir: Path,
         df_behavior = df_behavior.dropna(subset=["timestamp"])
         if df_behavior.empty:
             continue
-
-        track_start_dt = df_behavior["timestamp"].min()
-        if (track_start_dt < start_dt) or (track_start_dt > end_dt):
-            continue
-
+        
         is_valid_track = True
         if "quality_label" in df_behavior.columns and "behavior_conf" in df_behavior.columns:
             behavior_conf = pd.to_numeric(df_behavior["behavior_conf"], errors="coerce")

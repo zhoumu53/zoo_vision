@@ -282,7 +282,7 @@ def main():
                 gallery_labels=gallery_labels
             )
             vote_known_individuals_dict[camera_id] = known_individuals
-        # print(f"Known individuals for camera {camera_id}: {known_individuals}")
+        print(f"Known individuals for camera {camera_id}: {known_individuals}")
 
     # Aggregate votes across camera pairs considering social groups
     camera_individuals = assign_known_individuals_to_cameras(
