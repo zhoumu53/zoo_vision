@@ -521,8 +521,8 @@ def delete_existing_data_for_night(
     )
 
 
-def summarize_observations(db_cursor):
-    print(f"Summarizing data for the last two days")
+def summarize_observations(db_cursor, start_time: pd.Timestamp, end_time: pd.Timestamp):
+    print(f"Summarizing data from {start_time} to {end_time}")
     db_cursor.execute(
         """
         INSERT INTO  summary_per_behaviour 
@@ -550,7 +550,7 @@ def summarize_observations(db_cursor):
                         ON         t.id=o.track_id
                         INNER JOIN behaviours AS b
                         ON         o.behaviour_id=b.id
-                        WHERE      o.time > (now() - interval '2 days')
+                        WHERE      o.time >= %s AND o.time < %s
                         GROUP BY   identity_id,
                                     time_bined,
                                     behaviour
@@ -575,7 +575,8 @@ def summarize_observations(db_cursor):
         no_observation int
         )
         ON CONFLICT DO NOTHING
-        """
+        """,
+        (start_time, end_time),
     )
     row_count = db_cursor.rowcount
     print(f"Inserted {row_count} records into summary_per_behaviour table")
@@ -601,7 +602,7 @@ def summarize_observations(db_cursor):
                         b.column_name           AS behaviour ,
                         Cast(Count(*)>0 AS INT) AS value
         FROM            (
-                            SELECT generate_series(date_trunc('minute',now())-interval '2 days', now(), interval '1 minute') AS time_bined ) AS tt
+                            SELECT generate_series(date_trunc('minute', %s::timestamptz), %s::timestamptz, interval '1 minute') AS time_bined ) AS tt
         CROSS JOIN      identities i
         LEFT OUTER JOIN ethogram AS e
         ON              e.identity_id = i.id
@@ -621,7 +622,8 @@ def summarize_observations(db_cursor):
         ORDER BY id 
         $$) AS summary ( row_name text, identity_id int, time_bined timestamptz, invalid int, standing int, sleep_left_side int, sleep_right_side int, walking int, stereotypy int, no_observation int )
         ON conflict do nothing
-        """
+        """,
+        (start_time, end_time),
     )
     new_row_count = db_cursor.rowcount
 
@@ -656,13 +658,14 @@ def summarize_observations(db_cursor):
         FROM observations AS o
         INNER JOIN tracks AS t ON t.id=o.track_id 
         INNER JOIN identities AS i on t.identity_id=i.id
-        WHERE  o.time BETWEEN now()-INTERVAL '2 days' AND now() AND
+        WHERE  o.time >= %s AND o.time < %s AND
                EXTRACT(EPOCH from t.end_time-t.start_time) > 1
         GROUP  BY t.id, t.camera_id, t.identity_id, time_bined
         )
         WHERE observation_count > 1
         ON CONFLICT DO NOTHING
-        """
+        """,
+        (start_time, end_time),
     )
     row_count = db_cursor.rowcount
     print(f"Inserted {row_count} records into summary_per_visibility table")
@@ -695,11 +698,45 @@ def main(args):
         total=len(all_dates), desc="Processing nights", unit="night"
     )
 
+    # Track min/max times for summary generation
+    min_night_start = None
+    max_night_end = None
+
     ### upload data from one night (date)
     for date in pbar(all_dates):
         ## date format if YYYYMMDD -> YYYY-MM-DD
         if "-" not in date:
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+
+        # Calculate night range for this date
+        date_dt = pd.to_datetime(date)
+        night_start = date_dt + pd.Timedelta(
+            hours=start_timestamp.hour,
+            minutes=start_timestamp.minute,
+            seconds=start_timestamp.second,
+        )
+        if end_timestamp < start_timestamp:
+            night_end = (
+                date_dt
+                + pd.Timedelta(days=1)
+                + pd.Timedelta(
+                    hours=end_timestamp.hour,
+                    minutes=end_timestamp.minute,
+                    seconds=end_timestamp.second,
+                )
+            )
+        else:
+            night_end = date_dt + pd.Timedelta(
+                hours=end_timestamp.hour,
+                minutes=end_timestamp.minute,
+                seconds=end_timestamp.second,
+            )
+
+        # Track overall min/max for summary
+        if min_night_start is None or night_start < min_night_start:
+            min_night_start = night_start
+        if max_night_end is None or night_end > max_night_end:
+            max_night_end = night_end
 
         # DELETE existing data for this night BEFORE inserting new data to avoid duplicates
         if args.delete_existing_night:
@@ -766,7 +803,9 @@ def main(args):
             print(f"\nWarning: Analysis directory not found: {analysis_root}")
             print(f"  Skipping ethogram loading for date {date}")
 
-    summarize_observations(db_cursor)
+    # Summarize all processed nights
+    if min_night_start is not None and max_night_end is not None:
+        summarize_observations(db_cursor, min_night_start, max_night_end)
     db_connection.commit()
 
 
