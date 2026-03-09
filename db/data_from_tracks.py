@@ -449,41 +449,75 @@ def delete_existing_data_for_night(
 
     print(f"Deleting existing data for night: {night_start} to {night_end}")
 
-    # Delete ethogram data
+    # Delete summary tables first (they depend on observations/tracks/ethogram)
+    # Delete from summary_per_behaviour (time_bined is within the night range)
     db_cursor.execute(
         """
-        DELETE FROM ethogram
-        WHERE start_dt >= %s AND start_dt < %s
+        DELETE FROM summary_per_behaviour
+        WHERE time_bined >= %s AND time_bined < %s
         """,
         (night_start, night_end),
     )
+    deleted_summary_behaviour = db_cursor.rowcount
+
+    # Delete from ethogram_summary (time_bined is within the night range)
+    db_cursor.execute(
+        """
+        DELETE FROM ethogram_summary
+        WHERE time_bined >= %s AND time_bined < %s
+        """,
+        (night_start, night_end),
+    )
+    deleted_ethogram_summary = db_cursor.rowcount
+
+    # Delete from summary_per_visibility (time_bined is within the night range)
+    db_cursor.execute(
+        """
+        DELETE FROM summary_per_visibility
+        WHERE time_bined >= %s AND time_bined < %s
+        """,
+        (night_start, night_end),
+    )
+    deleted_summary_visibility = db_cursor.rowcount
+
+    # Delete ethogram data (overlapping with night period)
+    db_cursor.execute(
+        """
+        DELETE FROM ethogram
+        WHERE start_dt < %s AND end_dt > %s
+        """,
+        (night_end, night_start),
+    )
     deleted_ethogram = db_cursor.rowcount
 
-    # Delete observations for tracks in this time range
+    # Delete observations for tracks that overlap with this time range
     db_cursor.execute(
         """
         DELETE FROM observations
         WHERE track_id IN (
             SELECT id FROM tracks
-            WHERE start_time >= %s AND start_time < %s
+            WHERE start_time < %s AND end_time > %s
         )
         """,
-        (night_start, night_end),
+        (night_end, night_start),
     )
     deleted_observations = db_cursor.rowcount
 
-    # Then delete the tracks themselves
+    # Then delete the tracks themselves (any track overlapping with the night)
     db_cursor.execute(
         """
         DELETE FROM tracks
-        WHERE start_time >= %s AND start_time < %s
+        WHERE start_time < %s AND end_time > %s
         """,
-        (night_start, night_end),
+        (night_end, night_start),
     )
     deleted_tracks = db_cursor.rowcount
 
     print(
-        f"Deleted {deleted_ethogram} ethogram records, {deleted_observations} observations and {deleted_tracks} tracks"
+        f"Deleted {deleted_ethogram} ethogram records, {deleted_observations} observations, {deleted_tracks} tracks"
+    )
+    print(
+        f"Deleted {deleted_summary_behaviour} summary_per_behaviour, {deleted_ethogram_summary} ethogram_summary, {deleted_summary_visibility} summary_per_visibility records"
     )
 
 
@@ -732,6 +766,7 @@ def main(args):
             print(f"\nWarning: Analysis directory not found: {analysis_root}")
             print(f"  Skipping ethogram loading for date {date}")
 
+    summarize_observations(db_cursor)
     db_connection.commit()
 
 
