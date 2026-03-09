@@ -1831,6 +1831,136 @@ def analyze_stereotypy_from_ethogram(
     return pd.DataFrame(results)
 
 
+def analyze_sleeping_from_ethogram(
+    ethogram_csv: Path,
+    individual_info_csv: Path | None = None,
+) -> pd.DataFrame | None:
+    """Analyze sleeping patterns from ethogram data.
+    
+    Args:
+        ethogram_csv: Path to ethogram CSV with columns: start_dt, end_dt, label
+        individual_info_csv: Optional path to individual_info.csv with companions and camera info
+        
+    Returns:
+        DataFrame with sleeping analysis per time period, or None if no valid data
+    """
+    if not ethogram_csv.exists():
+        return None
+    
+    # Load ethogram
+    ethogram = pd.read_csv(ethogram_csv)
+    if ethogram.empty or not {'start_dt', 'end_dt', 'label'}.issubset(ethogram.columns):
+        return None
+    
+    ethogram['start_dt'] = pd.to_datetime(ethogram['start_dt'], errors='coerce')
+    ethogram['end_dt'] = pd.to_datetime(ethogram['end_dt'], errors='coerce')
+    ethogram = ethogram.dropna(subset=['start_dt', 'end_dt', 'label'])
+    
+    if ethogram.empty:
+        return None
+    
+    # Load individual info if available
+    companions = 'unknown'
+    camera_ids = 'unknown'
+    if individual_info_csv and individual_info_csv.exists():
+        info = pd.read_csv(individual_info_csv)
+        if not info.empty:
+            companions = info.iloc[0].get('companions', 'unknown')
+            camera_ids = info.iloc[0].get('camera_ids', 'unknown')
+            
+    # Normalize companions
+    if pd.isna(companions) or str(companions).strip() == "":
+        companions = 'unknown'
+    else:
+        companions = normalize_companion_group(companions)
+    
+    # Calculate duration in seconds
+    ethogram['duration_s'] = (ethogram['end_dt'] - ethogram['start_dt']).dt.total_seconds()
+    
+    # Filter out no_observation periods for analysis
+    observed = ethogram[ethogram['label'] != 'no_observation'].copy()
+    
+    if observed.empty:
+        return None
+    
+    # Categorize by time period
+    observed['time_period'] = observed['start_dt'].apply(categorize_time_period)
+    
+    # Filter out entries outside observation window
+    observed = observed[observed['time_period'] != 'outside_window']
+    
+    if observed.empty:
+        return None
+    
+    # Check for intensive stereotypy (any single bout > 10 minutes)
+    stereotypy_data = observed[observed['label'] == 'stereotypy']
+    has_intensive_stereotypy = False
+    if not stereotypy_data.empty:
+        max_stereotypy_duration = stereotypy_data['duration_s'].max()
+        has_intensive_stereotypy = max_stereotypy_duration > 600  # 10 minutes = 600 seconds
+    
+    intensive_stereotypy = 'yes' if has_intensive_stereotypy else 'no'
+    
+    # Define sleeping labels
+    sleeping_labels = ['02_sleeping_left', '03_sleeping_right']
+    
+    # Analyze by time period
+    results = []
+    for period in ['early_night', 'mid_night', 'early_morning']:
+        period_data = observed[observed['time_period'] == period]
+        
+        if period_data.empty:
+            results.append({
+                'time_period': period,
+                'total_observed_duration_s': 0.0,
+                'sleeping_duration_s': 0.0,
+                'sleeping_percentage': 0.0,
+                'n_sleeping_bouts': 0,
+                'companions': companions,
+                'camera_ids': camera_ids,
+                'intensive_stereotypy': intensive_stereotypy,
+            })
+            continue
+        
+        total_duration = period_data['duration_s'].sum()
+        sleeping_data = period_data[period_data['label'].isin(sleeping_labels)]
+        sleeping_duration = sleeping_data['duration_s'].sum()
+        n_sleeping_bouts = len(sleeping_data)
+        
+        sleeping_pct = (sleeping_duration / total_duration * 100) if total_duration > 0 else 0.0
+        
+        results.append({
+            'time_period': period,
+            'total_observed_duration_s': total_duration,
+            'sleeping_duration_s': sleeping_duration,
+            'sleeping_percentage': sleeping_pct,
+            'n_sleeping_bouts': n_sleeping_bouts,
+            'companions': companions,
+            'camera_ids': camera_ids,
+            'intensive_stereotypy': intensive_stereotypy,
+        })
+    
+    # Also add overall stats
+    total_duration = observed['duration_s'].sum()
+    sleeping_data = observed[observed['label'].isin(sleeping_labels)]
+    sleeping_duration = sleeping_data['duration_s'].sum()
+    n_sleeping_bouts = len(sleeping_data)
+    sleeping_pct = (sleeping_duration / total_duration * 100) if total_duration > 0 else 0.0
+    
+    results.append({
+        'time_period': 'overall',
+        'total_observed_duration_s': total_duration,
+        'sleeping_duration_s': sleeping_duration,
+        'sleeping_percentage': sleeping_pct,
+        'n_sleeping_bouts': n_sleeping_bouts,
+        'companions': companions,
+        'camera_ids': camera_ids,
+        'intensive_stereotypy': intensive_stereotypy,
+    })
+    
+    return pd.DataFrame(results)
+
+
 def aggregate_stereotypy_analysis_multi_dates(
     output_dir: Path,
     individual_name: str,
@@ -2322,6 +2452,759 @@ def normalize_companion_group(companion_str):
     # Split by comma, strip whitespace, sort alphabetically, rejoin
     names = [name.strip() for name in str(companion_str).split(',')]
     return ', '.join(sorted(names))
+
+
+def statistical_analysis_sleeping(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> dict:
+    """Perform statistical analysis to identify factors influencing sleeping duration.
+    
+    Uses Kruskal-Wallis test (non-parametric) and effect size calculations to determine which factors
+    (time_period, companions, room, intensive_stereotypy) have the strongest influence on sleeping duration.
+    
+    Args:
+        df_analysis: DataFrame with sleeping analysis data
+        out_dir: Output directory for results
+        individual_name: Name of individual
+        
+    Returns:
+        Dictionary with statistical results
+    """
+    try:
+        from scipy.stats import kruskal
+    except ImportError:
+        print("Warning: scipy not available, skipping statistical analysis")
+        return {}
+    
+    # Filter to only overall data (not time_period breakdowns)
+    overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+    
+    if overall_data.empty or len(overall_data) < 3:
+        print("Insufficient data for statistical analysis (need at least 3 observations)")
+        return {}
+    
+    # Convert camera_ids to room labels
+    if 'camera_ids' in overall_data.columns:
+        overall_data['room'] = overall_data['camera_ids'].apply(camera_ids_to_room_label_text)
+    
+    results = {
+        'n_observations': len(overall_data),
+        'factors': {},
+        'summary': [],
+        'table_rows': []
+    }
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_lines = []
+    
+    report_lines.append("="*80)
+    report_lines.append(f"STATISTICAL ANALYSIS - {individual_name}")
+    report_lines.append(f"Sleeping Behavior Across Different Factors")
+    report_lines.append("="*80)
+    report_lines.append(f"\nTotal observations: {len(overall_data)}")
+    report_lines.append(f"Mean sleeping duration: {overall_data['sleeping_duration_s'].mean() / 3600:.2f} hours (SD: {overall_data['sleeping_duration_s'].std() / 3600:.2f} hours)")
+    report_lines.append(f"Mean sleeping percentage: {overall_data['sleeping_percentage'].mean():.2f}% (SD: {overall_data['sleeping_percentage'].std():.2f}%)")
+    report_lines.append("")
+    report_lines.append("METHOD: Kruskal-Wallis test (non-parametric)")
+    report_lines.append("  - Appropriate for non-normal distributions or unequal variances")
+    report_lines.append("  - Tests whether groups come from the same distribution")
+    report_lines.append("")
+    report_lines.append("-"*80)
+    report_lines.append("FACTOR ANALYSIS")
+    report_lines.append("-"*80)
+    report_lines.append("")
+    
+    # Analyze each factor (use sleeping_duration_s as the dependent variable)
+    factors_to_test = []
+    
+    # 1. Time period analysis (using non-overall data)
+    time_period_data = df_analysis[df_analysis['time_period'] != 'overall'].copy()
+    if len(time_period_data['time_period'].unique()) >= 2:
+        factors_to_test.append(('time_period', time_period_data, 'Time Period'))
+    
+    # 2. Companions analysis
+    if 'companions' in overall_data.columns:
+        companions_clean = overall_data[overall_data['companions'].notna()]
+        if len(companions_clean['companions'].unique()) >= 2:
+            factors_to_test.append(('companions', companions_clean, 'Social Group'))
+    
+    # 3. Enclosure analysis (converted from camera_ids)
+    if 'room' in overall_data.columns:
+        room_clean = overall_data[overall_data['room'].notna()]
+        if len(room_clean['room'].unique()) >= 2:
+            factors_to_test.append(('room', room_clean, 'Enclosure Location'))
+    
+    # 4. Intensive stereotypy analysis (NEW)
+    if 'intensive_stereotypy' in overall_data.columns:
+        intensive_clean = overall_data[overall_data['intensive_stereotypy'].notna()]
+        if len(intensive_clean['intensive_stereotypy'].unique()) >= 2:
+            factors_to_test.append(('intensive_stereotypy', intensive_clean, 'Intensive Stereotypy (>10min)'))
+    
+    for factor_name, factor_data, factor_label in factors_to_test:
+        report_lines.append(f"\n{factor_label.upper()}")
+        report_lines.append("-" * 40)
+        
+        # Get groups (use sleeping_duration_s in hours for analysis)
+        groups = factor_data.groupby(factor_name)['sleeping_duration_s'].apply(lambda x: [v / 3600 for v in x])
+        group_names = list(groups.index)
+        group_values = [np.array(g) for g in groups.values if len(g) > 0]
+        
+        if len(group_values) < 2:
+            report_lines.append(f"  Skipped: Need at least 2 groups (found {len(group_values)})")
+            continue
+        
+        # Report group sizes and means
+        report_lines.append(f"  Groups: {len(group_names)}")
+        for gname, gvals in zip(group_names, group_values):
+            report_lines.append(f"    {gname}: n={len(gvals)}, mean={np.mean(gvals):.2f} hours, SD={np.std(gvals):.2f} hours")
+        
+        # Use Kruskal-Wallis test
+        stat, p_value = kruskal(*group_values)
+        test_name = "Kruskal-Wallis"
+        results['factors'][factor_name] = {
+            'test': 'kruskal_wallis',
+            'statistic': float(stat),
+            'p_value': float(p_value),
+            'significant': p_value < 0.05,
+            'groups': group_names
+        }
+        
+        # Calculate effect size (eta-squared)
+        total_mean = np.mean(np.concatenate(group_values))
+        ss_between = sum(len(g) * (np.mean(g) - total_mean)**2 for g in group_values)
+        ss_total = sum((v - total_mean)**2 for g in group_values for v in g)
+        eta_squared = ss_between / ss_total if ss_total > 0 else 0
+        results['factors'][factor_name]['eta_squared'] = float(eta_squared)
+        
+        # Interpret effect size
+        if eta_squared < 0.01:
+            effect_interpretation = "negligible"
+        elif eta_squared < 0.06:
+            effect_interpretation = "small"
+        elif eta_squared < 0.14:
+            effect_interpretation = "medium"
+        else:
+            effect_interpretation = "large"
+        
+        report_lines.append(f"\n  {test_name}: H={stat:.4f}, p={p_value:.4f}")
+        report_lines.append(f"    → {'SIGNIFICANT' if p_value < 0.05 else 'Not significant'} (α=0.05)")
+        report_lines.append(f"\n  Effect size (η²): {eta_squared:.4f} ({effect_interpretation})")
+        
+        results['summary'].append({
+            'factor': factor_label,
+            'p_value': float(p_value),
+            'significant': p_value < 0.05,
+            'eta_squared': float(eta_squared),
+            'effect_size': effect_interpretation
+        })
+        
+        # Add to table rows
+        results['table_rows'].append({
+            'Factor': factor_label,
+            'H-statistic': f"{stat:.4f}",
+            'p-value': f"{p_value:.4f}",
+            'Significant': 'Yes' if p_value < 0.05 else 'No',
+            'Effect Size (η²)': f"{eta_squared:.4f}",
+            'Interpretation': effect_interpretation.capitalize()
+        })
+    
+    # Generate summary table
+    if results['table_rows']:
+        report_lines.append("\n")
+        report_lines.append("="*80)
+        report_lines.append("SUMMARY TABLE")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        # Create formatted table
+        table_df = pd.DataFrame(results['table_rows'])
+        report_lines.append(table_df.to_string(index=False))
+        report_lines.append("")
+        report_lines.append("Note: Significance level α=0.05")
+        
+        # Save table as CSV
+        table_csv = out_dir / f"{individual_name}_sleeping_statistical_analysis_table.csv"
+        table_df.to_csv(table_csv, index=False)
+        print(f"  ✓ Saved table: {table_csv}")
+    
+    # Rank factors by effect size
+    if results['summary']:
+        report_lines.append("\n")
+        report_lines.append("="*80)
+        report_lines.append("RANKING OF FACTORS BY INFLUENCE")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        ranked = sorted(results['summary'], key=lambda x: x['eta_squared'], reverse=True)
+        for i, item in enumerate(ranked, 1):
+            sig_marker = "***" if item['significant'] else ""
+            report_lines.append(
+                f"{i}. {item['factor']:30s} | η²={item['eta_squared']:.4f} ({item['effect_size']:10s}) | "
+                f"p={item['p_value']:.4f} {sig_marker}"
+            )
+        
+        report_lines.append("")
+        report_lines.append("*** = statistically significant at α=0.05")
+        report_lines.append("")
+        report_lines.append("Effect Size Interpretation:")
+        report_lines.append("  η² < 0.01: negligible effect")
+        report_lines.append("  η² < 0.06: small effect")
+        report_lines.append("  η² < 0.14: medium effect")
+        report_lines.append("  η² ≥ 0.14: large effect")
+        
+        # Add narrative summary
+        report_lines.append("")
+        report_lines.append("="*80)
+        report_lines.append("SUMMARY")
+        report_lines.append("="*80)
+        report_lines.append("")
+        
+        # Generate narrative summary
+        sig_factors = [item for item in ranked if item['significant']]
+        if sig_factors:
+            report_lines.append(f"Analysis of {individual_name}'s sleeping behavior revealed ")
+            report_lines.append(f"{len(sig_factors)} significant factor(s) influencing sleep duration:")
+            report_lines.append("")
+            for i, item in enumerate(sig_factors, 1):
+                report_lines.append(
+                    f"{i}. {item['factor']} showed a {item['effect_size']} effect (η²={item['eta_squared']:.4f}, p={item['p_value']:.4f}), "
+                    f"indicating that {item['factor'].lower()} {'substantially influences' if item['eta_squared'] >= 0.14 else 'influences' if item['eta_squared'] >= 0.06 else 'modestly influences'} "
+                    f"sleeping duration."
+                )
+            
+            # Identify the most influential factor
+            most_influential = sig_factors[0]
+            report_lines.append("")
+            report_lines.append(f"The most influential factor is {most_influential['factor']} (η²={most_influential['eta_squared']:.4f}), ")
+            report_lines.append(f"which explains approximately {most_influential['eta_squared']*100:.1f}% of the variance in sleeping duration.")
+        else:
+            report_lines.append(f"Analysis of {individual_name}'s sleeping behavior found no statistically ")
+            report_lines.append("significant factors among those tested (time period, social group, room location, intensive stereotypy). ")
+            report_lines.append("This suggests that sleeping duration may be relatively consistent across these conditions, ")
+            report_lines.append("or that other unmeasured factors may be more influential.")
+        
+        # Add methodological note
+        report_lines.append("")
+        report_lines.append("Methodology: Kruskal-Wallis test (non-parametric alternative to one-way ANOVA) ")
+        report_lines.append("was used due to potential non-normality or unequal variances in the data.")
+    
+    # Save report
+    report_file = out_dir / f"{individual_name}_sleeping_statistical_analysis.txt"
+    with open(report_file, 'w') as f:
+        f.write('\n'.join(report_lines))
+    
+    print(f"\n{'='*80}")
+    print('\n'.join(report_lines))
+    print(f"{'='*80}")
+    print(f"\n✓ Statistical analysis saved to: {report_file}")
+    
+    return results
+
+
+def lme_analysis_sleeping(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> dict:
+    """Perform regression analysis for sleeping duration (between-night factors).
+    
+    Uses ordinary least squares (OLS) regression to test between-night factors:
+    - Social Group (companions)
+    - Enclosure Location
+    - Intensive Stereotypy (>10 min bouts)
+    
+    Generates both text report and markdown summary table.
+    
+    Args:
+        df_analysis: DataFrame with sleeping analysis data
+        out_dir: Output directory for results
+        individual_name: Name of individual
+        
+    Returns:
+        Dictionary with regression results and summary table
+    """
+    try:
+        from statsmodels.regression.mixed_linear_model import MixedLM
+        from statsmodels.formula.api import ols
+        import statsmodels.api as sm
+    except ImportError:
+        print("Warning: statsmodels not available, skipping LME analysis")
+        print("Install with: pip install statsmodels")
+        return {}
+    
+    # Prepare data - use overall data (one per night) for between-night comparisons
+    df_overall = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+    
+    # Also prepare time-period data for within-night analysis
+    df_no_overall = df_analysis[df_analysis['time_period'] != 'overall'].copy()
+    
+    if df_overall.empty or len(df_overall) < 3:
+        print("Insufficient data for LME analysis (need at least 3 nights)")
+        return {}
+    
+    # Convert sleeping duration to hours for interpretability
+    df_overall['sleeping_hours'] = df_overall['sleeping_duration_s'] / 3600
+    df_no_overall['sleeping_hours'] = df_no_overall['sleeping_duration_s'] / 3600
+    
+    # Convert camera_ids to room labels
+    if 'camera_ids' in df_overall.columns:
+        df_overall['room'] = df_overall['camera_ids'].apply(camera_ids_to_room_label_text)
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_lines = []
+    
+    report_lines.append("="*80)
+    report_lines.append(f"LINEAR REGRESSION ANALYSIS - {individual_name}")
+    report_lines.append(f"Sleeping Duration: Between-Night Factors")
+    report_lines.append("="*80)
+    report_lines.append(f"\nTotal nights: {len(df_overall)}")
+    report_lines.append(f"Mean sleeping duration: {df_overall['sleeping_hours'].mean():.2f} hours (SD: {df_overall['sleeping_hours'].std():.2f} hours)")
+    report_lines.append("")
+    report_lines.append("APPROACH:")
+    report_lines.append("  Using ordinary linear regression (OLS) to test between-night factors:")
+    report_lines.append("  - Social Group (companions)")
+    report_lines.append("  - Enclosure Location")
+    report_lines.append("  - Intensive Stereotypy (>10 min bouts)")
+    report_lines.append("")
+    
+    results = {
+        'models': {},
+        'best_model': None,
+        'summary_table': [],
+    }
+    
+    # Try different model configurations
+    models_to_test = []
+    
+    # Model 1: Social Group only (OLS - between nights)
+    if 'companions' in df_overall.columns and len(df_overall['companions'].unique()) >= 2:
+        models_to_test.append({
+            'name': 'Social Group',
+            'formula': 'sleeping_hours ~ C(companions)',
+            'data': df_overall,
+            'model_type': 'ols',
+            'factor': 'Social Group',
+        })
+    
+    # Model 2: Enclosure only (OLS - between nights)
+    if 'room' in df_overall.columns and len(df_overall['room'].unique()) >= 2:
+        models_to_test.append({
+            'name': 'Enclosure',
+            'formula': 'sleeping_hours ~ C(room)',
+            'data': df_overall,
+            'model_type': 'ols',
+            'factor': 'Enclosure Location',
+        })
+    
+    # Model 3: Intensive Stereotypy only (OLS - between nights)
+    if 'intensive_stereotypy' in df_overall.columns and len(df_overall['intensive_stereotypy'].unique()) >= 2:
+        models_to_test.append({
+            'name': 'Intensive Stereotypy',
+            'formula': 'sleeping_hours ~ C(intensive_stereotypy)',
+            'data': df_overall,
+            'model_type': 'ols',
+            'factor': 'Intensive Stereotypy',
+        })
+    
+    # Model 4: Combined between-night factors (OLS)
+    combined_factors = []
+    if 'companions' in df_overall.columns and len(df_overall['companions'].unique()) >= 2:
+        combined_factors.append('C(companions)')
+    if 'room' in df_overall.columns and len(df_overall['room'].unique()) >= 2:
+        combined_factors.append('C(room)')
+    if 'intensive_stereotypy' in df_overall.columns and len(df_overall['intensive_stereotypy'].unique()) >= 2:
+        combined_factors.append('C(intensive_stereotypy)')
+    
+    if len(combined_factors) >= 2 and len(df_overall) >= 10:
+        models_to_test.append({
+            'name': 'Combined Model',
+            'formula': f"sleeping_hours ~ {' + '.join(combined_factors)}",
+            'data': df_overall,
+            'model_type': 'ols',
+            'factor': 'Combined',
+        })
+    
+    report_lines.append("-"*80)
+    report_lines.append("MODEL COMPARISON")
+    report_lines.append("-"*80)
+    report_lines.append("")
+    
+    best_aic = float('inf')
+    best_model_info = None
+    
+    for model_info in models_to_test:
+        try:
+            report_lines.append(f"\n{model_info['name'].upper()}")
+            report_lines.append(f"Formula: {model_info['formula']}")
+            report_lines.append("-" * 40)
+            
+            # Fit OLS model
+            from statsmodels.formula.api import ols
+            model = ols(model_info['formula'], data=model_info['data'])
+            result = model.fit()
+            
+            # Store results
+            results['models'][model_info['name']] = {
+                'formula': model_info['formula'],
+                'type': model_info['model_type'],
+                'aic': float(result.aic),
+                'bic': float(result.bic),
+                'log_likelihood': float(result.llf),
+                'rsquared': float(result.rsquared),
+                'rsquared_adj': float(result.rsquared_adj),
+                'f_pvalue': float(result.f_pvalue),
+                'factor': model_info.get('factor', model_info['name']),
+            }
+            
+            report_lines.append(f"  AIC: {result.aic:.2f}")
+            report_lines.append(f"  BIC: {result.bic:.2f}")
+            report_lines.append(f"  R-squared: {result.rsquared:.3f}")
+            report_lines.append(f"  Adjusted R-squared: {result.rsquared_adj:.3f}")
+            report_lines.append(f"  F-statistic p-value: {result.f_pvalue:.4f}")
+            
+            # Show parameters
+            report_lines.append(f"\n  Coefficients:")
+            for param, value in result.params.items():
+                pval = result.pvalues[param]
+                sig = "***" if pval < 0.001 else "**" if pval < 0.01 else "*" if pval < 0.05 else ""
+                stderr = result.bse[param]
+                report_lines.append(f"    {param:45s}: β={value:7.3f}, SE={stderr:6.3f}, p={pval:.4f} {sig}")
+            
+            # Add to summary table (only single-factor models)
+            if model_info['name'] != 'Combined Model':
+                # Get the significant effect
+                sig_params = []
+                for param, value in result.params.items():
+                    if param != 'Intercept' and result.pvalues[param] < 0.05:
+                        sig_params.append({
+                            'param': param,
+                            'beta': value,
+                            'pvalue': result.pvalues[param]
+                        })
+                
+                results['summary_table'].append({
+                    'Factor': model_info['factor'],
+                    'R²': result.rsquared,
+                    'Adj. R²': result.rsquared_adj,
+                    'F p-value': result.f_pvalue,
+                    'AIC': result.aic,
+                    'Significant': 'Yes' if result.f_pvalue < 0.05 else 'No',
+                    'Effect Size': 'Large' if result.rsquared >= 0.14 else 'Medium' if result.rsquared >= 0.06 else 'Small',
+                })
+            
+        except Exception as e:
+            report_lines.append(f"  ERROR: Could not fit model - {str(e)}")
+            continue
+    
+    # Summary interpretation
+    report_lines.append("\n")
+    report_lines.append("="*80)
+    report_lines.append("SUMMARY & INTERPRETATION")
+    report_lines.append("="*80)
+    report_lines.append("")
+    
+    # Summarize significant effects from all models
+    for model_name, model_data in results['models'].items():
+        if model_name != 'Combined Model':
+            report_lines.append(f"\n{model_name}:")
+            report_lines.append(f"  R²: {model_data['rsquared']:.3f} (explains {model_data['rsquared']*100:.1f}% of variance)")
+            report_lines.append(f"  Significant: {'Yes (p < 0.05)' if model_data['f_pvalue'] < 0.05 else 'No'}")
+    
+    report_lines.append("")
+    report_lines.append("-"*80)
+    report_lines.append("KEY FINDINGS:")
+    report_lines.append("-"*80)
+    report_lines.append("")
+    
+    sig_factors = [item for item in results['summary_table'] if item['Significant'] == 'Yes']
+    if sig_factors:
+        sig_factors_sorted = sorted(sig_factors, key=lambda x: x['R²'], reverse=True)
+        report_lines.append(f"Found {len(sig_factors)} significant factor(s) affecting sleeping duration:")
+        for i, factor in enumerate(sig_factors_sorted, 1):
+            report_lines.append(f"{i}. {factor['Factor']}: R²={factor['R²']:.3f} ({factor['Effect Size']} effect), p={factor['F p-value']:.4f}")
+    else:
+        report_lines.append("No significant factors found (all p >= 0.05)")
+    
+    # Create markdown table
+    report_lines.append("")
+    report_lines.append("="*80)
+    report_lines.append("SUMMARY TABLE (Markdown Format)")
+    report_lines.append("="*80)
+    report_lines.append("")
+    
+    md_lines = []
+    md_lines.append(f"# Sleeping Duration Analysis - {individual_name}")
+    md_lines.append("")
+    md_lines.append(f"**Total Nights:** {len(df_overall)}")
+    md_lines.append(f"**Mean Sleeping Duration:** {df_overall['sleeping_hours'].mean():.2f} hours (SD: {df_overall['sleeping_hours'].std():.2f} hours)")
+    md_lines.append("")
+    md_lines.append("## Factor Analysis Summary")
+    md_lines.append("")
+    
+    if results['summary_table']:
+        md_lines.append("| Factor | R² | Adj. R² | F p-value | AIC | Significant | Effect Size |")
+        md_lines.append("|--------|-------|---------|-----------|-----|-------------|-------------|")
+        
+        for item in results['summary_table']:
+            md_lines.append(
+                f"| {item['Factor']} | {item['R²']:.3f} | {item['Adj. R²']:.3f} | "
+                f"{item['F p-value']:.4f} | {item['AIC']:.2f} | "
+                f"{'✓' if item['Significant'] == 'Yes' else '✗'} | {item['Effect Size']} |"
+            )
+        
+        md_lines.append("")
+        md_lines.append("**Legend:**")
+        md_lines.append("- R²: Proportion of variance explained")
+        md_lines.append("- Adj. R²: Adjusted R² (accounts for number of predictors)")
+        md_lines.append("- F p-value: Overall model significance")
+        md_lines.append("- AIC: Akaike Information Criterion (lower is better)")
+        md_lines.append("- Effect Size: Small (R²<0.06), Medium (0.06≤R²<0.14), Large (R²≥0.14)")
+        md_lines.append("")
+        
+        # Add interpretation
+        md_lines.append("## Interpretation")
+        md_lines.append("")
+        sig_factors = [item for item in results['summary_table'] if item['Significant'] == 'Yes']
+        if sig_factors:
+            sig_factors_sorted = sorted(sig_factors, key=lambda x: x['R²'], reverse=True)
+            md_lines.append(f"**{len(sig_factors)} significant factor(s)** were identified:")
+            md_lines.append("")
+            for i, factor in enumerate(sig_factors_sorted, 1):
+                md_lines.append(f"{i}. **{factor['Factor']}** (R²={factor['R²']:.3f}, p={factor['F p-value']:.4f})")
+                md_lines.append(f"   - Explains {factor['R²']*100:.1f}% of variance in sleeping duration")
+                md_lines.append(f"   - Effect size: {factor['Effect Size']}")
+                md_lines.append("")
+            
+            most_influential = sig_factors_sorted[0]
+            md_lines.append(f"**Most influential factor:** {most_influential['Factor']} explains {most_influential['R²']*100:.1f}% of the variance in sleeping duration.")
+        else:
+            md_lines.append("No statistically significant factors were identified (all p ≥ 0.05).")
+            md_lines.append("")
+            md_lines.append("This suggests that sleeping duration is relatively consistent across the tested conditions,")
+            md_lines.append("or that other unmeasured factors may be more influential.")
+    else:
+        md_lines.append("No factors available for analysis.")
+    
+    # Add markdown table to text report
+    for line in md_lines:
+        report_lines.append(line)
+    
+    # Save text report
+    report_file = out_dir / f"{individual_name}_sleeping_regression_analysis.txt"
+    with open(report_file, 'w') as f:
+        f.write('\n'.join(report_lines))
+    
+    # Save markdown report
+    md_file = out_dir / f"{individual_name}_sleeping_regression_summary.md"
+    with open(md_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(md_lines))
+    
+    print(f"\n{'='*80}")
+    print('\n'.join(report_lines))
+    print(f"{'='*80}")
+    print(f"\n✓ Regression analysis saved to: {report_file}")
+    print(f"✓ Markdown summary saved to: {md_file}")
+    
+    return results
+
+
+def plot_sleeping_analysis(
+    df_analysis: pd.DataFrame,
+    out_dir: Path,
+    individual_name: str,
+) -> None:
+    """Generate visualization plots for sleeping behavior analysis.
+    
+    Args:
+        df_analysis: DataFrame with sleeping analysis data
+        out_dir: Output directory for plots
+        individual_name: Name of individual
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\nGenerating sleeping analysis plots...")
+    
+    # 1. Sleeping duration by time period (box plot with individual data points)
+    time_period_data = df_analysis[df_analysis['time_period'] != 'overall'].copy()
+    if not time_period_data.empty:
+        fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+        
+        periods = ['early_night', 'mid_night', 'early_morning']
+        period_labels = ['Early Night\n18:00-00:00', 'Mid Night\n00:00-05:00', 'Early Morning\n05:00-08:00']
+        colors = ['#5FB13E', '#FF9A2A', '#8a00ac']
+        
+        box_data = []
+        for period in periods:
+            period_values = time_period_data[time_period_data['time_period'] == period]['sleeping_duration_s'] / 3600  # Convert to hours
+            box_data.append(period_values)
+        
+        # Create box plot
+        bp = ax.boxplot(box_data, positions=range(len(periods)), widths=0.5, 
+                        patch_artist=True, showfliers=False,
+                        boxprops=dict(facecolor='lightgray', alpha=0.7),
+                        medianprops=dict(color='black', linewidth=2))
+        
+        # Overlay individual data points with jitter
+        for i, period in enumerate(periods):
+            period_values = time_period_data[time_period_data['time_period'] == period]['sleeping_duration_s'] / 3600
+            if not period_values.empty:
+                # Add small random jitter for visibility
+                x_positions = np.random.normal(i, 0.04, size=len(period_values))
+                color = colors[i % len(colors)]
+                ax.scatter(x_positions, period_values, color=color, alpha=1, s=30, zorder=3, edgecolor='black', linewidth=0.5)
+        
+        ax.set_xlabel('Time Period', fontsize=12)
+        ax.set_ylabel('Sleeping Duration (hours)', fontsize=12)
+        ax.set_title(f'Sleeping Duration by Time Period - {individual_name}', fontsize=14)
+        ax.set_xticks(range(len(periods)))
+        ax.set_xticklabels(period_labels)
+        ax.set_ylim(bottom=0)
+        ax.grid(axis='y', alpha=0.3)
+        
+        fig.tight_layout()
+        fig.savefig(out_dir / f'{individual_name}_sleeping_by_time_period.png', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved: {out_dir / f'{individual_name}_sleeping_by_time_period.png'}")
+    
+    # 2. Sleeping duration trends over dates
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
+    
+    overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+    if not overall_data.empty:
+        overall_data = overall_data.sort_values('date')
+        
+        # Sleeping duration over time -- no line connecting points, just markers to show variability across dates
+        ax.scatter(
+            range(len(overall_data)),
+            overall_data['sleeping_duration_s'] / 3600,  # Convert to hours
+            marker='o',
+            s=60,
+            color='#5FB13E',
+            edgecolor='black',
+            linewidth=0.5,
+            zorder=3
+        )
+        ax.set_xlabel('Night (Date)', fontsize=11)
+        ax.set_ylabel('Total Sleeping Duration (hours)', fontsize=11)
+        ax.set_title(f'Sleeping Duration Over Time - {individual_name}', fontsize=13)
+        ax.set_ylim(bottom=0)
+        ax.grid(True, alpha=0.3)
+        
+        # Add date labels on x-axis
+        ax.set_xticks(range(len(overall_data)))
+        ax.set_xticklabels([overall_data.iloc[i]['date'] for i in range(len(overall_data))], rotation=90, ha='right', fontsize=8)
+        
+        fig.tight_layout()
+        fig.savefig(out_dir / f'{individual_name}_sleeping_trends.png', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved: {out_dir / f'{individual_name}_sleeping_trends.png'}")
+    
+    # 3. Sleeping duration by intensive stereotypy
+    if 'intensive_stereotypy' in df_analysis.columns:
+        overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+        if not overall_data.empty and len(overall_data['intensive_stereotypy'].unique()) >= 2:
+            fig, ax = plt.subplots(figsize=(6, 5), dpi=300)
+            
+            intensive_stats = overall_data.groupby('intensive_stereotypy').agg({
+                'sleeping_duration_s': ['mean', 'std', 'count'],
+            }).reset_index()
+            intensive_stats.columns = ['intensive_stereotypy', 'mean_duration', 'std_duration', 'n_dates']
+            
+            # Create bar plot
+            bar_colors = ['#73BF69', '#FF2624']  # Green for no, red for yes
+            color_map = {'no': '#73BF69', 'yes': '#FF2624'}
+            colors = [color_map.get(val, '#73BF69') for val in intensive_stats['intensive_stereotypy']]
+            
+            ax.bar(
+                range(len(intensive_stats)),
+                intensive_stats['mean_duration'] / 3600,  # Convert to hours
+                yerr=intensive_stats['std_duration'] / 3600,
+                capsize=5,
+                alpha=1,
+                color=colors,
+                edgecolor='black',
+                linewidth=1
+            )
+            
+            # Overlay individual data points
+            for i, intensive_val in enumerate(intensive_stats['intensive_stereotypy']):
+                values = overall_data[overall_data['intensive_stereotypy'] == intensive_val]['sleeping_duration_s'] / 3600
+                if not values.empty:
+                    x_positions = np.random.normal(i, 0.04, size=len(values))
+                    ax.scatter(x_positions, values, color='white', 
+                             alpha=0.8, s=50, zorder=3, edgecolor='black', linewidth=1)
+            
+            ax.set_xlabel('Intensive Stereotypy (>10 min bouts)', fontsize=12)
+            ax.set_ylabel('Mean Sleeping Duration (hours)', fontsize=12)
+            ax.set_title(f'Sleeping Duration by Intensive Stereotypy - {individual_name}', fontsize=13)
+            ax.set_xticks(range(len(intensive_stats)))
+            ax.set_xticklabels(['No', 'Yes'])
+            ax.set_ylim(bottom=0)
+            ax.grid(axis='y', alpha=0.3)
+            
+            # Add count annotations
+            for i, row in enumerate(intensive_stats.itertuples()):
+                y_pos = (row.mean_duration + (row.std_duration if not pd.isna(row.std_duration) else 0)) / 3600
+                ax.text(i, y_pos + 0.1, f'n={row.n_dates}', ha='center', fontsize=9)
+            
+            fig.tight_layout()
+            fig.savefig(out_dir / f'{individual_name}_sleeping_by_intensive_stereotypy.png', dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"  Saved: {out_dir / f'{individual_name}_sleeping_by_intensive_stereotypy.png'}")
+    
+    # 4. Sleeping duration by social group (companions)
+    if 'companions' in df_analysis.columns:
+        overall_data = df_analysis[df_analysis['time_period'] == 'overall'].copy()
+        if not overall_data.empty:
+            companion_stats = overall_data.groupby('companions').agg({
+                'sleeping_duration_s': ['mean', 'std', 'count'],
+            }).reset_index()
+            companion_stats.columns = ['companions', 'mean_duration', 'std_duration', 'n_dates']
+            
+            # Filter out companion groups with very few observations
+            companion_stats = companion_stats[companion_stats['n_dates'] >= 2]
+            
+            if not companion_stats.empty:
+                fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+                
+                ax.bar(
+                    range(len(companion_stats)),
+                    companion_stats['mean_duration'] / 3600,  # Convert to hours
+                    yerr=companion_stats['std_duration'] / 3600,
+                    capsize=5,
+                    alpha=1,
+                    color='#5FB13E',
+                    edgecolor='black',
+                    linewidth=1
+                )
+                
+                # Overlay individual data points
+                for i, companion in enumerate(companion_stats['companions']):
+                    values = overall_data[overall_data['companions'] == companion]['sleeping_duration_s'] / 3600
+                    if not values.empty:
+                        x_positions = np.random.normal(i, 0.04, size=len(values))
+                        ax.scatter(x_positions, values, color='white', 
+                                 alpha=0.8, s=50, zorder=3, edgecolor='black', linewidth=1)
+                
+                ax.set_xlabel('Social Group', fontsize=12)
+                ax.set_ylabel('Mean Sleeping Duration (hours)', fontsize=12)
+                ax.set_title(f'Sleeping Duration by Social Group - {individual_name}', fontsize=13)
+                ax.set_xticks(range(len(companion_stats)))
+                ax.set_xticklabels(companion_stats['companions'], rotation=45, ha='right')
+                ax.set_ylim(bottom=0)
+                ax.grid(axis='y', alpha=0.3)
+                
+                # Add count annotations
+                for i, row in enumerate(companion_stats.itertuples()):
+                    y_pos = (row.mean_duration + (row.std_duration if not pd.isna(row.std_duration) else 0)) / 3600
+                    ax.text(i, y_pos + 0.1, f'n={row.n_dates}', ha='center', fontsize=9)
+                
+                fig.tight_layout()
+                fig.savefig(out_dir / f'{individual_name}_sleeping_by_companions.png', dpi=300, bbox_inches='tight')
+                plt.close(fig)
+                print(f"  Saved: {out_dir / f'{individual_name}_sleeping_by_companions.png'}")
 
     
 def plot_stereotypy_factor_timelines(
