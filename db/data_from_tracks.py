@@ -94,7 +94,17 @@ def load_identity_labels_from_json(
     for tracklet in tracklets_data:
         if tracklet["invalid_flag"]:
             continue
-        track_file2_label[tracklet["track_filename"]] = tracklet.get(id_col, "Invalid")
+        track_label = tracklet.get(id_col, "Invalid")
+        # if 'unknown' 
+        if track_label.lower() in ['unknown', 'invalid', '']:
+            ### get data from 'cross_cam_stitched_id_vote' if existing or 'voted_track_label' if existing, otherwise 'Invalid'
+            for id_col_option in ["cross_cam_stitched_id_vote", "voted_track_label"]:
+                if id_col_option in tracklet and tracklet[id_col_option].lower() not in ['unknown', 'invalid', '']:
+                    track_label = tracklet[id_col_option]
+                    break
+            
+        track_file2_label[tracklet["track_filename"]] = track_label
+        
 
     return track_file2_label
 
@@ -698,10 +708,6 @@ def main(args):
         total=len(all_dates), desc="Processing nights", unit="night"
     )
 
-    # Track min/max times for summary generation
-    min_night_start = None
-    max_night_end = None
-
     ### upload data from one night (date)
     for date in pbar(all_dates):
         ## date format if YYYYMMDD -> YYYY-MM-DD
@@ -731,12 +737,6 @@ def main(args):
                 minutes=end_timestamp.minute,
                 seconds=end_timestamp.second,
             )
-
-        # Track overall min/max for summary
-        if min_night_start is None or night_start < min_night_start:
-            min_night_start = night_start
-        if max_night_end is None or night_end > max_night_end:
-            max_night_end = night_end
 
         # DELETE existing data for this night BEFORE inserting new data to avoid duplicates
         if args.delete_existing_night:
@@ -803,9 +803,11 @@ def main(args):
             print(f"\nWarning: Analysis directory not found: {analysis_root}")
             print(f"  Skipping ethogram loading for date {date}")
 
-    # Summarize all processed nights
-    if min_night_start is not None and max_night_end is not None:
-        summarize_observations(db_cursor, min_night_start, max_night_end)
+        # Summarize this night's data (spans current date + next day)
+        summarize_observations(db_cursor, night_start, night_end)
+        db_connection.commit()
+
+    # Final commit
     db_connection.commit()
 
 
