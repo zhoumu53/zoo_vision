@@ -498,6 +498,7 @@ def _plot_activity_timeline_multi_night(
     title: str,
     df_gt_segments_all: pd.DataFrame | None = None,
     group_info_by_date: dict[str, dict[str, str]] | None = None,
+    LABEL_COLORS: dict[str, str] = LABEL_COLORS,
 ) -> None:
     df = df_segments_all.copy()
     gt_df = pd.DataFrame() if df_gt_segments_all is None else df_gt_segments_all.copy()

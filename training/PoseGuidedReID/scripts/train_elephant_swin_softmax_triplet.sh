@@ -40,6 +40,7 @@ cd ${PROJECT_ROOT}
 # Run training
 python3 tools/train.py \
     --config_file ${CONFIG_FILE} \
+    --do_training \
     --do_inference \
     --notes "Elephant ReID with Swin Transformer backbone, triplet + softmax loss" \
     DATASETS.ROOT_DIR '/media/mu/zoo_vision/data/reid_time_split' \

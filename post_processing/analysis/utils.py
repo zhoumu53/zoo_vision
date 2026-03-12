@@ -65,7 +65,7 @@ LABEL_DISPLAY = {
     "03_sleeping_right": "lateral recumbancy (right)",
     "no_observation": "outside / no observation",
     "walking": "locomotion",
-    "stereotypy": "route tracking",
+    "stereotypy": "route tracing",
 }
 
 
