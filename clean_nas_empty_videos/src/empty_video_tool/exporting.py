@@ -64,12 +64,6 @@ def _append_unique_csv_rows(
             writer.writerow(row)
 
 
-def _normalized_root(host_root: str | None) -> str:
-    if not host_root:
-        return ""
-    return Path(host_root).expanduser().as_posix()
-
-
 def _resolved_file_path(scan_row: dict) -> Path | None:
     for key in ("video_path", "host_video_path"):
         raw_path = str(scan_row.get(key) or "").strip()
@@ -111,52 +105,32 @@ def _size_bytes(file_path: Path | None) -> int | None:
     return file_path.stat().st_size
 
 
-def _normalized_relative_path(scan_row: dict, *, normalized_root: str) -> str:
-    relative_path = str(scan_row.get("relative_path") or "").strip()
-    if relative_path:
-        return relative_path
-
-    host_video_path = str(scan_row.get("host_video_path") or "").strip()
-    if host_video_path and normalized_root:
-        host_path = Path(host_video_path)
-        try:
-            return host_path.relative_to(Path(normalized_root)).as_posix()
-        except ValueError:
-            return host_path.name
-    if host_video_path:
-        return Path(host_video_path).name
-    return ""
-
-
-def _top_level_folder(relative_path: str, *, host_root: str) -> str:
+def _top_level_folder(relative_path: str) -> str:
     path_parts = Path(relative_path).parts if relative_path else ()
     if len(path_parts) > 1:
         top_level = path_parts[0]
         if top_level not in {".", ""}:
             return top_level
-    if host_root:
-        return Path(host_root).name
     return "root"
 
 
-def build_empty_video_export_rows(scan_rows: list[dict], *, host_root: str | None = None) -> list[dict]:
-    normalized_root = _normalized_root(host_root)
+def build_empty_video_export_rows(scan_rows: list[dict]) -> list[dict]:
     export_rows: list[dict] = []
 
     for row in scan_rows:
-        if row.get("status") != "ok" or not row.get("empty_video"):
+        if not row.get("to_delete"):
             continue
 
-        host_video_path = str(row.get("host_video_path") or "").strip()
+        host_video_path = str(row.get("video_path") or "").strip()
         if not host_video_path:
             continue
 
         host_path = Path(host_video_path)
-        relative_path = _normalized_relative_path(row, normalized_root=normalized_root)
+        relative_path = str(row.get("relative_path") or "").strip()
         relative_folder = Path(relative_path).parent.as_posix() if relative_path else ""
         if relative_folder == ".":
             relative_folder = ""
-        top_level_folder = _top_level_folder(relative_path, host_root=normalized_root)
+        top_level_folder = _top_level_folder(relative_path)
         file_path = _resolved_file_path(row)
         date_value, year_value = _extract_date_year_from_relative_path(relative_path)
         if not date_value:
@@ -174,7 +148,6 @@ def build_empty_video_export_rows(scan_rows: list[dict], *, host_root: str | Non
                 "year": year_value,
                 "size_bytes": size_bytes,
                 "size_mb": size_mb,
-                "root": normalized_root,
                 "folder": host_path.parent.as_posix(),
                 "folder_name": host_path.parent.name,
                 "relative_folder": relative_folder,
@@ -194,25 +167,12 @@ def grouped_empty_video_export_path(export_root: Path, row: dict) -> Path:
     return export_root / top_level_folder / f"{date_key}.csv"
 
 
-def grouped_empty_video_log_path(
-    export_root: Path,
-    row: dict,
-    *,
-    log_filename: str = "empty_video_paths.log",
-) -> Path:
-    top_level_folder = str(row.get("top_level_folder") or "").strip() or "root"
-    date_key = _date_key(str(row.get("date_key") or row.get("date") or ""))
-    return export_root / top_level_folder / date_key / log_filename
-
-
 def write_grouped_empty_video_exports(
     export_root: Path,
     scan_rows: list[dict],
-    *,
-    host_root: str | None = None,
 ) -> list[Path]:
     export_root.mkdir(parents=True, exist_ok=True)
-    export_rows = build_empty_video_export_rows(scan_rows, host_root=host_root)
+    export_rows = build_empty_video_export_rows(scan_rows)
     rows_by_group: dict[Path, list[dict]] = {}
     for row in export_rows:
         export_path = grouped_empty_video_export_path(export_root, row)

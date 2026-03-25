@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -15,7 +15,6 @@ class ScanConfig:
     target_folder: Path
     output_root: Path
     empty_export_root: Path | None = None
-    host_data_root_display: str | None = None
     filename_substring: str | None = None
     recursive: bool = True
     interval_minutes: int = 2
@@ -60,8 +59,6 @@ class ScanConfig:
         object.__setattr__(self, "output_root", resolved_output_root)
         if self.empty_export_root is not None:
             object.__setattr__(self, "empty_export_root", _resolve_path(Path(self.empty_export_root)))
-        host_data_root_display = self.host_data_root_display or str(resolved_data_root)
-        object.__setattr__(self, "host_data_root_display", str(Path(host_data_root_display).expanduser()))
         if self.weights_path:
             object.__setattr__(
                 self,
@@ -75,8 +72,8 @@ class ScanConfig:
     def model_source(self) -> str:
         return self.weights_path or self.default_model
 
-    def host_video_path(self, relative_path: str) -> str:
-        return str((Path(self.host_data_root_display) / relative_path).as_posix())
+    def video_path(self, relative_path: str) -> str:
+        return str((self.data_root / relative_path).as_posix())
 
 
 @dataclass
@@ -89,53 +86,40 @@ class FrameSampleResult:
     matched_confidences: list[float] = field(default_factory=list)
     error: str | None = None
 
-    def to_dict(self) -> dict:
-        return asdict(self)
-
 
 @dataclass
 class VideoResult:
     video_path: str
-    host_video_path: str
-    relative_path: str
     duration_sec: float | None
     sample_interval_min: int
-    sample_timestamps_sec: list[float] = field(default_factory=list)
-    sample_count: int = 0
-    detected_frames: int = 0
-    coarse_positive_ratio: float | None = None
-    uniform_positive_ratio: float | None = None
-    confirmed_detection_duration_sec: float = 0.0
-    empty_video: bool | None = None
-    preview_path: str | None = None
-    model_source: str = ""
-    status: str = "ok"
+    n_frame_samples: int = 0
+    to_delete: bool | None = None
     classification_reason: str = ""
     error: str | None = None
+    # internal fields (not persisted to report.json)
+    relative_path: str = ""
+    preview_path: str | None = None
     frame_samples: list[FrameSampleResult] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        payload = asdict(self)
-        payload["frame_samples"] = [sample.to_dict() for sample in self.frame_samples]
-        return payload
+        return {
+            "video_path": self.video_path,
+            "duration_sec": self.duration_sec,
+            "sample_interval_min": self.sample_interval_min,
+            "n_frame_samples": self.n_frame_samples,
+            "to_delete": self.to_delete,
+            "classification_reason": self.classification_reason,
+            "error": self.error,
+        }
 
     def to_report_row(self) -> dict:
         return {
             "video_path": self.video_path,
-            "host_video_path": self.host_video_path,
             "relative_path": self.relative_path,
             "duration_sec": self.duration_sec,
             "sample_interval_min": self.sample_interval_min,
-            "sample_timestamps_sec": self.sample_timestamps_sec,
-            "sample_count": self.sample_count,
-            "detected_frames": self.detected_frames,
-            "coarse_positive_ratio": self.coarse_positive_ratio,
-            "uniform_positive_ratio": self.uniform_positive_ratio,
-            "confirmed_detection_duration_sec": self.confirmed_detection_duration_sec,
-            "empty_video": self.empty_video,
-            "preview_path": self.preview_path,
-            "model_source": self.model_source,
-            "status": self.status,
+            "n_frame_samples": self.n_frame_samples,
+            "to_delete": self.to_delete,
             "classification_reason": self.classification_reason,
             "error": self.error,
         }
@@ -156,12 +140,3 @@ class ScanProgress:
     total_samples: int = 0
     video_path: str = ""
     message: str = ""
-
-
-@dataclass
-class ScanRunResult:
-    run_dir: str
-    report_json_path: str
-    empty_video_log_path: str
-    empty_video_csv_path: str = ""
-    results: list[VideoResult] = field(default_factory=list)

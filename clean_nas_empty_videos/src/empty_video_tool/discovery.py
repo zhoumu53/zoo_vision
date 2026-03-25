@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 
@@ -56,9 +57,11 @@ def contains_video_files(folder: Path, recursive: bool = True, filename_substrin
     return False
 
 
-def discover_video_files(folder: Path, recursive: bool = True, filename_substring: str | None = None) -> list[Path]:
-    videos: list[Path] = []
-
+def iter_video_files(
+    folder: Path,
+    recursive: bool = True,
+    filename_substring: str | None = None,
+) -> Iterator[Path]:
     if recursive:
         def _ignore_walk_error(_: OSError) -> None:
             return None
@@ -74,21 +77,23 @@ def discover_video_files(folder: Path, recursive: bool = True, filename_substrin
             for filename in filenames:
                 candidate = Path(root) / filename
                 if candidate.suffix.lower() in VIDEO_EXTENSIONS and _matches_filename_filter(candidate.name, filename_substring):
-                    videos.append(candidate)
+                    yield candidate
     else:
         try:
-            with os.scandir(folder) as entries:
-                for entry in entries:
-                    try:
-                        if (
-                            entry.is_file(follow_symlinks=False)
-                            and Path(entry.name).suffix.lower() in VIDEO_EXTENSIONS
-                            and _matches_filename_filter(entry.name, filename_substring)
-                        ):
-                            videos.append(Path(entry.path))
-                    except OSError:
-                        continue
+            entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
         except OSError:
-            return []
+            return
+        for entry in entries:
+            try:
+                if (
+                    entry.is_file(follow_symlinks=False)
+                    and Path(entry.name).suffix.lower() in VIDEO_EXTENSIONS
+                    and _matches_filename_filter(entry.name, filename_substring)
+                ):
+                    yield Path(entry.path)
+            except OSError:
+                continue
 
-    return sorted(videos, key=lambda path: str(path).lower())
+
+def discover_video_files(folder: Path, recursive: bool = True, filename_substring: str | None = None) -> list[Path]:
+    return sorted(iter_video_files(folder, recursive, filename_substring), key=lambda path: str(path).lower())
