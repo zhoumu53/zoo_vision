@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 public/crops/
-public/game-data/
+public/game-data/*
+!public/game-data/galaxy-elephants.json
 __pycache__/
 *.pyc

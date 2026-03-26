@@ -32,7 +32,7 @@ export default function UploadProcessing({
     let active = true;
     const poll = async () => {
       try {
-        const s = await getUploadStatus(parseInt(jobId) || 0);
+        const s = await getUploadStatus(jobId);
         if (!active) return;
         setStatus(s);
         if (s.partial?.detected_elephants_partial && s.partial.detected_elephants_partial.length > 0) {

@@ -1,7 +1,5 @@
 """
 Galaxy API endpoints: list elephants, upload & match.
-
-Adapted from brown-bear-server/apps/api/app/api/galaxy.py and galaxy_upload.py
 """
 
 import logging
@@ -28,7 +26,7 @@ router = APIRouter(prefix="/galaxy", tags=["galaxy"])
 # Lazy-loaded singletons
 _gallery = None
 _detector = None
-_reid_model = None
+_reid_extractor = None
 
 # In-memory job store
 _jobs: dict[str, dict] = {}
@@ -56,15 +54,25 @@ def get_detector():
     return _detector
 
 
+def get_reid_extractor():
+    global _reid_extractor
+    if _reid_extractor is None:
+        from reid import ReIDExtractor
+        _reid_extractor = ReIDExtractor()
+    return _reid_extractor
+
+
 def label_to_info(label: str) -> dict:
-    """Convert folder label (e.g. '01_Chandra') to display info."""
-    for folder_name, info in ELEPHANT_INFO.items():
-        if label == folder_name or label == info["name"]:
+    """Convert label to display info."""
+    if label in ELEPHANT_INFO:
+        return ELEPHANT_INFO[label]
+    # Try matching by folder-style name like "01_Chandra"
+    for key, info in ELEPHANT_INFO.items():
+        if label.endswith(key) or label == info["name"]:
             return info
-    # Fallback: extract name from label
     parts = label.split("_", 1)
     name = parts[1] if len(parts) > 1 else label
-    return {"id": 0, "name": name, "color": "#FFFFFF"}
+    return {"id": 0, "name": name, "color": "#FFFFFF", "profile": None}
 
 
 @router.get("/elephants")
@@ -81,6 +89,7 @@ async def list_elephants():
             "color": info["color"],
             "image_count": e["image_count"],
             "sample_crop_path": e["sample_crop_path"],
+            "profile": info.get("profile"),
             "x": e["x"],
             "y": e["y"],
             "z": e["z"],
@@ -102,7 +111,6 @@ async def upload_photo(photo: UploadFile = File(...)):
     job_dir = UPLOAD_DIR / job_uuid
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save original
     orig_path = job_dir / "original.jpg"
     with open(orig_path, "wb") as f:
         f.write(contents)
@@ -118,7 +126,6 @@ async def upload_photo(photo: UploadFile = File(...)):
         "job_dir": str(job_dir),
     }
 
-    # Process in background (simple synchronous for now)
     import threading
     t = threading.Thread(target=_process_upload, args=(job_id,))
     t.start()
@@ -158,19 +165,23 @@ def _process_upload(job_id: str):
         # Step 1: Detect elephants
         job["progress"] = 20
         job["stage"] = "Detecting elephants..."
-        detector = get_detector()
-        detections = detector.detect_and_crop(image)
+        h, w = image.shape[:2]
+        detections = []
+        try:
+            detector = get_detector()
+            detections = detector.detect_and_crop(image)
+        except Exception as e:
+            logger.warning("YOLO detection failed: %s, using full image", e)
 
         if not detections:
-            job["status"] = "done"
-            job["progress"] = 100
-            job["stage"] = "Complete"
-            job["result"] = {
-                "outcome": "no_elephant_detected",
-                "original_url": f"/storage/uploads/{Path(job_dir).name}/original.jpg",
-                "detected_elephants": [],
-            }
-            return
+            # No detection or detection failed - use the whole image as crop
+            logger.info("Using full image as single crop")
+            detections = [{
+                "bbox": {"x": 0.5, "y": 0.5, "w": 1.0, "h": 1.0},
+                "bbox_abs": [0, 0, w, h],
+                "crop": image,
+                "confidence": 0.0,
+            }]
 
         # Provide partial detection data for animation
         partial_elephants = []
@@ -189,38 +200,20 @@ def _process_upload(job_id: str):
             "original_url": f"/storage/uploads/{job_dir.name}/original.jpg",
         }
 
-        # Step 2: Extract features (using ReID model)
+        # Step 2: Extract real ReID features
         job["progress"] = 60
         job["stage"] = "Extracting features..."
+        reid = get_reid_extractor()
         gallery = get_gallery()
 
-        # For each detected elephant, extract ReID features
         detected_elephants = []
         for i, det in enumerate(detections):
             crop = det["crop"]
 
-            # Resize crop to 224x224 for ReID
-            crop_resized = cv2.resize(crop, (224, 224))
-            # Convert BGR to RGB, normalize
-            crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            # ImageNet normalization
-            mean = np.array([0.485, 0.456, 0.406])
-            std = np.array([0.229, 0.224, 0.225])
-            crop_normalized = (crop_rgb - mean) / std
-            # To tensor format (C, H, W)
-            crop_tensor = np.transpose(crop_normalized, (2, 0, 1)).astype(np.float32)
+            # Extract real feature using ReID model
+            feature = reid.extract(crop)
 
-            # Use gallery's centroids for matching (feature already L2-normalized)
-            # For now, use the resized crop as a simple feature proxy
-            # In production, this would use the actual ReID model
-            # feature = reid_model.extract_features(crop_tensor)
-            # For demo: use random feature matching against gallery
-            feature = crop_tensor.flatten()[:gallery.features.shape[1]]
-            norm = np.linalg.norm(feature)
-            if norm > 1e-9:
-                feature = feature / norm
-
-            # Find nearest elephants
+            # Find nearest elephants in gallery
             nearest = gallery.find_nearest(feature)
             position = gallery.project_to_3d(feature)
 
@@ -231,10 +224,17 @@ def _process_upload(job_id: str):
                 nearest_elephants.append({
                     "elephant_id": match_info["id"],
                     "elephant_name": match_info["name"],
-                    "similarity": match["similarity"],
+                    "similarity": round(match["similarity"], 4),
+                    "mean_similarity": match.get("mean_similarity"),
+                    "cosine_distance": match["cosine_distance"],
+                    "match_level": match["match_level"],
+                    "vote_count": match.get("vote_count"),
+                    "vote_ratio": match.get("vote_ratio"),
+                    "margin": match.get("margin"),
                     "sample_crop_path": match["sample_crop_path"],
                     "image_count": match["image_count"],
                     "position": pos,
+                    "profile": match_info.get("profile"),
                 })
 
             detected_elephants.append({
@@ -243,7 +243,7 @@ def _process_upload(job_id: str):
                 "bbox": det["bbox"],
                 "nearest_elephants": nearest_elephants,
                 "uploaded_position": {"x": position[0], "y": position[1], "z": position[2]} if position else None,
-                "possibly_new": nearest[0]["possibly_new"] if nearest else True,
+                "match_level": nearest[0]["match_level"] if nearest else "unknown",
             })
 
         job["progress"] = 100

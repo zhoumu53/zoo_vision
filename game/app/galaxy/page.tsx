@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { apiGet, uploadElephantPhoto } from "../../lib/api";
+import { loadGalaxyElephants } from "../../lib/data";
+import { uploadElephantPhoto } from "../../lib/api";
 import type { GalaxyElephant, UploadResult, UploadJobStatus, Position3D, DetectedElephant } from "../../lib/types";
 import GalaxyUpload from "./GalaxyUpload";
 import UploadProcessing from "./UploadProcessing";
@@ -40,10 +41,10 @@ export default function GalaxyPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiGet<{ elephants: GalaxyElephant[] }>("/galaxy/elephants");
-        setElephants(res.elephants);
+        const data = await loadGalaxyElephants();
+        setElephants(data);
       } catch (e: any) {
-        setError(e?.message || "Failed to load galaxy data. Is the backend running?");
+        setError(e?.message || "Failed to load galaxy data");
       } finally {
         setLoading(false);
       }
@@ -57,7 +58,7 @@ export default function GalaxyPage() {
     setPreviewUrl(localPreview);
     try {
       const resp = await uploadElephantPhoto(file);
-      setJobId(resp.job_id.toString());
+      setJobId(resp.job_id);
       setPhase("processing");
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");

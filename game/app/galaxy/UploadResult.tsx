@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { UploadResult, DetectedElephant } from "../../lib/types";
+import type { UploadResult, DetectedElephant, MatchLevel } from "../../lib/types";
 import { ELEPHANTS } from "../../lib/elephants";
 
 const BBOX_COLORS = [
@@ -13,6 +13,58 @@ const BBOX_COLORS = [
 ];
 
 function getColor(idx: number) { return BBOX_COLORS[idx % BBOX_COLORS.length]; }
+
+const MATCH_LEVEL_CONFIG: Record<MatchLevel, {
+  label: string;
+  heading: (name: string, color: string) => JSX.Element;
+  subtitle?: string;
+  gradient: string;
+  borderClass: string;
+  profileDim: boolean;
+  nameSuffix: string;
+}> = {
+  same: {
+    label: "Match Found",
+    heading: (name, color) => (
+      <h2 className="text-lg font-light text-white">
+        This could be <span className="font-normal" style={{ color }}>{name}</span>
+      </h2>
+    ),
+    gradient: "from-cyan-400 to-emerald-400",
+    borderClass: "border-cyan-400/20",
+    profileDim: false,
+    nameSuffix: "",
+  },
+  similar: {
+    label: "Similar — Not Confirmed",
+    heading: (name, color) => (
+      <h2 className="text-lg font-light text-white">
+        Looks <span className="italic text-white/70">similar</span> to{" "}
+        <span className="font-normal" style={{ color }}>{name}</span>
+      </h2>
+    ),
+    subtitle: "The cosine distance is too far for a confident ID",
+    gradient: "from-purple-400 to-cyan-400",
+    borderClass: "border-purple-400/20",
+    profileDim: false,
+    nameSuffix: " ?",
+  },
+  unknown: {
+    label: "Unknown Elephant",
+    heading: () => (
+      <h2 className="text-lg font-light text-white">
+        <span className="bg-gradient-to-r from-amber-400 to-rose-400 bg-clip-text text-transparent font-normal">
+          We may have never seen this one
+        </span>
+      </h2>
+    ),
+    subtitle: "But the most similar elephant we know is:",
+    gradient: "from-amber-400 to-rose-400",
+    borderClass: "border-amber-400/20",
+    profileDim: true,
+    nameSuffix: " ?",
+  },
+};
 
 export default function UploadResultView({
   result, onTryAgain, onSelectElephant,
@@ -49,11 +101,14 @@ export default function UploadResultView({
   const selected = detected[selectedIdx] || null;
   const topMatch = selected?.nearest_elephants[0] || null;
   const restMatches = selected?.nearest_elephants.slice(1) || [];
-  const isNew = selected?.possibly_new ?? false;
   const elephantInfo = ELEPHANTS.find((e) => e.name === topMatch?.elephant_name);
+  const elColor = elephantInfo?.color || "#c084fc";
 
+  const matchLevel: MatchLevel = topMatch?.match_level || "unknown";
+  const config = MATCH_LEVEL_CONFIG[matchLevel];
   const simPct = topMatch ? Math.round(topMatch.similarity * 100) : 0;
-  const simColor = simPct >= 80 ? "from-cyan-400 to-emerald-400" : simPct >= 60 ? "from-purple-400 to-cyan-400" : "from-amber-400 to-yellow-300";
+  const cosDist = topMatch?.cosine_distance ?? 0;
+  const profileSrc = topMatch?.profile || topMatch?.sample_crop_path;
 
   return (
     <div className="space-y-4">
@@ -85,23 +140,19 @@ export default function UploadResultView({
       )}
 
       {selected && topMatch && (
-        <div className={`rounded-2xl border ${isNew ? "border-amber-400/20" : "border-purple-400/15"} bg-white/[0.03] p-5`}>
+        <div className={`rounded-2xl border ${config.borderClass} bg-white/[0.03] p-5`}>
+          {/* Header */}
           <div className="text-center mb-4">
-            <p className="text-[10px] text-white/40 uppercase tracking-[0.15em] mb-1">
-              {isNew ? "Closest Match" : "Best Match"}
+            <p className={`text-[10px] uppercase tracking-[0.15em] mb-1 ${matchLevel === "same" ? "text-cyan-400/60" : matchLevel === "similar" ? "text-purple-400/60" : "text-amber-400/60"}`}>
+              {config.label}
             </p>
-            {isNew ? (
-              <h2 className="text-lg font-light text-white">
-                <span className="bg-gradient-to-r from-amber-400 to-yellow-300 bg-clip-text text-transparent font-normal">Could be a new elephant!</span>
-              </h2>
-            ) : (
-              <h2 className="text-lg font-light text-white">
-                Looks like{" "}
-                <span className="font-normal" style={{ color: elephantInfo?.color || "#c084fc" }}>{topMatch.elephant_name}</span>
-              </h2>
+            {config.heading(topMatch.elephant_name, elColor)}
+            {config.subtitle && (
+              <p className="mt-2 text-xs text-white/40">{config.subtitle}</p>
             )}
           </div>
 
+          {/* Comparison */}
           <div className="flex items-center justify-center gap-5 mb-4">
             <div className="text-center">
               <div className={`h-20 w-20 overflow-hidden rounded-xl border-2 ${getColor(selectedIdx).border}`}>
@@ -109,20 +160,33 @@ export default function UploadResultView({
               </div>
               <p className="mt-1 text-[10px] text-white/40">Your photo</p>
             </div>
+
             <div className="text-center">
-              <div className={`text-3xl font-light bg-gradient-to-r ${simColor} bg-clip-text text-transparent`}>{simPct}%</div>
+              <div className={`text-3xl font-light bg-gradient-to-r ${config.gradient} bg-clip-text text-transparent`}>
+                {simPct}%
+              </div>
               <p className="text-[10px] text-white/40">similarity</p>
             </div>
-            {topMatch.sample_crop_path && (
+
+            {profileSrc && (
               <div className="text-center">
-                <div className="h-20 w-20 overflow-hidden rounded-xl border border-purple-400/20">
-                  <img src={topMatch.sample_crop_path} alt={topMatch.elephant_name} className="h-full w-full object-cover" />
+                <div className={`h-20 w-20 overflow-hidden rounded-xl border ${config.borderClass} ${config.profileDim ? "opacity-60" : ""}`}>
+                  <img src={profileSrc} alt={topMatch.elephant_name} className="h-full w-full object-cover" />
                 </div>
-                <p className="mt-1 text-[10px]" style={{ color: elephantInfo?.color || "#fff" }}>{topMatch.elephant_name}</p>
+                <p className="mt-1 text-[10px]" style={{ color: elColor }}>
+                  {topMatch.elephant_name}{config.nameSuffix}
+                </p>
               </div>
             )}
           </div>
-          <p className="text-center text-[10px] text-white/25">{topMatch.image_count} photos in database</p>
+
+          {/* Diagnostics */}
+          <div className="mt-3 flex justify-center gap-4 text-[9px] text-white/25">
+            <span>dist: {cosDist.toFixed(3)}</span>
+            {topMatch.margin != null && <span>margin: {(topMatch.margin * 100).toFixed(1)}%</span>}
+            {topMatch.vote_ratio != null && <span>vote: {(topMatch.vote_ratio * 100).toFixed(0)}%</span>}
+            <span>{topMatch.image_count.toLocaleString()} photos</span>
+          </div>
         </div>
       )}
 
@@ -132,20 +196,25 @@ export default function UploadResultView({
           <div className="space-y-1.5">
             {restMatches.map((match) => {
               const info = ELEPHANTS.find((e) => e.name === match.elephant_name);
+              const levelTag = match.match_level === "same" ? "same" : match.match_level === "similar" ? "similar" : "";
+              const tagColor = match.match_level === "same" ? "text-cyan-400/50" : "text-purple-400/50";
               return (
                 <div key={match.elephant_id} className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">
-                  {match.sample_crop_path ? (
+                  {(match.profile || match.sample_crop_path) ? (
                     <div className="h-9 w-9 overflow-hidden rounded-lg border border-white/[0.08]">
-                      <img src={match.sample_crop_path} alt={match.elephant_name} className="h-full w-full object-cover" />
+                      <img src={match.profile || match.sample_crop_path!} alt={match.elephant_name} className="h-full w-full object-cover" />
                     </div>
                   ) : (
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-sm">🐘</div>
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-sm">&#x1F418;</div>
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-light truncate" style={{ color: info?.color || "#fff" }}>{match.elephant_name}</p>
                     <p className="text-[10px] text-white/30">{match.image_count} photos</p>
                   </div>
-                  <div className="text-xs font-light text-white/50">{Math.round(match.similarity * 100)}%</div>
+                  <div className="text-right">
+                    <div className="text-xs font-light text-white/50">{Math.round(match.similarity * 100)}%</div>
+                    {levelTag && <div className={`text-[9px] ${tagColor}`}>{levelTag}</div>}
+                  </div>
                 </div>
               );
             })}

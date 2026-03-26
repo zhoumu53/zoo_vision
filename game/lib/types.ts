@@ -50,8 +50,9 @@ export type Position3D = {
 export type GalaxyElephant = {
   elephant_id: number;
   elephant_name: string;
+  color?: string;
   image_count: number;
-  sample_crop_path: string | null;
+  sample_crop_path?: string | null;
   x: number | null;
   y: number | null;
   z: number | null;
@@ -64,13 +65,20 @@ export type BBox = {
   h: number;
 };
 
+export type MatchLevel = "same" | "similar" | "unknown";
+
 export type NearestElephant = {
   elephant_id: number;
   elephant_name: string;
   similarity: number;
+  cosine_distance: number;
+  match_level: MatchLevel;
+  margin: number | null;
+  vote_ratio: number | null;
   sample_crop_path: string | null;
   image_count: number;
   position: Position3D | null;
+  profile?: string | null;
 };
 
 export type DetectedElephant = {

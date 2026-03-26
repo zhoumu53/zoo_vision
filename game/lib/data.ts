@@ -1,4 +1,4 @@
-import { MatchPair, NameQuestion, BehaviorQuestion } from "./types";
+import { MatchPair, NameQuestion, BehaviorQuestion, GalaxyElephant } from "./types";
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -28,4 +28,11 @@ export async function loadBehaviorQuestions(): Promise<BehaviorQuestion[]> {
   if (!res.ok) throw new Error("Failed to load behavior questions");
   const data = await res.json();
   return shuffle(data.questions);
+}
+
+export async function loadGalaxyElephants(): Promise<GalaxyElephant[]> {
+  const res = await fetch("/game-data/galaxy-elephants.json");
+  if (!res.ok) throw new Error("Failed to load galaxy data");
+  const data = await res.json();
+  return data.elephants;
 }

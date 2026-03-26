@@ -25,14 +25,14 @@ export async function apiPost<T>(path: string, body?: BodyInit | null): Promise<
 
 export async function uploadElephantPhoto(
   file: File,
-): Promise<{ job_id: number; uuid: string }> {
+): Promise<{ job_id: string; uuid: string }> {
   const form = new FormData();
   form.append("photo", file);
   return apiPost("/galaxy/upload", form);
 }
 
 export async function getUploadStatus(
-  jobId: number,
+  jobId: string,
 ): Promise<import("./types").UploadJobStatus> {
   return apiGet(`/galaxy/upload/${jobId}/status`);
 }

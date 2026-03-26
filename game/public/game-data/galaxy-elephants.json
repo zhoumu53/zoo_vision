@@ -1,0 +1,59 @@
+{
+  "elephants": [
+    {
+      "elephant_id": 1,
+      "elephant_name": "Chandra",
+      "color": "#F5FFC6",
+      "image_count": 18100,
+      "sample_crop_path": "/profiles/Chandra.jpg",
+      "profile": "/profiles/Chandra.jpg",
+      "x": -22.725868225097656,
+      "y": 18.48710823059082,
+      "z": 0.8665354251861572
+    },
+    {
+      "elephant_id": 3,
+      "elephant_name": "Fahra",
+      "color": "#AB87FF",
+      "image_count": 10224,
+      "sample_crop_path": "/profiles/Fahra.jpg",
+      "profile": "/profiles/Fahra.jpg",
+      "x": -5.618197441101074,
+      "y": -9.634160041809082,
+      "z": -17.341962814331055
+    },
+    {
+      "elephant_id": 2,
+      "elephant_name": "Indi",
+      "color": "#B4E1FF",
+      "image_count": 16915,
+      "sample_crop_path": "/profiles/Indi.jpg",
+      "profile": "/profiles/Indi.jpg",
+      "x": -3.6644372940063477,
+      "y": -11.778205871582031,
+      "z": 14.702308654785156
+    },
+    {
+      "elephant_id": 4,
+      "elephant_name": "Panang",
+      "color": "#EDBBB4",
+      "image_count": 9592,
+      "sample_crop_path": "/profiles/Panang.jpg",
+      "profile": "/profiles/Panang.jpg",
+      "x": -7.99149751663208,
+      "y": -4.289053440093994,
+      "z": 1.9750783443450928
+    },
+    {
+      "elephant_id": 5,
+      "elephant_name": "Thai",
+      "color": "#C1FF9B",
+      "image_count": 19457,
+      "sample_crop_path": "/profiles/Thai.jpg",
+      "profile": "/profiles/Thai.jpg",
+      "x": 40.0,
+      "y": 7.2143120765686035,
+      "z": -0.20195719599723816
+    }
+  ]
+}
