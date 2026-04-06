@@ -2,12 +2,14 @@ from project_root import PROJECT_ROOT
 from src.zoo_grafana.zoo_dashboard_server.project_config import get_config
 
 
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 import re
 import cv2
 import logging
+import threading
 from cachetools.func import ttl_cache
 
 logger = logging.getLogger(__name__)
@@ -164,7 +166,14 @@ def update_file(db: VideoDB, path: Path):
         info = parse_video_name(path)
     except Exception as e:
         logger.error(f"Error parsing {str(path)}, error: {e}")
-        return
+        # Create dummy entry so we don't keep trying in the future
+        info = ParsedVideoInfo(
+            filename=path,
+            camera="zag_elp_cam_016",
+            start_time=datetime(1970, 1, 1),
+            end_time=datetime(1970, 1, 1),
+            fps=0,
+        )
     camera_data = db.cameras[info.camera]
     camera_data.filenames.append(path)
     camera_data.start_times.append(info.start_time)
@@ -173,9 +182,11 @@ def update_file(db: VideoDB, path: Path):
 
 def update_db(db: VideoDB):
     video_root = get_video_root()
+    logging.info(f"Listing top dirs of {str(video_root)}...")
     dirs = [dir for dir in video_root.iterdir() if dir.is_dir()]
 
     # Remove files that don't exist
+    logging.info(f"Removing non-existent files...")
     removed_count = 0
     for camera_data in db.cameras.values():
         for i in range(len(camera_data.filenames) - 1, -1, -1):
@@ -205,7 +216,9 @@ def update_db(db: VideoDB):
 
             update_dir(db, dir_dict[name])
     else:
-        logger.info(f"Did not find camera names in top directory {str(video_root)}, globbing for mp4s")
+        logger.info(
+            f"Did not find camera names in top directory {str(video_root)}, globbing for mp4s"
+        )
         for file in video_root.glob("**/*.mp4"):
             update_file(db, file)
 
@@ -242,8 +255,42 @@ def update_db(db: VideoDB):
 
 
 @ttl_cache(ttl=30 * 60)
-def load_and_update_db() -> VideoDB:
+def load_cached_db() -> VideoDB:
+    logger.info("Loading video db...")
+
+    start_time = time.perf_counter()
     db = load_db()
-    update_db(db)
-    save_db(db)
+    duration_s = time.perf_counter() - start_time
+    logger.info(f"Load video db: {duration_s} sec")
+
     return db
+
+
+def load_and_update_db() -> VideoDB:
+    logger.info("Updating video db video db...")
+
+    start_time = time.perf_counter()
+    db = load_db()
+    duration_s = time.perf_counter() - start_time
+    logger.info(f"Load video db: {duration_s} sec")
+
+    start_time = time.perf_counter()
+    update_db(db)
+    duration_s = time.perf_counter() - start_time
+    logger.info(f"Update video db: {duration_s} sec")
+
+    save_db(db)
+
+    return db
+
+
+def video_db_update_daemon() -> None:
+
+    UPDATE_PERIOD_SEC = 30 * 60
+    logger.info(f"Video db update thread active, period={UPDATE_PERIOD_SEC // 60} min")
+
+    while True:
+        load_and_update_db()
+
+        # Sleep until we need to update again
+        time.sleep(UPDATE_PERIOD_SEC)

@@ -1,4 +1,4 @@
-from video_db import load_and_update_db, VideoDB
+from video_db import load_cached_db, VideoDB
 
 from datetime import datetime
 import pandas as pd
@@ -20,7 +20,7 @@ def parse_timestamp(timestamp_str: datetime) -> datetime:
 
 
 async def find_camera_image(camera: str, timestamp: datetime) -> np.ndarray | None:
-    camera_db = load_and_update_db().cameras[camera]
+    camera_db = load_cached_db().cameras[camera]
     for video_path, start_time_str, end_time_str in zip(
         camera_db.filenames, camera_db.start_times, camera_db.end_times
     ):

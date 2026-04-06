@@ -11,6 +11,7 @@ from project_root import PROJECT_ROOT
 from track_search import *
 from camera_images import find_camera_image
 from track_heatmap import make_map_heatmap
+from video_db import video_db_update_daemon
 from project_config import get_config
 
 import traceback
@@ -26,6 +27,8 @@ from cachetools.func import ttl_cache
 from datetime import datetime, timedelta
 import dateutil
 import asyncio
+import threading
+import multiprocessing
 
 DEFAULT_CAMERA = "zag_elp_cam_016"
 DEFAULT_TIMESTAMP = "2025-02-09T20:56:00"
@@ -33,6 +36,24 @@ DEFAULT_END_TIMESTAMP = "2025-02-10T20:56:00"
 
 JPEG_PREFIX = "data:image/jpeg;base64,"
 
+#######################################
+# Basic logging
+logging.basicConfig(
+    level=logging.INFO,
+)
+logger.info("Web server starting")
+
+#######################################
+# Daemon to update video db
+if not multiprocessing.current_process().daemon:
+    daemon_thread = threading.Thread(
+        target=video_db_update_daemon, name="VideoDB Daemon"
+    )
+    daemon_thread.daemon = True
+    daemon_thread.start()
+
+#######################################
+# Web server config
 config = {
     "CACHE_TYPE": "SimpleCache",  # Flask-Caching related configs
     "CACHE_DEFAULT_TIMEOUT": 300,
@@ -240,14 +261,6 @@ async def test_camera_image_get(query_args: CameraImageParams):
     return await send_file(io.BytesIO(image_jpg), mimetype="image/jpg")
 
 
-def create_app(*args) -> Quart:
-    """
-    Used to call from command line:
-        waitress-serve --port 5000 --call zoo_dashboard_server:create_app
-    """
-    return app
-
-
 ################################################
 # World heatmap images
 
@@ -279,11 +292,3 @@ async def heamap_world_get(query_args: HeatmapParams):
     )
 
     return await send_file(io.BytesIO(bytes), mimetype="image/png")
-
-
-def create_app(*args) -> Quart:
-    """
-    Used to call from command line:
-        waitress-serve --port 5000 --call zoo_dashboard_server:create_app
-    """
-    return app
