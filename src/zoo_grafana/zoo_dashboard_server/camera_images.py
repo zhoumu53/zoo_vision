@@ -21,15 +21,30 @@ def parse_timestamp(timestamp_str: datetime) -> datetime:
 
 async def find_camera_image(camera: str, timestamp: datetime) -> np.ndarray | None:
     camera_db = load_cached_db().cameras[camera]
+
+    previous_video_path = None
+    previous_video_start_time = None
+    previous_video_end_time = None
+
     for video_path, start_time_str, end_time_str in zip(
         camera_db.filenames, camera_db.start_times, camera_db.end_times
     ):
         start_time = parse_timestamp(start_time_str)
+        end_time = parse_timestamp(end_time_str)
+
         if start_time > timestamp:
             # Videos are sorted, we can skip all the rest
+            logger.info(
+                f"Reached the end of videos. No video found for camera image, camera={camera}, timestamp={timestamp}\n"
+                f"  Previous video={previous_video_start_time}..{previous_video_end_time}, name={str(previous_video_path)}\n"
+                f"  Last video={start_time}..{end_time}, name={str(video_path)}"
+            )
             return None
 
-        end_time = parse_timestamp(end_time_str)
+        previous_video_path = video_path
+        previous_video_start_time = start_time
+        previous_video_end_time = end_time
+
         if end_time < timestamp:
             continue
 

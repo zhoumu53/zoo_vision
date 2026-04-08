@@ -3,13 +3,14 @@ from src.zoo_grafana.zoo_dashboard_server.project_config import get_config
 
 
 import time
+import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 import re
 import cv2
 import logging
-import threading
+import json
 from cachetools.func import ttl_cache
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,32 @@ def save_db(db: VideoDB):
         f.write(db.model_dump_json())
 
 
+def get_video_duration(filename: Path) -> tuple[float, float]:
+    ffprobe_cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=duration,r_frame_rate",
+    ]
+    res = subprocess.check_output(ffprobe_cmd + [str(filename)])
+    output_txt = res.decode()
+    output_json = json.loads(output_txt)
+
+    stream_info = output_json["streams"][0]
+    r_frame_rate = stream_info["r_frame_rate"]
+    rates = r_frame_rate.split("/")
+    fps = float(rates[0]) / float(rates[1])
+
+    duration_s = float(stream_info["duration"])
+    return fps, duration_s
+
+
 def parse_video_name(filename: Path) -> ParsedVideoInfo:
     name = str(filename.name).lower()
 
@@ -103,20 +130,7 @@ def parse_video_name(filename: Path) -> ParsedVideoInfo:
     )
 
     # Open the video to check the frame count
-    video = cv2.VideoCapture(str(filename))
-    assert video.isOpened()
-    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Find end
-    video.set(cv2.CAP_PROP_POS_FRAMES, frame_count - 2)
-    video.read()  # Read dummy frame to update props
-    video_length_s = video.get(cv2.CAP_PROP_POS_MSEC) / 1000
-    if video_length_s == 0:
-        fps = 25
-        video_length_s = frame_count / fps
-    else:
-        fps = frame_count / video_length_s
-    video = None
+    fps, video_length_s = get_video_duration(filename)
 
     # No end time in filename. Assume fps and calculate end time
     # end_time = start_time + datetime.timedelta(seconds=frame_count / fps)
@@ -184,6 +198,13 @@ def update_db(db: VideoDB):
     video_root = get_video_root()
     logging.info(f"Listing top dirs of {str(video_root)}...")
     dirs = [dir for dir in video_root.iterdir() if dir.is_dir()]
+
+    # Remove the last video from each camera because it might have been incomplete the last time we updated
+    for camera_data in db.cameras.values():
+        if len(camera_data.filenames) > 0:
+            del camera_data.filenames[-1]
+            del camera_data.start_times[-1]
+            del camera_data.end_times[-1]
 
     # Remove files that don't exist
     logging.info(f"Removing non-existent files...")
