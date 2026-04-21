@@ -22,10 +22,7 @@ from .pipeline import scan_videos
 def _load_settings() -> dict[str, str | int | float]:
     return {
         "data_root": os.getenv("DATA_ROOT", "/mnt/camera_nas/"),
-        "output_root": os.getenv("OUTPUT_ROOT", "./runs"),
-        "empty_export_root": os.getenv(
-            "EMPTY_EXPORT_ROOT", "/media/ElephantsWD/empty_videos_to_be_deleted",
-        ),
+        "output_root": os.getenv("OUTPUT_ROOT", "/media/ElephantsWD/empty_videos_to_be_deleted"),
         "default_interval": _env_int("DEFAULT_INTERVAL_MINUTES", 2),
         "default_confidence": _env_float("DEFAULT_CONFIDENCE", 0.65),
         "default_weights_path": os.getenv("DEFAULT_WEIGHTS_PATH", "").strip(),
@@ -70,6 +67,12 @@ def _build_parser(defaults: dict[str, str | int | float]) -> argparse.ArgumentPa
         default=str(defaults["default_weights_path"]),
         help="Optional custom YOLO weights path.",
     )
+    parser.add_argument(
+        "--rescan",
+        action="store_true",
+        default=False,
+        help="Force re-scan of already processed videos (ignore report.json history).",
+    )
     return parser
 
 
@@ -111,12 +114,12 @@ def main(argv: list[str] | None = None, *, output_stream: TextIO | None = None) 
             data_root=data_root,
             target_folder=selected_folder,
             output_root=output_root,
-            empty_export_root=Path(str(settings["empty_export_root"])).expanduser(),
             filename_substring=filename_substring,
             recursive=args.recursive,
             interval_minutes=int(args.interval_minutes),
             confidence_threshold=float(args.confidence_threshold),
             weights_path=weights_path,
+            force_rescan=args.rescan,
         )
     except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
         _print_line(output_stream, f"Invalid scan configuration: {exc}")

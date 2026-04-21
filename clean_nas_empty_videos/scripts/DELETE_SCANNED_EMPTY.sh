@@ -1,8 +1,12 @@
-# read the csv file with empty videos, and delete the corresponding video files from the NAS
 #!/usr/bin/env bash
+# Read CSV files with empty videos and delete the corresponding video files from the NAS.
+# CSVs are located under OUTPUT_ROOT/{camera}/{date}/{date}.csv
 set -euo pipefail
 
-CSV_FILES_DIR="${1:-/media/ElephantsWD/empty_videos_to_be_deleted}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+CSV_FILES_DIR="${1:-${OUTPUT_ROOT:-/media/ElephantsWD/empty_videos_to_be_deleted}}"
 if [[ ! -d "${CSV_FILES_DIR}" ]]; then
   echo "Directory ${CSV_FILES_DIR} does not exist"
   exit 1

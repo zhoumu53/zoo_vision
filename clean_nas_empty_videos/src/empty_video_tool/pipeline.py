@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import shutil
 
@@ -14,7 +15,6 @@ from .preview import build_preview_contact_sheet
 from .exporting import (
     EMPTY_VIDEO_EXPORT_FIELDNAMES,
     build_empty_video_export_rows,
-    grouped_empty_video_export_path,
     _append_unique_csv_rows,
 )
 from .reporting import (
@@ -137,46 +137,61 @@ def _run_phase_samples(
     progress_callback: ProgressCallback | None,
     video_index: int,
 ) -> list[FrameSampleResult]:
-    samples: list[FrameSampleResult] = []
-    for sample_index, timestamp_sec in enumerate(timestamps, start=1):
-        _emit(
-            progress_callback,
-            ScanProgress(
-                phase="sample_started",
-                video_index=video_index,
-                sample_index=sample_index,
-                total_samples=len(timestamps),
-                video_path=str(video_path),
-                message=f"{relative_path} | {phase} sample {sample_index}/{len(timestamps)}",
-            ),
-        )
+    # Step 1: extract all frames (parallel ffmpeg calls)
+    frame_paths: list[Path] = []
+    frame_errors: dict[int, str] = {}  # index -> error message
+    for sample_index, timestamp_sec in enumerate(timestamps):
+        frame_paths.append(frame_dir / f"{phase}_{sample_index + 1:03d}_{int(timestamp_sec):06d}s.jpg")
 
-        frame_path = frame_dir / f"{phase}_{sample_index:03d}_{int(timestamp_sec):06d}s.jpg"
+    def _extract(idx_ts: tuple[int, float]) -> tuple[int, str | None]:
+        idx, ts = idx_ts
         try:
-            extracted_frame_path = extract_frame(video_path, timestamp_sec, frame_path)
-            detection_result = detector.detect(extracted_frame_path, config.confidence_threshold)
+            extract_frame(video_path, ts, frame_paths[idx])
+            return idx, None
         except Exception as exc:
+            return idx, str(exc)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for idx, err in pool.map(_extract, enumerate(timestamps)):
+            if err is not None:
+                frame_errors[idx] = err
+
+    # Step 2: batch detect on successfully extracted frames
+    valid_indices = [i for i in range(len(timestamps)) if i not in frame_errors]
+    valid_paths = [frame_paths[i] for i in valid_indices]
+
+    batch_results: list = []
+    if valid_paths and hasattr(detector, "detect_batch"):
+        batch_results = detector.detect_batch(valid_paths, config.confidence_threshold)
+    elif valid_paths:
+        batch_results = [detector.detect(p, config.confidence_threshold) for p in valid_paths]
+
+    # Step 3: assemble results
+    detection_map = dict(zip(valid_indices, batch_results))
+    samples: list[FrameSampleResult] = []
+    for sample_index, timestamp_sec in enumerate(timestamps):
+        if sample_index in frame_errors:
             samples.append(
                 FrameSampleResult(
                     timestamp_sec=timestamp_sec,
-                    frame_path=str(frame_path),
+                    frame_path=str(frame_paths[sample_index]),
                     detected=False,
                     phase=phase,
-                    error=str(exc),
+                    error=frame_errors[sample_index],
                 )
             )
-            continue
-
-        samples.append(
-            FrameSampleResult(
-                timestamp_sec=timestamp_sec,
-                frame_path=str(extracted_frame_path),
-                detected=detection_result.detected,
-                phase=phase,
-                matched_labels=detection_result.matched_labels,
-                matched_confidences=detection_result.matched_confidences,
+        else:
+            det = detection_map[sample_index]
+            samples.append(
+                FrameSampleResult(
+                    timestamp_sec=timestamp_sec,
+                    frame_path=str(frame_paths[sample_index]),
+                    detected=det.detected,
+                    phase=phase,
+                    matched_labels=det.matched_labels,
+                    matched_confidences=det.matched_confidences,
+                )
             )
-        )
     return samples
 
 
@@ -313,7 +328,9 @@ def _process_single_video(
         # generate preview for empty videos
         preview_path: str | None = None
         if to_delete and successful_frame_samples:
-            preview_file = vid_run_dir / f"{video_path.stem}.jpg"
+            preview_dir = vid_run_dir / "to_delete_preview"
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            preview_file = preview_dir / f"{video_path.stem}.jpg"
             built_preview = build_preview_contact_sheet(
                 successful_frame_samples,
                 preview_file,
@@ -388,21 +405,22 @@ def scan_videos(
     )
 
     for video_index, video_path in enumerate(video_iter, start=1):
-        # check if already processed
         vid_run_dir = run_dir_for_video(config.output_root, config.data_root, video_path)
-        if vid_run_dir not in processed_cache:
-            processed_cache[vid_run_dir] = load_processed_video_paths(vid_run_dir)
-        if str(video_path) in processed_cache[vid_run_dir]:
-            _emit(
-                progress_callback,
-                ScanProgress(
-                    phase="video_completed",
-                    video_index=video_index,
-                    video_path=str(video_path),
-                    message=f"Skipped (already processed) {video_path}",
-                ),
-            )
-            continue
+        # check if already processed (skip check when force_rescan is enabled)
+        if not config.force_rescan:
+            if vid_run_dir not in processed_cache:
+                processed_cache[vid_run_dir] = load_processed_video_paths(vid_run_dir)
+            if str(video_path) in processed_cache[vid_run_dir]:
+                _emit(
+                    progress_callback,
+                    ScanProgress(
+                        phase="video_completed",
+                        video_index=video_index,
+                        video_path=str(video_path),
+                        message=f"Skipped (already processed) {video_path}",
+                    ),
+                )
+                continue
 
         result = _process_single_video(
             video_path=video_path,
@@ -415,16 +433,17 @@ def scan_videos(
 
         # persist result to report.json immediately
         append_result_to_report(vid_run_dir, result, config=config)
-        processed_cache[vid_run_dir].add(str(video_path))
+        processed_cache.setdefault(vid_run_dir, set()).add(str(video_path))
 
         # persist to grouped CSV immediately if to_delete
-        if result.to_delete and config.empty_export_root is not None:
+        if result.to_delete:
+            date_folder = vid_run_dir.name  # e.g. "20260410AM"
+            csv_path = vid_run_dir / f"{date_folder}.csv"
             export_rows = build_empty_video_export_rows([result.to_report_row()])
-            for row in export_rows:
-                export_path = grouped_empty_video_export_path(config.empty_export_root, row)
+            if export_rows:
                 _append_unique_csv_rows(
-                    export_path,
-                    [row],
+                    csv_path,
+                    export_rows,
                     fieldnames=EMPTY_VIDEO_EXPORT_FIELDNAMES,
                     unique_field="host_path",
                 )

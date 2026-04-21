@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
+import os
+
 
 def _normalize_label(label: str) -> str:
     return label.strip().lower()
@@ -26,7 +28,7 @@ class YoloDetector:
         self,
         *,
         weights_path: str | None = None,
-        default_model: str = "yolov8n.pt",
+        default_model: str = "../models/segmentation/yolo/all_v3/weights/best.onnx",
         target_labels: Sequence[str] = ("elephant",),
     ) -> None:
         try:
@@ -43,7 +45,12 @@ class YoloDetector:
             model_source = default_model
 
         self.model_source = model_source
-        self.model = YOLO(model_source)
+        self._device = os.getenv("SCAN_DEVICE", "0")  # GPU by default, set "cpu" to override
+        # ONNX models need explicit task hint to avoid auto-guess warning
+        load_kwargs: dict = {}
+        if model_source.endswith(".onnx"):
+            load_kwargs["task"] = "detect"
+        self.model = YOLO(model_source, **load_kwargs)
         self.names = self._extract_name_map(self.model.names)
         normalized_targets = {_normalize_label(label) for label in target_labels}
         self.target_class_ids = {
@@ -65,18 +72,7 @@ class YoloDetector:
             return {int(class_id): str(name) for class_id, name in names.items()}
         return {index: str(name) for index, name in enumerate(names)}
 
-    def detect(self, image_path: Path, confidence_threshold: float) -> DetectionResult:
-        results = self.model.predict(
-            source=str(image_path),
-            conf=confidence_threshold,
-            verbose=False,
-            device="cpu",
-            classes=sorted(self.target_class_ids),
-        )
-        if not results:
-            return DetectionResult(detected=False, matched_labels=[], matched_confidences=[])
-
-        boxes = results[0].boxes
+    def _parse_boxes(self, boxes) -> DetectionResult:
         if boxes is None or len(boxes) == 0:
             return DetectionResult(detected=False, matched_labels=[], matched_confidences=[])
 
@@ -95,4 +91,20 @@ class YoloDetector:
             matched_labels=matched_labels,
             matched_confidences=matched_confidences,
         )
+
+    def detect(self, image_path: Path, confidence_threshold: float) -> DetectionResult:
+        results = self.model.predict(
+            source=str(image_path),
+            conf=confidence_threshold,
+            verbose=False,
+            device=self._device,
+            classes=sorted(self.target_class_ids),
+        )
+        if not results:
+            return DetectionResult(detected=False, matched_labels=[], matched_confidences=[])
+        return self._parse_boxes(results[0].boxes)
+
+    def detect_batch(self, image_paths: list[Path], confidence_threshold: float) -> list[DetectionResult]:
+        """Run detection on multiple images. Uses sequential GPU calls (ONNX models have fixed batch=1)."""
+        return [self.detect(p, confidence_threshold) for p in image_paths]
 

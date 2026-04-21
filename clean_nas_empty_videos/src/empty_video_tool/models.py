@@ -14,14 +14,14 @@ class ScanConfig:
     data_root: Path
     target_folder: Path
     output_root: Path
-    empty_export_root: Path | None = None
     filename_substring: str | None = None
     recursive: bool = True
     interval_minutes: int = 2
     confidence_threshold: float = 0.65
     weights_path: str | None = None
-    default_model: str = "yolov8n.pt"
+    default_model: str = "../models/segmentation/yolo/all_v3/weights/best.onnx"
     target_labels: tuple[str, ...] = ("elephant",)
+    force_rescan: bool = False
     non_empty_ratio_threshold: float = 0.8
     refine_ratio_threshold: float = 0.2
     min_non_empty_minutes: int = 2
@@ -57,8 +57,6 @@ class ScanConfig:
         object.__setattr__(self, "data_root", resolved_data_root)
         object.__setattr__(self, "target_folder", resolved_target_folder)
         object.__setattr__(self, "output_root", resolved_output_root)
-        if self.empty_export_root is not None:
-            object.__setattr__(self, "empty_export_root", _resolve_path(Path(self.empty_export_root)))
         if self.weights_path:
             object.__setattr__(
                 self,

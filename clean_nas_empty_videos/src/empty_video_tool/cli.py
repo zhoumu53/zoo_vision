@@ -49,10 +49,7 @@ def _env_float(name: str, default: float) -> float:
 def _load_settings() -> dict[str, str | int | float]:
     return {
         "data_root": os.getenv("DATA_ROOT", "/mnt/camera_nas/"),
-        "output_root": os.getenv("OUTPUT_ROOT", "./runs"),
-        "empty_export_root": os.getenv(
-            "EMPTY_EXPORT_ROOT", "/media/ElephantsWD/empty_videos_to_be_deleted",
-        ),
+        "output_root": os.getenv("OUTPUT_ROOT", "/media/ElephantsWD/empty_videos_to_be_deleted"),
         "default_interval": _env_int("DEFAULT_INTERVAL_MINUTES", 2),
         "default_confidence": _env_float("DEFAULT_CONFIDENCE", 0.65),
         "default_weights_path": os.getenv("DEFAULT_WEIGHTS_PATH", "").strip(),
@@ -401,7 +398,6 @@ def main(argv: list[str] | None = None, *, input_fn=input, output_stream: TextIO
     _print_box(output_stream, [
         f"Target:  {selected_folder}",
         f"Output:  {output_root}",
-        f"Export:  {settings['empty_export_root']}",
     ])
     _print_line(output_stream)
 
@@ -412,7 +408,6 @@ def main(argv: list[str] | None = None, *, input_fn=input, output_stream: TextIO
             data_root=data_root,
             target_folder=selected_folder,
             output_root=output_root,
-            empty_export_root=Path(str(settings["empty_export_root"])).expanduser(),
             filename_substring=filename_substring,
             recursive=args.recursive,
             interval_minutes=int(args.interval_minutes),

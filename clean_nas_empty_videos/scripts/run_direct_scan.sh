@@ -8,10 +8,8 @@ ZOO_VISION_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 source "${ZOO_VISION_ROOT}/env/bin/activate"
 
 export DATA_ROOT="${DATA_ROOT:-/mnt/camera_nas}"
-export OUTPUT_ROOT="${OUTPUT_ROOT:-${PROJECT_ROOT}/runs}"
-export EMPTY_EXPORT_ROOT="${EMPTY_EXPORT_ROOT:-/media/ElephantsWD/empty_videos_to_be_deleted}"
-
-mkdir -p "${OUTPUT_ROOT}" "${EMPTY_EXPORT_ROOT}"
+export OUTPUT_ROOT="${OUTPUT_ROOT:-/media/ElephantsWD/empty_videos_to_be_deleted}"
+mkdir -p "${OUTPUT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
 

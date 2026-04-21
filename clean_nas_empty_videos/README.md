@@ -2,70 +2,87 @@
 
 Scans NAS camera videos and identifies the ones **without elephants** so they can be deleted to free up storage.
 
+- Uses a **custom-trained YOLO model** (`models/segmentation/yolo/all_v3/weights/best.onnx`) for elephant detection.
 - Already-scanned videos are **automatically skipped** on re-run (results are saved per folder).
 - Results are saved **immediately** after each video — safe to interrupt and resume at any time.
 
 ## Usage
 
-### [SCAN 1] - Direct scan (recommended)
-
-LAZY VERSION - when you want to scan all folders under NAS system:
+### Scan a specific folder
 
 ```bash
 cd clean_nas_empty_videos
+./scripts/run_direct_scan.sh "ZAG-ELP-CAM-019/20260410AM"
+```
+
+Scan an entire camera (all date subfolders):
+
+```bash
+./scripts/run_direct_scan.sh "ZAG-ELP-CAM-019"
+```
+
+Scan everything on the NAS:
+
+```bash
 ./scripts/run_direct_scan.sh
 ```
 
-Provide the folder path directly:
+### Re-scan (ignore previous results)
+
+Re-scan a specific folder, ignoring cached results in `report.json`:
 
 ```bash
-cd clean_nas_empty_videos
-./scripts/run_direct_scan.sh "ELP-Kamera-01/20250603PM"
+./scripts/run_direct_scan.sh "ZAG-ELP-CAM-019/20260410AM" --rescan
 ```
 
-You can also scan a top-level folder (all date subfolders):
+Re-scan all cameras (re-processes everything, overwriting previous results):
 
 ```bash
-cd clean_nas_empty_videos
-./scripts/run_direct_scan.sh "ELP-Kamera-01"
+./scripts/rescan_all.sh
 ```
 
-
-### [SCAN 2] - Interactive CLI
-
-For manual folder selection (browse and pick from a menu). Use this if you want to look around before deciding which folder to scan, or if you want to delete videos from another disk:
+Re-scan only cameras matching a pattern:
 
 ```bash
-cd clean_nas_empty_videos
+./scripts/rescan_all.sh ZAG-ELP-CAM
+```
+
+### Interactive CLI
+
+For manual folder selection (browse and pick from a menu):
+
+```bash
 ./scripts/run_cli_historical_scan.sh
 ```
 
-### [DELETE] - Delete the empty videos
+### Delete the empty videos
 
 After scanning, run the delete script to remove files listed in the CSVs:
 
 ```bash
-cd clean_nas_empty_videos
 ./scripts/DELETE_SCANNED_EMPTY.sh
 ```
 
-**Note:** The actual `rm` command inside the script is commented out by default. You must edit and uncomment it before it will delete anything.
+**Note:** The actual `rm` command inside the script is commented out by default. Edit and uncomment it before it will delete anything.
 
 ## Where results are saved
 
-| What | Location |
-|------|----------|
-| Scan results (per folder/date) | `./runs/{camera_folder}/{date_folder}/report.json` |
-| Preview images (empty videos only) | `./runs/{camera_folder}/{date_folder}/{video_name}.jpg` |
-| Final CSV for deletion | `/media/ElephantsWD/empty_videos_to_be_deleted/{camera_folder}/{date}.csv` |
+All output goes under `OUTPUT_ROOT` (default: `/media/ElephantsWD/empty_videos_to_be_deleted`):
 
-- `report.json` contains one entry per video with `to_delete: true/false`.
-- The CSV at the export path is what the delete script reads.
-- Re-running the scan on the same folder **skips already-processed videos** based on `report.json`.
+```
+OUTPUT_ROOT/{camera}/{date}/
+├── report.json            # one entry per video with to_delete: true/false
+├── {date}.csv             # list of empty videos for the delete script
+└── to_delete_preview/     # preview images (only for empty videos)
+    ├── {video_name}.jpg
+    └── ...
+```
+
+- Re-running the scan on the same folder **skips already-processed videos** based on `report.json`. Use `--rescan` to force re-processing.
 
 ## How the scanning algorithm works
 
-For each video, the tool takes a series of snapshots (frames) and uses a YOLO AI model to check whether an elephant appears in each frame. The process has three stages:
+For each video, the tool takes a series of snapshots (frames) and uses a YOLO model to check whether an elephant appears in each frame. The process has three stages:
 
 ### Stage 1 — Quick check (coarse sampling)
 
@@ -90,4 +107,4 @@ A video is marked as **to_delete = true** (no elephants) only when **both** of t
 
 If either condition fails — meaning elephants are seen in most frames, or they appear for a long enough stretch — the video is kept.
 
-For videos marked as empty, a **preview image** (grid of sampled frames) is saved so you can visually double-check the result before deleting.
+For videos marked as empty, a **preview image** (grid of sampled frames) is saved in `to_delete_preview/` so you can visually double-check the result before deleting.
