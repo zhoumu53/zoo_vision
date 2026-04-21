@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import shutil
+
+PARALLEL_VIDEOS = int(os.getenv("SCAN_PARALLEL_VIDEOS", "2"))
 
 from .detection import Detector, YoloDetector
 from .discovery import iter_video_files
@@ -404,6 +407,8 @@ def scan_videos(
         filename_substring=config.filename_substring,
     )
 
+    # Build list of videos to process (filtering already-processed)
+    pending: list[tuple[int, Path, Path]] = []  # (index, video_path, run_dir)
     for video_index, video_path in enumerate(video_iter, start=1):
         vid_run_dir = run_dir_for_video(config.output_root, config.data_root, video_path)
         # check if already processed (skip check when force_rescan is enabled)
@@ -421,42 +426,52 @@ def scan_videos(
                     ),
                 )
                 continue
+        pending.append((video_index, video_path, vid_run_dir))
 
+    def _process(item: tuple[int, Path, Path]) -> tuple[int, Path, VideoResult]:
+        idx, vpath, rdir = item
         result = _process_single_video(
-            video_path=video_path,
-            video_index=video_index,
+            video_path=vpath,
+            video_index=idx,
             config=config,
             detector=detector,
-            progress_callback=progress_callback,
+            progress_callback=None,  # progress emitted after completion below
         )
-        results.append(result)
+        return idx, rdir, result
 
-        # persist result to report.json immediately
-        append_result_to_report(vid_run_dir, result, config=config)
-        processed_cache.setdefault(vid_run_dir, set()).add(str(video_path))
+    # Process videos in parallel (I/O extraction overlaps with GPU inference)
+    with ThreadPoolExecutor(max_workers=PARALLEL_VIDEOS) as pool:
+        futures = {pool.submit(_process, item): item for item in pending}
+        for future in as_completed(futures):
+            video_index, vid_run_dir, result = future.result()
+            results.append(result)
 
-        # persist to grouped CSV immediately if to_delete
-        if result.to_delete:
-            date_folder = vid_run_dir.name  # e.g. "20260410AM"
-            csv_path = vid_run_dir / f"{date_folder}.csv"
-            export_rows = build_empty_video_export_rows([result.to_report_row()])
-            if export_rows:
-                _append_unique_csv_rows(
-                    csv_path,
-                    export_rows,
-                    fieldnames=EMPTY_VIDEO_EXPORT_FIELDNAMES,
-                    unique_field="host_path",
-                )
+            # persist result to report.json immediately
+            append_result_to_report(vid_run_dir, result, config=config)
+            processed_cache.setdefault(vid_run_dir, set()).add(result.video_path)
 
-        _emit(
-            progress_callback,
-            ScanProgress(
-                phase="video_completed",
-                video_index=video_index,
-                video_path=str(video_path),
-                message=f"Completed {result.relative_path} | to_delete={result.to_delete}",
-            ),
-        )
+            # persist to grouped CSV immediately if to_delete
+            if result.to_delete:
+                date_folder = vid_run_dir.name
+                csv_path = vid_run_dir / f"{date_folder}.csv"
+                export_rows = build_empty_video_export_rows([result.to_report_row()])
+                if export_rows:
+                    _append_unique_csv_rows(
+                        csv_path,
+                        export_rows,
+                        fieldnames=EMPTY_VIDEO_EXPORT_FIELDNAMES,
+                        unique_field="host_path",
+                    )
+
+            _emit(
+                progress_callback,
+                ScanProgress(
+                    phase="video_completed",
+                    video_index=video_index,
+                    video_path=result.video_path,
+                    message=f"Completed {result.relative_path} | to_delete={result.to_delete}",
+                ),
+            )
 
     _emit(
         progress_callback,
